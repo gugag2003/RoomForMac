@@ -102,3 +102,12 @@ Details:
   `SIGINT` or `SIGTERM`, writes none, and so does one that ends before or outside that
   pass: invalid arguments, `--help`, `--whitelist`, a dry run that cannot create its
   preview file, or Mole's test mode (`MOLE_TEST_MODE=1`), for example.
+
+## Selections (`MOLE_SELECTION_FILE`, patch 0003)
+
+- The file lists absolute paths separated by NUL bytes, exactly as the preview's `item.path` reported them. Trailing slashes are ignored; parents and children of a listed path are **not** selected.
+- Real runs remove only listed paths. Dry runs preview only listed paths, which gives fresh sizes for a selection just before cleaning.
+- Cleanups driven by an external tool never run under a selection: Homebrew cleanup/autoremove, npm/pnpm/pip/uv/corepack/conda/mise caches and Nix garbage collection (`clean_tool_cache`), `bun pm cache rm`, `go clean`, and stopping leaked automation browsers. Unavailable simulators are deleted one by one with `simctl delete <udid>`; each selected device reports a `result` for its previewed path `~/Library/Developer/CoreSimulator/Devices/<udid>` (`detail: "simulator"` when removed, `"simctl delete (status N)"` when it failed).
+- A selection file that is missing, a symlink, or unreadable allows nothing.
+- Selections match paths, not file identities. A selected path that no longer exists when the run reaches it is skipped and gets no `result`; whatever the cleanup finds at a selected path at run time (a folder an app recreated, for example) is cleaned like the original.
+- Hosts select a covered item (`covered_by` set) only when its covering ancestor is not selected, so no bytes are counted twice.

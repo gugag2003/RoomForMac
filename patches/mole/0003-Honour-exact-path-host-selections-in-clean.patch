@@ -1,0 +1,673 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Sat, 26 Sep 2026 00:54:02 -0300
+Subject: [PATCH] Honour exact-path host selections in clean
+
+With MOLE_SELECTION_FILE set, every clean deletion sink removes only the
+listed paths, dry runs preview only them, cleanups driven by an external
+tool (Homebrew, package-manager caches, go clean, leaked automation
+browsers) are skipped, and unavailable simulators are deleted one by one
+through simctl.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ bin/clean.sh               |   7 +
+ lib/clean/apps.sh          |   3 +-
+ lib/clean/brew.sh          |   5 +
+ lib/clean/dev.sh           |  41 +++++-
+ lib/clean/hints.sh         |   8 +-
+ lib/clean/project.sh       |  29 ++--
+ lib/clean/system.sh        |   6 +
+ lib/core/file_ops.sh       |  18 +++
+ tests/clean_selection.bats | 266 +++++++++++++++++++++++++++++++++++++
+ 9 files changed, 362 insertions(+), 21 deletions(-)
+ create mode 100644 tests/clean_selection.bats
+
+diff --git a/bin/clean.sh b/bin/clean.sh
+index 6f9e9e0f..2ea3113a 100755
+--- a/bin/clean.sh
++++ b/bin/clean.sh
+@@ -211,6 +211,9 @@ append_dry_run_cleanup_target() {
+     local size_kb="${2:-0}"
+     local item_count="${3:-1}"
+     local size_known="${4:-true}"
++    if ! mole_selection_allows "$path"; then
++        return 1
++    fi
+     local identity
+     identity=$(mole_path_identity "$path")
+ 
+@@ -252,6 +255,10 @@ record_dry_run_cleanup_target() {
+     if [[ "${MOLE_CURRENT_COMMAND:-}" == "clean" ]] && mole_rc_timeout_or_signal "$pending_clean_cancel"; then
+         return "$pending_clean_cancel"
+     fi
++    # With a host selection, a dry run re-measures only the selected paths.
++    if ! mole_selection_allows "$path"; then
++        return 1
++    fi
+     if [[ "${_MOLE_DRY_RUN_TARGET_PREVALIDATED:-false}" != "true" ]]; then
+         if declare -f should_protect_path > /dev/null 2>&1 && should_protect_path "$path" 2> /dev/null; then
+             return 1
+diff --git a/lib/clean/apps.sh b/lib/clean/apps.sh
+index 951adcf1..72b51b73 100644
+--- a/lib/clean/apps.sh
++++ b/lib/clean/apps.sh
+@@ -887,7 +887,7 @@ clean_orphaned_app_data() {
+         fi
+         note_activity
+     fi
+-    rm -f "$installed_bundles"
++    rm -f "$installed_bundles" # SAFE: exact tracked temp file created above
+ }
+ 
+ _privileged_helper_bundle_id_from_binary() {
+@@ -1945,6 +1945,7 @@ _remove_verified_container_stub() {
+     local container_dir="$1"
+     local metadata_plist="$2"
+ 
++    mole_selection_allows "$container_dir" || return 1
+     [[ -d "$container_dir" ]] || return 1
+     [[ ! -L "$container_dir" ]] || return 1
+     [[ "$metadata_plist" == "$container_dir/.com.apple.containermanagerd.metadata.plist" ]] || return 1
+diff --git a/lib/clean/brew.sh b/lib/clean/brew.sh
+index 1354aea6..8b09b2f6 100644
+--- a/lib/clean/brew.sh
++++ b/lib/clean/brew.sh
+@@ -274,6 +274,11 @@ restore_homebrew_active_links() {
+ 
+ clean_homebrew() {
+     command -v brew > /dev/null 2>&1 || return 0
++    # brew cleanup and autoremove choose their own targets; a host selection
++    # can only scope previewed paths, so it skips Homebrew entirely.
++    if mole_selection_active; then
++        return 0
++    fi
+     local cleanup_timeout="${MOLE_TIMEOUT_PKG_CLEANUP_SEC:-20}"
+     local autoremove_preview_timeout="${MOLE_TIMEOUT_PKG_LIST_SEC:-10}"
+     local brew_cache_file="${HOME}/.cache/mole/brew_last_cleanup"
+diff --git a/lib/clean/dev.sh b/lib/clean/dev.sh
+index 5e9d91dd..1f0cbc17 100644
+--- a/lib/clean/dev.sh
++++ b/lib/clean/dev.sh
+@@ -12,6 +12,12 @@ clean_tool_cache() {
+     local cache_path="$2"
+     shift 2
+ 
++    # The tool decides what it deletes, so no previewed path can scope it.
++    # A host selection therefore never runs tool-driven cache cleanups.
++    if mole_selection_active; then
++        return 0
++    fi
++
+     if [[ -n "$cache_path" ]] && is_path_whitelisted "$cache_path"; then
+         if [[ "$DRY_RUN" == "true" ]]; then
+             echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} $description · would skip (whitelist)"
+@@ -497,6 +503,10 @@ clean_dev_npm() {
+                 note_activity
+             fi
+             bun_cache_cleaned=true
++        elif [[ "$bun_dry_run" != "true" ]] && mole_selection_active; then
++            # `bun pm cache rm` has no per-path preview; never run it under a
++            # host selection.
++            bun_cache_cleaned=true
+         elif [[ "$bun_dry_run" != "true" ]]; then
+             if [[ -t 1 ]]; then
+                 start_section_spinner "Cleaning bun cache..."
+@@ -899,6 +909,10 @@ clean_go_cache_root() {
+     local clean_flag="$3"
+     local display_name="$4"
+     [[ -e "$cache_root" || -L "$cache_root" ]] || return 0
++    # `go clean` is tool-driven and never previewed as a path.
++    if [[ "$DRY_RUN" != "true" ]] && mole_selection_active; then
++        return 0
++    fi
+ 
+     # `go clean -modcache` removes the module root itself, not just its
+     # contents, so handing it the resolved physical path of a symlinked
+@@ -2602,6 +2616,28 @@ check_orphaned_simulator_runtimes() {
+     return 0
+ }
+ 
++# Host selections list unavailable simulator devices one folder at a time.
++# `simctl delete unavailable` would also remove devices the user did not
++# select, so delete exactly the selected ones through simctl, one by one.
++_clean_selected_unavailable_simulators() {
++    local udid device_path delete_rc
++    for udid in "$@"; do
++        device_path="$HOME/Library/Developer/CoreSimulator/Devices/$udid"
++        mole_selection_allows "$device_path" || continue
++        delete_rc=0
++        _run_simctl "$MOLE_TIMEOUT_PKG_CLEANUP_SEC" delete "$udid" > /dev/null 2>&1 || delete_rc=$?
++        if [[ $delete_rc -eq 0 ]]; then
++            log_operation "clean" "REMOVED" "$device_path" "simulator"
++            note_activity
++        elif [[ $delete_rc -ge 128 ]]; then
++            return "$delete_rc"
++        else
++            log_operation "clean" "FAILED" "$device_path" "simctl delete (status $delete_rc)"
++        fi
++    done
++    return 0
++}
++
+ clean_dev_mobile() {
+     check_android_ndk
+     clean_xcode_documentation_cache || return $?
+@@ -2744,6 +2780,8 @@ clean_dev_mobile() {
+                     else
+                         debug_log "Xcode unavailable simulators already clean"
+                     fi
++                elif mole_selection_active; then
++                    _clean_selected_unavailable_simulators "${unavailable_udids[@]+"${unavailable_udids[@]}"}"
+                 else
+                     # Skip if no unavailable simulators
+                     if ((unavailable_before == 0)); then
+@@ -3782,7 +3820,8 @@ clean_dev_automation_browsers() {
+         done
+     fi
+ 
+-    if [[ ${#leaked_processes[@]} -gt 0 ]]; then
++    # Stopping processes is not a previewed path; a host selection skips it.
++    if [[ ${#leaked_processes[@]} -gt 0 ]] && ! mole_selection_active; then
+         if [[ "$DRY_RUN" == "true" ]]; then
+             echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Leaked automation browsers · would stop ${#leaked_processes[@]} processes ${YELLOW}dry${NC}"
+         else
+diff --git a/lib/clean/hints.sh b/lib/clean/hints.sh
+index b0a3fd0b..0c44a259 100644
+--- a/lib/clean/hints.sh
++++ b/lib/clean/hints.sh
+@@ -283,7 +283,7 @@ probe_project_artifact_hints() {
+         if ! hint_collect_child_dirs_with_timeout "$root" "$project_dirs_file" "$list_timeout_seconds"; then
+             PROJECT_ARTIFACT_HINT_SCAN_SKIPPED=true
+             PROJECT_ARTIFACT_HINT_TRUNCATED=true
+-            rm -f "$project_dirs_file"
++            rm -f "$project_dirs_file" # SAFE: exact temp file created by mktemp_file above
+             continue
+         fi
+ 
+@@ -337,7 +337,7 @@ probe_project_artifact_hints() {
+             if ! hint_collect_child_dirs_with_timeout "$project_dir" "$nested_dirs_file" "$list_timeout_seconds"; then
+                 PROJECT_ARTIFACT_HINT_SCAN_SKIPPED=true
+                 PROJECT_ARTIFACT_HINT_TRUNCATED=true
+-                rm -f "$nested_dirs_file"
++                rm -f "$nested_dirs_file" # SAFE: exact temp file created by mktemp_file above
+                 continue
+             fi
+ 
+@@ -372,11 +372,11 @@ probe_project_artifact_hints() {
+                     fi
+                 done
+             done < "$nested_dirs_file"
+-            rm -f "$nested_dirs_file"
++            rm -f "$nested_dirs_file" # SAFE: exact temp file created by mktemp_file above
+ 
+             [[ "$stop_scan" == "true" ]] && break
+         done < "$project_dirs_file"
+-        rm -f "$project_dirs_file"
++        rm -f "$project_dirs_file" # SAFE: exact temp file created by mktemp_file above
+ 
+         [[ "$stop_scan" == "true" ]] && break
+     done
+diff --git a/lib/clean/project.sh b/lib/clean/project.sh
+index 9236cc15..0d30a0ab 100644
+--- a/lib/clean/project.sh
++++ b/lib/clean/project.sh
+@@ -600,7 +600,7 @@ scan_purge_targets() {
+     # root completes. Keep the caller-visible file empty until that point so a
+     # timeout or read failure cannot turn a partial prefix into delete candidates.
+     : > "$output_file"
+-    rm -f "$target_output" "$tag_output" "$processed_output" "$error_output" 2> /dev/null || true
++    rm -f "$target_output" "$tag_output" "$processed_output" "$error_output" 2> /dev/null || true # SAFE: exact temp files derived from the caller's mktemp scan output
+ 
+     local cachedir_tag_min_depth=$((min_depth + 1))
+     local cachedir_tag_max_depth=$((max_depth + 1))
+@@ -660,11 +660,11 @@ scan_purge_targets() {
+                 ) | filter_protected_artifacts "$deadline" > "$processed_output" || process_status=$?
+ 
+             if [[ $process_status -ne 0 ]]; then
+-                rm -f "$processed_output" 2> /dev/null || true
++                rm -f "$processed_output" 2> /dev/null || true # SAFE: exact temp files derived from the caller's mktemp scan output
+                 return "$process_status"
+             fi
+             if ! mv "$processed_output" "$output_file"; then
+-                rm -f "$processed_output" 2> /dev/null || true
++                rm -f "$processed_output" 2> /dev/null || true # SAFE: exact temp files derived from the caller's mktemp scan output
+                 return 1
+             fi
+         else
+@@ -673,7 +673,7 @@ scan_purge_targets() {
+     }
+ 
+     cleanup_scan_outputs() {
+-        rm -f "$target_output" "$tag_output" "$processed_output" "$error_output" 2> /dev/null || true
++        rm -f "$target_output" "$tag_output" "$processed_output" "$error_output" 2> /dev/null || true # SAFE: exact temp files derived from the caller's mktemp scan output
+     }
+ 
+     local use_find=true
+@@ -1719,11 +1719,11 @@ clean_project_artifacts() {
+         scan_pids=()
+         # Clean up temp files
+         for temp in "${scan_temps[@]+"${scan_temps[@]}"}"; do
+-            rm -f "$temp" "${temp}.targets" "${temp}.tags" "${temp}.processed" "${temp}.errors" 2> /dev/null || true
++            rm -f "$temp" "${temp}.targets" "${temp}.tags" "${temp}.processed" "${temp}.errors" 2> /dev/null || true # SAFE: exact scan temp files created by mktemp for this purge
+         done
+         # Clean up purge scanning file
+         local stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
+-        rm -f "$stats_dir/purge_scanning" 2> /dev/null || true
++        rm -f "$stats_dir/purge_scanning" 2> /dev/null || true # SAFE: exact progress marker written by this purge scan
+         echo ""
+         exit 130
+     }
+@@ -1864,11 +1864,10 @@ clean_project_artifacts() {
+ 
+     if [[ $scan_interrupt_status -ge 128 ]]; then
+         local interrupted_stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
+-        rm -f "$interrupted_stats_dir/purge_scanning" 2> /dev/null || true
++        rm -f "$interrupted_stats_dir/purge_scanning" 2> /dev/null || true # SAFE: exact progress marker written by this purge scan
+         local interrupted_temp
+         for interrupted_temp in "${scan_temps[@]+"${scan_temps[@]}"}"; do
+-            rm -f "$interrupted_temp" "${interrupted_temp}.targets" \
+-                "${interrupted_temp}.tags" "${interrupted_temp}.processed" "${interrupted_temp}.errors" 2> /dev/null || true
++            rm -f "$interrupted_temp" "${interrupted_temp}.targets" "${interrupted_temp}.tags" "${interrupted_temp}.processed" "${interrupted_temp}.errors" 2> /dev/null || true # SAFE: exact scan temp files created by mktemp for this purge
+         done
+         _restore_purge_scan_traps
+         if [[ -t 1 ]]; then
+@@ -1879,7 +1878,7 @@ clean_project_artifacts() {
+ 
+     # Stop the scanning monitor (removes purge_scanning file to signal completion)
+     local stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
+-    rm -f "$stats_dir/purge_scanning" 2> /dev/null || true
++    rm -f "$stats_dir/purge_scanning" 2> /dev/null || true # SAFE: exact progress marker written by this purge scan
+ 
+     # Give monitor process time to exit and clear its output
+     if [[ -t 1 ]]; then
+@@ -1932,14 +1931,14 @@ clean_project_artifacts() {
+             failed_scan_statuses+=("$scan_status")
+             debug_log "Purge scan incomplete (status $scan_status): ${scan_roots[$scan_index]:-unknown root}"
+         fi
+-        rm -f "$scan_output" "${scan_output}.targets" "${scan_output}.tags" "${scan_output}.processed" "${scan_output}.errors" 2> /dev/null || true
++        rm -f "$scan_output" "${scan_output}.targets" "${scan_output}.tags" "${scan_output}.processed" "${scan_output}.errors" 2> /dev/null || true # SAFE: exact scan temp files created by mktemp for this purge
+     done
+     if [[ -s "$dedupe_output" ]]; then
+         while IFS= read -r item; do
+             [[ -n "$item" ]] && all_found_items+=("$item")
+         done < <(LC_COLLATE=C sort -u "$dedupe_output")
+     fi
+-    rm -f "$dedupe_output"
++    rm -f "$dedupe_output" # SAFE: exact temp file created by mktemp_file above
+     # Restore caller traps after this function completes.
+     _restore_purge_scan_traps
+     if [[ $failed_scan_count -gt 0 ]]; then
+@@ -2281,7 +2280,7 @@ clean_project_artifacts() {
+         local artifact_type="${item#"$project_root/"}"
+         local size_raw
+         size_raw=$(cat "${_size_tmpfiles[$item_index]}" 2> /dev/null || echo "0")
+-        rm -f "${_size_tmpfiles[$item_index]}" 2> /dev/null || true
++        rm -f "${_size_tmpfiles[$item_index]}" 2> /dev/null || true # SAFE: exact temp file created by mktemp above
+         _sz_idx=$((_sz_idx + 1))
+         local size_kb=0
+         local size_human=""
+@@ -2400,7 +2399,7 @@ clean_project_artifacts() {
+             group_ranks[group_index]=$group_rank
+             group_rank=$((group_rank + 1))
+         done < <(sort -t'|' -k2,2nr -k1,1n "$group_sort_temp")
+-        rm -f "$group_sort_temp"
++        rm -f "$group_sort_temp" # SAFE: exact temp file created by mktemp above
+ 
+         local item_sort_temp
+         item_sort_temp=$(mktemp)
+@@ -2413,7 +2412,7 @@ clean_project_artifacts() {
+         while IFS='|' read -r group_rank size idx; do
+             sorted_indices+=("$idx")
+         done < <(sort -t'|' -k1,1n -k2,2nr -k3,3n "$item_sort_temp")
+-        rm -f "$item_sort_temp"
++        rm -f "$item_sort_temp" # SAFE: exact temp file created by mktemp above
+ 
+         # Rebuild arrays in sorted order
+         local -a sorted_menu_options=()
+diff --git a/lib/clean/system.sh b/lib/clean/system.sh
+index 8d6f2d0b..c2457104 100644
+--- a/lib/clean/system.sh
++++ b/lib/clean/system.sh
+@@ -1174,6 +1174,9 @@ clean_time_machine_failed_backups() {
+                     note_activity
+                     continue
+                 fi
++                if ! mole_selection_allows "$inprogress_file"; then
++                    continue
++                fi
+                 if ! command -v tmutil > /dev/null 2>&1; then
+                     echo -e "  ${YELLOW}!${NC} Incomplete backup: $backup_name · skipped (tmutil unavailable)"
+                     note_activity
+@@ -1331,6 +1334,9 @@ clean_time_machine_failed_backups() {
+                         note_activity
+                         continue
+                     fi
++                    if ! mole_selection_allows "$inprogress_file"; then
++                        continue
++                    fi
+                     if ! command -v tmutil > /dev/null 2>&1; then
+                         continue
+                     fi
+diff --git a/lib/core/file_ops.sh b/lib/core/file_ops.sh
+index 632ddd1d..821ec7c3 100644
+--- a/lib/core/file_ops.sh
++++ b/lib/core/file_ops.sh
+@@ -1426,6 +1426,13 @@ safe_remove() {
+         return "$pending_clean_cancel"
+     fi
+ 
++    # A host selection names the exact previewed paths the user approved.
++    # Refuse everything else before any probe or removal, and quietly: the
++    # host only reports outcomes for paths it selected.
++    if ! mole_selection_allows "$path"; then
++        return 1
++    fi
++
+     # Validate path. Silent cleanup callers still need the same policy result,
+     # but should not print one validation warning per skipped cache item.
+     # Real cleanup performs its recursive container-handle probe once at the
+@@ -1790,6 +1797,10 @@ safe_remove_symlink() {
+         return "$pending_clean_cancel"
+     fi
+ 
++    if ! mole_selection_allows "$path"; then
++        return 1
++    fi
++
+     if [[ ! -L "$path" ]]; then
+         return 1
+     fi
+@@ -1927,6 +1938,10 @@ safe_sudo_remove() {
+         return "$pending_clean_cancel"
+     fi
+ 
++    if ! mole_selection_allows "$path"; then
++        return 1
++    fi
++
+     if ! validate_path_for_deletion "$path"; then
+         if declare -f should_protect_path > /dev/null 2>&1 && should_protect_path "$path"; then
+             debug_log "Skipped sudo remove for protected path: $path"
+@@ -3445,6 +3460,9 @@ safe_sudo_find_delete() {
+     local deadline_reached=false
+     local batch_aborted=false
+     while IFS= read -r -d '' match; do
++        if ! mole_selection_allows "$match"; then
++            continue
++        fi
+         if [[ -n "$deadline_seconds" && $SECONDS -ge $deadline_seconds ]]; then
+             deadline_reached=true
+             delete_rc=124
+diff --git a/tests/clean_selection.bats b/tests/clean_selection.bats
+new file mode 100644
+index 00000000..49d1df70
+--- /dev/null
++++ b/tests/clean_selection.bats
+@@ -0,0 +1,266 @@
++#!/usr/bin/env bats
++# Exact-path selections: clean deletion sinks, the dry-run recorder and
++# tool-driven cleanups all honour MOLE_SELECTION_FILE.
++
++load helpers/common
++
++setup_file() {
++    mole_test_setup_home clean-selection
++}
++
++teardown_file() {
++    mole_test_teardown_home
++}
++
++setup() {
++    if [[ "$HOME" != "${BATS_TEST_DIRNAME}/tmp-"* ]]; then
++        printf 'FATAL: HOME is not a test temp dir: %s\n' "$HOME" >&2
++        return 1
++    fi
++    rm -rf "${HOME:?}"/* "$HOME/.config" "$HOME/.cache" "$HOME/.tmp"
++    mkdir -p "$HOME/Library/Caches" "$HOME/.config/mole" "$HOME/.tmp"
++    EVENTS="$BATS_TEST_TMPDIR/events.ndjson"
++    SELECTION_FILE=""
++    : > "$EVENTS"
++}
++
++# Same seams as clean_core.bats: no real Homebrew, Xcode, process table or
++# open-file probe may influence what the pipeline sees.
++set_mock_host_toolchains() {
++    MOCK_TOOLCHAIN_BIN="$HOME/toolchain-bin"
++    mkdir -p "$MOCK_TOOLCHAIN_BIN"
++    cat > "$MOCK_TOOLCHAIN_BIN/brew" << 'MOCK'
++#!/bin/bash
++case "${1:-}" in
++    --cache) echo "$HOME/Library/Caches/Homebrew" ;;
++    --prefix) echo "$HOME/homebrew" ;;
++esac
++exit 0
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/xcrun" << 'MOCK'
++#!/bin/bash
++exit 1
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/lsof" << 'MOCK'
++#!/bin/bash
++case " $* " in
++    *" -p 1 "*) printf 'p1\nu0\n'; exit 0 ;;
++    *) exit 1 ;;
++esac
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/ps" << 'MOCK'
++#!/bin/bash
++printf '  PID  PPID COMM ARGS\n'
++MOCK
++    chmod +x "$MOCK_TOOLCHAIN_BIN"/*
++}
++
++# Test-only guard: any rm aimed outside the fake HOME is refused and logged.
++install_rm_guard() {
++    RM_GUARD_BIN="$BATS_TEST_TMPDIR/rm-guard-bin"
++    RM_GUARD_LOG="$BATS_TEST_TMPDIR/rm-refused.log"
++    mkdir -p "$RM_GUARD_BIN"
++    : > "$RM_GUARD_LOG"
++    cat > "$RM_GUARD_BIN/rm" << GUARD
++#!/bin/bash
++for arg in "\$@"; do
++    case "\$arg" in
++        -*) ;;
++        "$HOME"/*) ;;
++        *)
++            printf '%s\n' "\$arg" >> "$RM_GUARD_LOG"
++            exit 1
++            ;;
++    esac
++done
++exec /bin/rm "\$@"
++GUARD
++    chmod +x "$RM_GUARD_BIN/rm"
++}
++
++run_clean_json() {
++    local -a vars=(
++        HOME="$HOME" TMPDIR="$HOME/.tmp" MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=1 MOLE_NO_AUTH=1
++        MOLE_GUI_HOST=roomformac MOLE_LSREGISTER_PATH="" MOLE_JSON_EVENTS_FILE="$EVENTS"
++        PATH="$RM_GUARD_BIN:$MOCK_TOOLCHAIN_BIN:$PATH"
++    )
++    if [[ -n "$SELECTION_FILE" ]]; then
++        vars+=(MOLE_SELECTION_FILE="$SELECTION_FILE")
++    fi
++    run env "${vars[@]}" "$PROJECT_ROOT/bin/clean.sh" "$@"
++}
++
++make_cache() {
++    mkdir -p "$HOME/Library/Caches/$1"
++    dd if=/dev/zero of="$HOME/Library/Caches/$1/blob.bin" bs=1024 count="$2" 2> /dev/null
++}
++
++@test "safe_remove refuses paths outside the selection and removes selected ones" {
++    mkdir -p "$HOME/sel/keep" "$HOME/sel/drop"
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/sel/drop" > "$SELECTION_FILE"
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MO_NO_OPLOG=1 \
++        MOLE_SELECTION_FILE="$SELECTION_FILE" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++if safe_remove "$HOME/sel/keep" true; then echo "keep: removed"; else echo "keep: refused"; fi
++if safe_remove "$HOME/sel/drop" true; then echo "drop: removed"; else echo "drop: refused"; fi
++EOF
++    [ "$status" -eq 0 ]
++    [[ "$output" == *"keep: refused"* ]] || return 1
++    [[ "$output" == *"drop: removed"* ]] || return 1
++    [ -d "$HOME/sel/keep" ]
++    [ ! -e "$HOME/sel/drop" ]
++}
++
++@test "the dry-run recorder lists only selected paths" {
++    mkdir -p "$HOME/sel/a" "$HOME/sel/b"
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/sel/a" > "$SELECTION_FILE"
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 MO_NO_OPLOG=1 \
++        MOLE_SELECTION_FILE="$SELECTION_FILE" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++source "$PROJECT_ROOT/bin/clean.sh"
++EXPORT_LIST_FILE="$HOME/preview.txt"
++if record_dry_run_cleanup_target "$HOME/sel/b" 4 1 true; then echo "b: listed"; else echo "b: skipped"; fi
++if append_dry_run_cleanup_target "$HOME/sel/b" 4 1 true; then echo "b direct: listed"; else echo "b direct: skipped"; fi
++if record_dry_run_cleanup_target "$HOME/sel/a" 4 1 true; then echo "a: listed"; else echo "a: skipped"; fi
++EOF
++    [ "$status" -eq 0 ]
++    [[ "$output" == *"b: skipped"* ]] || return 1
++    [[ "$output" == *"b direct: skipped"* ]] || return 1
++    [[ "$output" == *"a: listed"* ]] || return 1
++}
++
++@test "tool-driven cache cleanups never run under a selection" {
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/unrelated" > "$SELECTION_FILE"
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 MO_NO_OPLOG=1 \
++        SELECTION="$SELECTION_FILE" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++source "$PROJECT_ROOT/bin/clean.sh"
++mark_tool_ran() { : > "$HOME/tool-ran-$1"; }
++clean_tool_cache "Example cache" "$HOME/example-cache" mark_tool_ran without-selection
++MOLE_SELECTION_FILE="$SELECTION" clean_tool_cache "Example cache" "$HOME/example-cache" mark_tool_ran with-selection
++EOF
++    [ "$status" -eq 0 ]
++    [ -e "$HOME/tool-ran-without-selection" ]
++    [ ! -e "$HOME/tool-ran-with-selection" ]
++}
++
++@test "the stub-container remover refuses containers outside the selection" {
++    local container="$HOME/Library/Containers/com.example.stub"
++    mkdir -p "$container"
++    : > "$container/.com.apple.containermanagerd.metadata.plist"
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/Library/Containers/com.example.other" > "$SELECTION_FILE"
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 MO_NO_OPLOG=1 \
++        MOLE_SELECTION_FILE="$SELECTION_FILE" CONTAINER="$container" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++source "$PROJECT_ROOT/bin/clean.sh"
++if _remove_verified_container_stub "$CONTAINER" "$CONTAINER/.com.apple.containermanagerd.metadata.plist"; then
++    echo removed
++else
++    echo refused
++fi
++EOF
++    [ "$status" -eq 0 ]
++    [ "$output" = "refused" ]
++    [ -f "$container/.com.apple.containermanagerd.metadata.plist" ]
++}
++
++@test "Homebrew cleanup is skipped under a selection" {
++    mole_test_fake_command brew 'printf "%s\n" "$*" >> "$HOME/brew-calls"; exit 0'
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/unrelated" > "$SELECTION_FILE"
++    run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 MO_NO_OPLOG=1 \
++        MOLE_SELECTION_FILE="$SELECTION_FILE" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++source "$PROJECT_ROOT/bin/clean.sh"
++clean_homebrew
++EOF
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/brew-calls" ]
++}
++
++@test "a selected dry run previews only the selected paths" {
++    command -v jq > /dev/null || skip "jq is required"
++    make_cache com.example.alpha 64
++    make_cache com.example.beta 64
++    set_mock_host_toolchains
++    install_rm_guard
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/Library/Caches/com.example.alpha" > "$SELECTION_FILE"
++
++    run_clean_json --dry-run
++    [ "$status" -eq 0 ]
++    run jq -r 'select(.type == "item") | .path' "$EVENTS"
++    [ "$output" = "$HOME/Library/Caches/com.example.alpha" ]
++}
++
++@test "a selected run removes exactly the selected preview items" {
++    command -v jq > /dev/null || skip "jq is required"
++    local caches="$HOME/Library/Caches"
++    make_cache com.example.alpha 256
++    make_cache com.example.beta 256
++    make_cache com.example.gamma 256
++    set_mock_host_toolchains
++    install_rm_guard
++
++    run_clean_json --dry-run
++    [ "$status" -eq 0 ]
++    local preview="$BATS_TEST_TMPDIR/preview.txt"
++    jq -r 'select(.type == "item") | .path' "$EVENTS" > "$preview"
++    grep -qxF "$caches/com.example.alpha" "$preview"
++    grep -qxF "$caches/com.example.beta" "$preview"
++    grep -qxF "$caches/com.example.gamma" "$preview"
++
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$caches/com.example.alpha" "$caches/com.example.gamma" > "$SELECTION_FILE"
++    : > "$EVENTS"
++    run_clean_json
++    [ "$status" -eq 0 ]
++
++    [ ! -e "$caches/com.example.alpha" ]
++    [ ! -e "$caches/com.example.gamma" ]
++    [ -f "$caches/com.example.beta/blob.bin" ]
++
++    # Nothing else from the preview disappeared (Mole's own scratch aside).
++    local path
++    while IFS= read -r path; do
++        case "$path" in
++            "$caches/com.example.alpha" | "$caches/com.example.gamma") continue ;;
++            "$HOME/.tmp"/* | "$HOME/.cache/mole"* | "$HOME/Library/Logs/mole"*) continue ;;
++        esac
++        [ -e "$path" ] || {
++            echo "unexpectedly removed: $path"
++            return 1
++        }
++    done < "$preview"
++
++    run jq -r 'select(.type == "result" and .action == "removed") | .path' "$EVENTS"
++    [[ "$output" == *"$caches/com.example.alpha"* ]] || return 1
++    [[ "$output" == *"$caches/com.example.gamma"* ]] || return 1
++    [[ "$output" != *"$caches/com.example.beta"* ]] || return 1
++    [ ! -s "$RM_GUARD_LOG" ]
++}
++
++@test "a selected item that vanishes before the run is never reported as removed" {
++    command -v jq > /dev/null || skip "jq is required"
++    make_cache com.example.alpha 64
++    set_mock_host_toolchains
++    install_rm_guard
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$HOME/Library/Caches/com.example.alpha" > "$SELECTION_FILE"
++    rm -rf "$HOME/Library/Caches/com.example.alpha"
++
++    run_clean_json
++    [ "$status" -eq 0 ]
++    run jq -r 'select(.type == "result" and .action == "removed") | .path' "$EVENTS"
++    [ -z "$output" ]
++    [ ! -s "$RM_GUARD_LOG" ]
++}
