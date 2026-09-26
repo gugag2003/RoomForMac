@@ -2,6 +2,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-roomformac-design.md`
 
+**Status (2026-09-26):** Plan 1 is built on `main`, and its CI run is blocked by Actions billing. The recommended MVP scope, the remaining steps and prompts for the next sessions are in `docs/superpowers/plans/2026-09-26-mvp-handoff.md`.
+
 The spec spans six largely independent subsystems. Each plan below ends with working, tested software, and each is written **after the previous one lands**, so it can use real names discovered on the way — the spikes in spec §14 answer questions that later plans depend on (exact Liquid Glass APIs, TCC attribution, the Polar API).
 
 | # | Plan | Delivers | Spec | Depends on | Spikes |

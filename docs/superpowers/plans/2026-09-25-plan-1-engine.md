@@ -6383,7 +6383,7 @@ git commit -m "ci: build the patched engine and run every engine and package tes
 
 Pushing publishes the repository contents. Ask first; once approved: `git push -u origin main`, then check the run in GitHub Actions. Expected: the `Engine and MoleEngine` job is green.
 
-**Still open (2026-09-26):** `main` (`796c9c5`) is on `origin`, but its push run (Actions run `36269862650`) ended in `startup_failure` with no jobs started. GitHub reports "This run likely failed because of a workflow file issue". A `pull_request` run on the same day failed the same way. This step stays unticked until a run of the `Engine and MoleEngine` job completes green.
+**Still open (2026-09-26):** `main` (`796c9c5`) is on `origin`, but its push run (Actions run `36269862650`) ended in `startup_failure` with no jobs started. The CLI summary blames "a workflow file issue", but the run page's annotation gives the real cause: "The job was not started because recent account payments have failed or your spending limit needs to be increased." The repository is private, where macOS runner minutes are billed. Every run so far (push and `pull_request`, on `main` and `fix/engine-kb-overflow`) failed the same way. Fix the account's Actions billing or spending limit, or make the repository public, then re-run. This step stays unticked until a run of the `Engine and MoleEngine` job completes green.
 
 ---
 
