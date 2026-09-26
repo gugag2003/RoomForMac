@@ -47,7 +47,9 @@ cmd_export() {
     [[ -z "$(git -C "$WORK" status --porcelain)" ]] || die "$WORK has uncommitted changes"
     mkdir -p "$PATCH_DIR"
     find "$PATCH_DIR" -name '*.patch' -delete
-    git -C "$WORK" format-patch --quiet --zero-commit --no-signature \
+    # --no-numbered keeps each subject "[PATCH]", so adding a patch never
+    # rewrites the ones before it.
+    git -C "$WORK" format-patch --quiet --zero-commit --no-signature --no-numbered \
         -o "$PATCH_DIR" "$(pinned_commit)..roomformac"
     ls -1 "$PATCH_DIR"
 }

@@ -61,3 +61,44 @@ or symlinked selection file allows nothing.
 - Strings escape `"`, `\`, `\n`, `\r`, `\t`, and other control bytes as `\u00XX`.
 - Sizes are integer kilobytes (`size_kb`); booleans are JSON booleans.
 - A run is complete only when its `summary` event arrived and the process exited 0.
+
+## Clean events (`bin/clean.sh`, patch 0002)
+
+| `type` | When | Fields |
+|---|---|---|
+| `section` | a cleanup section starts | `name` |
+| `candidate` | a dry run finds an item (live progress; may repeat or overlap) | `section`, `path`, `size_kb`, `size_known` |
+| `item` | end of a dry run: the deduplicated preview | `section`, `path`, `size_kb`, `count`, `size_known`, `covered_by` (nearest previewed ancestor whose size already includes this item, or `null`) |
+| `result` | real runs: one outcome per path, mirrored from `log_operation` | `command`, `action` (`removed` / `skipped` / `failed`), `path`, `detail` |
+| `summary` | end of every run | `command`, `dry_run`, `items`, `size_kb`, `partial`, `exit` |
+
+Hosts total a preview from `item` events whose `covered_by` is `null`, and charge only
+`result` events with `action: removed` whose `path` is one of the paths they selected.
+
+Details:
+
+- `result` events are written whenever `MOLE_JSON_EVENTS_FILE` is set, even with
+  `MO_NO_OPLOG=1`, and never while `MOLE_DRY_RUN=1` (which `--dry-run` sets).
+  `log_operation` actions other than `REMOVED`, `SKIPPED` and `FAILED` (such as `REBUILT`)
+  are not reported. Two removal paths bypass `log_operation` and report directly:
+  - Batched admin removals in `safe_sudo_find_delete` (`detail: "batch"`). They only run in
+    the System section, which needs admin access, so they never run under `MOLE_NO_AUTH=1`
+    and write no `result` events there.
+  - Time Machine `tmutil delete` outcomes (`detail` is the human-readable size on
+    success, `"tmutil delete"` otherwise). The Time Machine section is not gated by admin
+    access: a real run without `--external` calls `tmutil delete` without `sudo` for each
+    old incomplete backup it finds on a locally mounted backup volume or backup disk image
+    while Time Machine is idle. `tmutil delete` needs root and Full Disk Access, so when
+    the engine runs as a normal user (as RoomForMac always runs it, with
+    `MOLE_NO_AUTH=1`), the attempt can only report `action: "failed"` with
+    `detail: "tmutil delete"`, never `removed`. The same `failed` result is written when
+    the delete times out or the section runs out of time before trying it.
+- `summary`: `items` and `size_kb` are the run totals (for a dry run, the sums of `count`
+  and `size_kb` over `item` rows whose `covered_by` is `null`); `partial` is `true` when a
+  dry-run total leaves out items of unknown size; `exit` is `0`, or the status of the
+  cleanup step that stopped the run early (`124` timeout, `128` and above a signal, any
+  other value a required step that failed). Only a run that reaches the end of the
+  cleanup pass writes a `summary`. A run whose engine process is killed, or stopped by
+  `SIGINT` or `SIGTERM`, writes none, and so does one that ends before or outside that
+  pass: invalid arguments, `--help`, `--whitelist`, a dry run that cannot create its
+  preview file, or Mole's test mode (`MOLE_TEST_MODE=1`), for example.

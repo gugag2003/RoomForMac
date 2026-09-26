@@ -1,0 +1,345 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Sat, 26 Sep 2026 00:06:04 -0300
+Subject: [PATCH] Stream machine-readable clean events for GUI hosts
+
+With MOLE_JSON_EVENTS_FILE set, clean appends one JSON object per line:
+section and candidate progress, the deduplicated preview items (with the
+covering ancestor), per-path results mirrored from log_operation, and a
+run summary.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ bin/clean.sh                 |   9 +++
+ lib/clean/system.sh          |   6 ++
+ lib/core/file_ops.sh         |   6 ++
+ lib/core/host.sh             |  52 ++++++++++++++
+ lib/core/log.sh              |   9 +++
+ tests/clean_json_events.bats | 132 +++++++++++++++++++++++++++++++++++
+ 6 files changed, 214 insertions(+)
+ create mode 100644 tests/clean_json_events.bats
+
+diff --git a/bin/clean.sh b/bin/clean.sh
+index bd33a516..6f9e9e0f 100755
+--- a/bin/clean.sh
++++ b/bin/clean.sh
+@@ -221,6 +221,10 @@ append_dry_run_cleanup_target() {
+     [[ "$item_count" =~ ^[0-9]+$ && "$item_count" -gt 0 ]] || item_count=1
+     [[ "$size_known" == "true" || "$size_known" == "false" ]] || size_known=false
+ 
++    # Live progress for hosts. The ledger stays authoritative: it is
++    # deduplicated and annotated with coverage before the final item events.
++    mole_json_event_candidate "$path" "$size_kb" "$size_known" "${CURRENT_SECTION:-Uncategorized}"
++
+     if [[ -n "${CLEAN_PREVIEW_LEDGER_FILE:-}" && -f "$CLEAN_PREVIEW_LEDGER_FILE" && ! -L "$CLEAN_PREVIEW_LEDGER_FILE" ]]; then
+         printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+             "$identity" "$size_kb" "$item_count" "$size_known" "${CURRENT_SECTION:-Uncategorized}" "$path" \
+@@ -489,6 +493,7 @@ render_clean_preview_from_ledger() {
+ 
+             [[ "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
+             [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || count=1
++            mole_json_event_item "$section" "$path" "$size_kb" "$count" "$size_known" "$covered_by"
+             local item_note=""
+             [[ "$count" -gt 1 ]] && item_note=", $count items"
+             # A row inside another measured candidate stays visible, so the
+@@ -668,6 +673,7 @@ start_section() {
+     TRACK_SECTION=1
+     SECTION_ACTIVITY=0
+     CURRENT_SECTION="$1"
++    mole_json_event_section "$1"
+     if [[ "${IDLE_SECTION_PENDING:-0}" == "1" ]]; then
+         # Overwrite the previous idle section's header line in place (the
+         # pending flag is only ever set on an interactive ANSI terminal).
+@@ -2104,6 +2110,9 @@ perform_cleanup() {
+         set -e
+     fi
+ 
++    mole_json_event_summary "clean" "$DRY_RUN" "$files_cleaned" "$total_size_cleaned" \
++        "${DRY_RUN_TOTAL_PARTIAL:-false}" "$cleanup_cancel_rc"
++
+     # Log session end with summary
+     log_operation_session_end "clean" "$files_cleaned" "$total_size_cleaned"
+ 
+diff --git a/lib/clean/system.sh b/lib/clean/system.sh
+index 0e7a16d2..8d6f2d0b 100644
+--- a/lib/clean/system.sh
++++ b/lib/clean/system.sh
+@@ -1203,11 +1203,14 @@ clean_time_machine_failed_backups() {
+                     local line_color
+                     line_color=$(cleanup_result_color_kb "$size_kb")
+                     echo -e "  ${line_color}${ICON_SUCCESS}${NC} Incomplete backup: $backup_name${NC} · ${line_color}$size_human${NC}"
++                    # tmutil deletions bypass log_operation; report each outcome directly.
++                    mole_json_event_result "clean" "REMOVED" "$inprogress_file" "$size_human"
+                     tm_cleaned=$((tm_cleaned + 1))
+                     mole_add_cleaned_row 1 "$size_kb"
+                     note_activity
+                 else
+                     echo -e "  ${YELLOW}!${NC} Could not delete: $backup_name · try manually with sudo"
++                    mole_json_event_result "clean" "FAILED" "$inprogress_file" "tmutil delete"
+                     # Mark activity so the idle-section erase in end_section
+                     # never wipes this failure warning off the terminal.
+                     note_activity
+@@ -1355,11 +1358,14 @@ clean_time_machine_failed_backups() {
+                         local line_color
+                         line_color=$(cleanup_result_color_kb "$size_kb")
+                         echo -e "  ${line_color}${ICON_SUCCESS}${NC} Incomplete APFS backup in $bundle_name: $backup_name${NC} · ${line_color}$size_human${NC}"
++                        # tmutil deletions bypass log_operation; report each outcome directly.
++                        mole_json_event_result "clean" "REMOVED" "$inprogress_file" "$size_human"
+                         tm_cleaned=$((tm_cleaned + 1))
+                         mole_add_cleaned_row 1 "$size_kb"
+                         note_activity
+                     else
+                         echo -e "  ${YELLOW}!${NC} Could not delete from bundle: $backup_name"
++                        mole_json_event_result "clean" "FAILED" "$inprogress_file" "tmutil delete"
+                         # Keep the warning visible past the idle-section erase.
+                         note_activity
+                         if [[ $tm_delete_rc -ge 128 ]]; then
+diff --git a/lib/core/file_ops.sh b/lib/core/file_ops.sh
+index bc403a93..632ddd1d 100644
+--- a/lib/core/file_ops.sh
++++ b/lib/core/file_ops.sh
+@@ -36,6 +36,10 @@ if [[ -z "${MOLE_TIMEOUTS_LOADED:-}" ]]; then
+     # shellcheck source=lib/core/timeouts.sh
+     source "$_MOLE_CORE_DIR/timeouts.sh"
+ fi
++if [[ -z "${MOLE_HOST_LOADED:-}" ]]; then
++    # shellcheck source=lib/core/host.sh
++    source "$_MOLE_CORE_DIR/host.sh"
++fi
+ 
+ # Keep the removal-timeout summary actionable: record which path ran out of
+ # budget so the closing note can name it instead of a bare count.
+@@ -3617,6 +3621,8 @@ safe_sudo_find_delete() {
+                 if [[ -n "$batch_ts" ]]; then
+                     removed_lines+=("[$batch_ts] [${MOLE_CURRENT_COMMAND:-clean}] REMOVED $batch_file (batch)")
+                 fi
++                # Batch removals bypass log_operation; report each one directly.
++                mole_json_event_result "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "$batch_file" "batch"
+             done < "$batch_result_file"
+             rm -f -- "$batch_result_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
+ 
+diff --git a/lib/core/host.sh b/lib/core/host.sh
+index 6f3bb694..05273769 100644
+--- a/lib/core/host.sh
++++ b/lib/core/host.sh
+@@ -178,3 +178,55 @@ mole_selection_allows() {
+     _mole_selection_hash "$candidate"
+     [[ "${_MOLE_SELECTION_BUCKETS[(_MOLE_SELECTION_HASH % 1021 + 1021) % 1021]-}" == *"$sep$candidate$sep"* ]]
+ }
++
++# ============================================================================
++# Clean Events
++# ============================================================================
++
++mole_json_event_section() {
++    mole_json_events_enabled || return 0
++    mole_json_emit "{\"v\":1,\"type\":\"section\",\"name\":$(mole_json_str "${1-}")}"
++}
++
++# Live dry-run progress. May repeat or overlap; the final item events are
++# the authoritative preview. Args: path, size_kb, size_known, section
++mole_json_event_candidate() {
++    mole_json_events_enabled || return 0
++    mole_json_emit "{\"v\":1,\"type\":\"candidate\",\"section\":$(mole_json_str "${4-}"),\"path\":$(mole_json_str "${1-}"),\"size_kb\":$(mole_json_num "${2-}"),\"size_known\":$(mole_json_bool "${3-}")}"
++}
++
++# One deduplicated preview row. covered_by names the nearest previewed
++# ancestor whose size already includes this row, or is empty.
++# Args: section, path, size_kb, count, size_known, covered_by
++mole_json_event_item() {
++    mole_json_events_enabled || return 0
++    local covered_by="null"
++    if [[ -n "${6-}" ]]; then
++        covered_by=$(mole_json_str "$6")
++    fi
++    mole_json_emit "{\"v\":1,\"type\":\"item\",\"section\":$(mole_json_str "${1-}"),\"path\":$(mole_json_str "${2-}"),\"size_kb\":$(mole_json_num "${3-}"),\"count\":$(mole_json_num "${4-}"),\"size_known\":$(mole_json_bool "${5-}"),\"covered_by\":$covered_by}"
++}
++
++# Mirror of log_operation: one outcome for one path. Dry runs only preview,
++# so they never report outcomes.
++# Args: command, action (REMOVED/SKIPPED/FAILED), path, detail
++mole_json_event_result() {
++    mole_json_events_enabled || return 0
++    if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
++        return 0
++    fi
++    local action=""
++    case "${2-}" in
++        REMOVED) action="removed" ;;
++        SKIPPED) action="skipped" ;;
++        FAILED) action="failed" ;;
++        *) return 0 ;;
++    esac
++    mole_json_emit "{\"v\":1,\"type\":\"result\",\"command\":$(mole_json_str "${1-}"),\"action\":\"$action\",\"path\":$(mole_json_str "${3-}"),\"detail\":$(mole_json_str "${4-}")}"
++}
++
++# Args: command, dry_run (true/false), items, size_kb, partial (true/false), exit
++mole_json_event_summary() {
++    mole_json_events_enabled || return 0
++    mole_json_emit "{\"v\":1,\"type\":\"summary\",\"command\":$(mole_json_str "${1-}"),\"dry_run\":$(mole_json_bool "${2-}"),\"items\":$(mole_json_num "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"partial\":$(mole_json_bool "${5-}"),\"exit\":$(mole_json_num "${6-}")}"
++}
+diff --git a/lib/core/log.sh b/lib/core/log.sh
+index b7a23482..7190b4da 100644
+--- a/lib/core/log.sh
++++ b/lib/core/log.sh
+@@ -17,6 +17,12 @@ if [[ -z "${MOLE_BASE_LOADED:-}" ]]; then
+     source "$_MOLE_CORE_DIR/base.sh"
+ fi
+ 
++# log_operation mirrors outcomes into the host event stream.
++if [[ -z "${MOLE_HOST_LOADED:-}" ]]; then
++    # shellcheck source=lib/core/host.sh
++    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/host.sh"
++fi
++
+ # ============================================================================
+ # Logging Configuration
+ # ============================================================================
+@@ -212,6 +218,9 @@ oplog_enabled() {
+ # Example: log_operation "clean" "SKIPPED" "/path/to/file" "whitelist"
+ # Example: log_operation "uninstall" "REMOVED" "/Applications/App.app" "150MB"
+ log_operation() {
++    # A host needs per-item outcomes even when the operations log is off.
++    mole_json_event_result "${1:-unknown}" "${2:-UNKNOWN}" "${3:-}" "${4:-}"
++
+     # Allow disabling via environment variable
+     oplog_enabled || return 0
+ 
+diff --git a/tests/clean_json_events.bats b/tests/clean_json_events.bats
+new file mode 100644
+index 00000000..2d3ec373
+--- /dev/null
++++ b/tests/clean_json_events.bats
+@@ -0,0 +1,132 @@
++#!/usr/bin/env bats
++# Machine-readable clean events: sections, candidates, deduplicated preview
++# items, per-path results and the run summary.
++
++load helpers/common
++
++setup_file() {
++    mole_test_setup_home clean-json-events
++}
++
++teardown_file() {
++    mole_test_teardown_home
++}
++
++setup() {
++    if [[ "$HOME" != "${BATS_TEST_DIRNAME}/tmp-"* ]]; then
++        printf 'FATAL: HOME is not a test temp dir: %s\n' "$HOME" >&2
++        return 1
++    fi
++    rm -rf "${HOME:?}"/* "$HOME/.config" "$HOME/.cache" "$HOME/.tmp"
++    mkdir -p "$HOME/Library/Caches" "$HOME/.config/mole" "$HOME/.tmp"
++    EVENTS="$BATS_TEST_TMPDIR/events.ndjson"
++    : > "$EVENTS"
++}
++
++# Same seams as clean_core.bats: no real Homebrew, Xcode, process table or
++# open-file probe may influence what the pipeline sees.
++set_mock_host_toolchains() {
++    MOCK_TOOLCHAIN_BIN="$HOME/toolchain-bin"
++    mkdir -p "$MOCK_TOOLCHAIN_BIN"
++    cat > "$MOCK_TOOLCHAIN_BIN/brew" << 'MOCK'
++#!/bin/bash
++case "${1:-}" in
++    --cache) echo "$HOME/Library/Caches/Homebrew" ;;
++    --prefix) echo "$HOME/homebrew" ;;
++esac
++exit 0
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/xcrun" << 'MOCK'
++#!/bin/bash
++exit 1
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/lsof" << 'MOCK'
++#!/bin/bash
++case " $* " in
++    *" -p 1 "*) printf 'p1\nu0\n'; exit 0 ;;
++    *) exit 1 ;;
++esac
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/ps" << 'MOCK'
++#!/bin/bash
++printf '  PID  PPID COMM ARGS\n'
++MOCK
++    chmod +x "$MOCK_TOOLCHAIN_BIN"/*
++}
++
++@test "item events carry section, path, size, count and coverage" {
++    run env EVENTS="$EVENTS" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/host.sh"
++MOLE_JSON_EVENTS_FILE="$EVENTS"
++mole_json_event_item "User essentials" '/Users/x/Library/Caches/A "quoted"' 2048 3 true ""
++mole_json_event_item "Dev tools" "/Users/x/Library/Caches/A/v6" 10 1 false "/Users/x/Library/Caches/A"
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$EVENTS"
++    [ "${lines[0]}" = '{"v":1,"type":"item","section":"User essentials","path":"/Users/x/Library/Caches/A \"quoted\"","size_kb":2048,"count":3,"size_known":true,"covered_by":null}' ]
++    [ "${lines[1]}" = '{"v":1,"type":"item","section":"Dev tools","path":"/Users/x/Library/Caches/A/v6","size_kb":10,"count":1,"size_known":false,"covered_by":"/Users/x/Library/Caches/A"}' ]
++}
++
++@test "section, candidate and summary events have a fixed shape" {
++    run env EVENTS="$EVENTS" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/host.sh"
++MOLE_JSON_EVENTS_FILE="$EVENTS"
++mole_json_event_section "User essentials"
++mole_json_event_candidate "/Users/x/Library/Caches/A" 12 true "User essentials"
++mole_json_event_summary "clean" true 3 4096 false 0
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$EVENTS"
++    [ "${lines[0]}" = '{"v":1,"type":"section","name":"User essentials"}' ]
++    [ "${lines[1]}" = '{"v":1,"type":"candidate","section":"User essentials","path":"/Users/x/Library/Caches/A","size_kb":12,"size_known":true}' ]
++    [ "${lines[2]}" = '{"v":1,"type":"summary","command":"clean","dry_run":true,"items":3,"size_kb":4096,"partial":false,"exit":0}' ]
++}
++
++@test "log_operation mirrors outcomes as result events outside dry runs" {
++    run env HOME="$HOME" EVENTS="$EVENTS" PROJECT_ROOT="$PROJECT_ROOT" MO_NO_OPLOG=1 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++export MOLE_JSON_EVENTS_FILE="$EVENTS"
++log_operation "clean" "REMOVED" "/tmp/rfm/a" "1MB"
++log_operation "clean" "FAILED" "/tmp/rfm/b" "permission denied"
++log_operation "clean" "REBUILT" "/tmp/rfm/c" ""
++MOLE_DRY_RUN=1 log_operation "clean" "SKIPPED" "/tmp/rfm/d" "dry-run stub-container"
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$EVENTS"
++    [ "${#lines[@]}" -eq 2 ]
++    [ "${lines[0]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/a","detail":"1MB"}' ]
++    [ "${lines[1]}" = '{"v":1,"type":"result","command":"clean","action":"failed","path":"/tmp/rfm/b","detail":"permission denied"}' ]
++}
++
++@test "clean --dry-run streams sections, items and a summary for a fake home" {
++    command -v jq > /dev/null || skip "jq is required"
++    mkdir -p "$HOME/Library/Caches/com.example.alpha"
++    dd if=/dev/zero of="$HOME/Library/Caches/com.example.alpha/blob.bin" bs=1024 count=2048 2> /dev/null
++    set_mock_host_toolchains
++
++    run env HOME="$HOME" TMPDIR="$HOME/.tmp" MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=1 MOLE_NO_AUTH=1 \
++        MOLE_GUI_HOST=roomformac MOLE_LSREGISTER_PATH="" MOLE_JSON_EVENTS_FILE="$EVENTS" \
++        PATH="$MOCK_TOOLCHAIN_BIN:$PATH" "$PROJECT_ROOT/bin/clean.sh" --dry-run
++    [ "$status" -eq 0 ]
++
++    # Every line is valid JSON with schema version 1.
++    run jq -c 'select(.v != 1)' "$EVENTS"
++    [ "$status" -eq 0 ]
++    [ -z "$output" ]
++
++    run jq -r 'select(.type == "section") | .name' "$EVENTS"
++    [ -n "$output" ]
++    run jq -r 'select(.type == "candidate") | .path' "$EVENTS"
++    [ -n "$output" ]
++
++    local alpha="$HOME/Library/Caches/com.example.alpha"
++    run jq -s --arg p "$alpha" '[.[] | select(.type == "item" and (.path == $p or (.path | startswith($p + "/")))) | .size_kb] | add // 0' "$EVENTS"
++    [ "$output" -ge 2048 ]
++
++    run jq -r 'select(.type == "summary") | [.command, .dry_run, (.size_kb >= 2048)] | @tsv' "$EVENTS"
++    [ "$output" = $'clean\ttrue\ttrue' ]
++}
