@@ -241,7 +241,7 @@ setup_file() {
 
 @test "Go binaries are universal" {
     run lipo -archs "$ENGINE_OUT/bin/analyze-go"
-    [[ "$output" == *arm64* && "$output" == *x86_64* ]]
+    [[ "$output" == *arm64* && "$output" == *x86_64* ]] || return 1
     run lipo -archs "$ENGINE_OUT/bin/status-go"
     [[ "$output" == *arm64* && "$output" == *x86_64* ]]
 }
@@ -253,8 +253,8 @@ setup_file() {
 
 @test "VERSION records the pinned Mole release and patch set" {
     run cat "$ENGINE_OUT/VERSION"
-    [[ "$output" == *"mole_tag=V1.56.0"* ]]
-    [[ "$output" == *"mole_commit=239c90d"* ]]
+    [[ "$output" == *"mole_tag=V1.56.0"* ]] || return 1
+    [[ "$output" == *"mole_commit=239c90d"* ]] || return 1
     [[ "$output" == *"patch_count="* ]]
 }
 
@@ -5940,7 +5940,7 @@ git commit -m "test(engine-kit): end-to-end engine integration suite"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: one CI job on `macos-26` that builds the patched engine, runs the build checks, the patch tests, the analyzer Go tests, Mole's full suite on the patched tree, and the Swift package including the integration suite.
+- Produces: one CI job on `macos-26` that audits the build checks for bare `[[ ]]` assertions, builds the patched engine, runs the build checks, the patch tests, the analyzer Go tests, Mole's full suite on the patched tree, and the Swift package including the integration suite.
 
 - [ ] **Step 1: Write the workflow** — `.github/workflows/ci.yml`
 
@@ -5975,6 +5975,9 @@ jobs:
           shellcheck scripts/*.sh
           shfmt -d -i 4 -ci -sr scripts/*.sh
 
+      - name: Audit build-check assertions
+        run: python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats
+
       - name: Build the patched engine
         run: scripts/build-engine.sh
 
@@ -6004,6 +6007,7 @@ jobs:
 Run:
 ```bash
 shellcheck scripts/*.sh && shfmt -d -i 4 -ci -sr scripts/*.sh \
+  && python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats \
   && scripts/build-engine.sh && bats scripts/tests \
   && scripts/mole-patches.sh test --tree build/engine-src tests/host_integration.bats tests/clean_json_events.bats tests/clean_selection.bats tests/uninstall_host_mode.bats \
   && (cd build/engine-src && go test ./cmd/analyze -run TrashList -count=1 && ./scripts/test.sh) \

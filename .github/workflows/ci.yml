@@ -28,6 +28,9 @@ jobs:
           shellcheck scripts/*.sh
           shfmt -d -i 4 -ci -sr scripts/*.sh
 
+      - name: Audit build-check assertions
+        run: python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats
+
       - name: Build the patched engine
         run: scripts/build-engine.sh
 

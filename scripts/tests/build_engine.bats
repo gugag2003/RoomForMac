@@ -22,7 +22,7 @@ setup_file() {
 
 @test "Go binaries are universal" {
     run lipo -archs "$ENGINE_OUT/bin/analyze-go"
-    [[ "$output" == *arm64* && "$output" == *x86_64* ]]
+    [[ "$output" == *arm64* && "$output" == *x86_64* ]] || return 1
     run lipo -archs "$ENGINE_OUT/bin/status-go"
     [[ "$output" == *arm64* && "$output" == *x86_64* ]]
 }
@@ -34,8 +34,8 @@ setup_file() {
 
 @test "VERSION records the pinned Mole release and patch set" {
     run cat "$ENGINE_OUT/VERSION"
-    [[ "$output" == *"mole_tag=V1.56.0"* ]]
-    [[ "$output" == *"mole_commit=239c90d"* ]]
+    [[ "$output" == *"mole_tag=V1.56.0"* ]] || return 1
+    [[ "$output" == *"mole_commit=239c90d"* ]] || return 1
     [[ "$output" == *"patch_count="* ]]
 }
 
