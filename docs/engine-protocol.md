@@ -111,3 +111,41 @@ Details:
 - A selection file that is missing, a symlink, or unreadable allows nothing.
 - Selections match paths, not file identities. A selected path that no longer exists when the run reaches it is skipped and gets no `result`; whatever the cleanup finds at a selected path at run time (a folder an app recreated, for example) is cleaned like the original.
 - Hosts select a covered item (`covered_by` set) only when its covering ancestor is not selected, so no bytes are counted twice.
+
+## Uninstall (`bin/uninstall.sh`, patch 0004)
+
+| Variable | Effect |
+|---|---|
+| `MOLE_UNINSTALL_APP_PATHS_FILE=PATH` | NUL-separated `.app` paths. Each must exactly match an app from the normal eligibility scan; others produce `app_blocked` / `not_eligible`. |
+| `MOLE_UNINSTALL_PREVIEW_ONLY=1` | Stop after scanning the selected apps (always pair with `--dry-run`). |
+| `MOLE_ASSUME_YES=1` | Treat the plan as confirmed; never read a key. |
+
+| `type` | Fields |
+|---|---|
+| `app` | `path`, `name`, `bundle_id`, `size_kb` (app + leftovers), `needs_sudo`, `brew_cask`, `sensitive_data`, `running`, `leftovers` (paths removed with the app), `review_only` (system paths shown but never removed) |
+| `app_blocked` | `path`, `name`, `reason` (`not_eligible` / `official_uninstaller` / `manual_removal`), `vendor` |
+| `app_result` | `path`, `name`, `status` (`removed` / `failed`), `freed_kb`, `reason` |
+
+`uninstall --list` (stdout is a pipe → JSON array) adds `size_kb` and `last_used_epoch` to each app.
+While admin access is off, apps with `needs_sudo` or `brew_cask` cannot be removed (the batch
+needs a sudo session); hosts show them as needing a password and never send them.
+
+Details:
+
+- With `MOLE_UNINSTALL_APP_PATHS_FILE` set, name arguments, the `[y/N]` prompt and the
+  interactive selector are never used; `MOLE_ASSUME_YES=1` answers the one remaining
+  confirmation, the batch's `Enter` / `ESC` key.
+- `app` events come from the scan, so previews and real runs both write one for each selected
+  app that passed it, before anything is removed. A `not_eligible` event carries the requested
+  path (trailing slashes removed) with an empty `name` and `vendor`.
+- `app_result` events are written only for real runs, never with `--dry-run`. `freed_kb` is the
+  scanned `size_kb` of a removed app and `0` for a failed one; `reason` is empty on success.
+- Exit status `0`: the run finished (per-app failures are reported by `app_result`), or no
+  requested path was eligible (only `app_blocked` events). A non-zero status before removals
+  start removes nothing: a missing path list, a scan that could not finish, every selected app
+  blocked during the scan, or a batch that needs the sudo session `MOLE_NO_AUTH=1` refuses. A
+  timeout or signal during removals leaves `app_result` events only for apps already handled.
+- In `uninstall --list`, `size_kb` is the scanned bundle size and `last_used_epoch` the last use
+  in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
+  when neither is known). These two fields are the only change without a host variable; they
+  are added keys, and the existing ones are unchanged.

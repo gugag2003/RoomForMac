@@ -1,0 +1,502 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Sat, 26 Sep 2026 03:00:00 -0300
+Subject: [PATCH] Add a host-driven uninstall mode
+
+MOLE_UNINSTALL_APP_PATHS_FILE selects apps by exact bundle path through
+the normal eligibility scan (no substring matching), MOLE_ASSUME_YES
+skips the key prompt, and MOLE_UNINSTALL_PREVIEW_ONLY stops after the
+scan. Events report each app with its leftovers, blocked apps, and
+per-app results. uninstall --list JSON gains size_kb and last_used_epoch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ bin/uninstall.sh               |  73 +++++++++++-
+ lib/core/host.sh               |  41 +++++++
+ lib/uninstall/batch.sh         |  35 +++++-
+ tests/uninstall_host_mode.bats | 198 +++++++++++++++++++++++++++++++++
+ 4 files changed, 341 insertions(+), 6 deletions(-)
+ create mode 100644 tests/uninstall_host_mode.bats
+
+diff --git a/bin/uninstall.sh b/bin/uninstall.sh
+index db6e03e1..f0e78bd1 100755
+--- a/bin/uninstall.sh
++++ b/bin/uninstall.sh
+@@ -1577,8 +1577,11 @@ uninstall_list_apps() {
+         printf '['
+         local first=1
+         local app_data
++        local last_used_epoch="" size_kb=""
+         for app_data in "${apps_data[@]+"${apps_data[@]}"}"; do
+-            IFS='|' read -r _ app_path app_name bundle_id size _ _ <<< "$app_data"
++            IFS='|' read -r last_used_epoch app_path app_name bundle_id size _ size_kb <<< "$app_data"
++            [[ "$last_used_epoch" =~ ^[0-9]+$ ]] || last_used_epoch=0
++            [[ "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
+             local cask=""
+             if is_homebrew_available; then
+                 cask=$(get_brew_cask_name "$app_path" 2> /dev/null || true)
+@@ -1594,13 +1597,15 @@ uninstall_list_apps() {
+             else
+                 printf ',\n'
+             fi
+-            printf '  {"name": "%s", "bundle_id": "%s", "source": "%s", "uninstall_name": "%s", "path": "%s", "size": "%s"}' \
++            printf '  {"name": "%s", "bundle_id": "%s", "source": "%s", "uninstall_name": "%s", "path": "%s", "size": "%s", "size_kb": %s, "last_used_epoch": %s}' \
+                 "$(uninstall_list_json_escape "$app_name")" \
+                 "$(uninstall_list_json_escape "$bundle_id")" \
+                 "$source_label" \
+                 "$(uninstall_list_json_escape "$uninstall_name")" \
+                 "$(uninstall_list_json_escape "$app_path")" \
+-                "$(uninstall_list_json_escape "$size_display")"
++                "$(uninstall_list_json_escape "$size_display")" \
++                "$((10#$size_kb))" \
++                "$((10#$last_used_epoch))"
+         done
+         if [[ $first -eq 0 ]]; then
+             printf '\n'
+@@ -1662,6 +1667,61 @@ uninstall_list_apps() {
+     return 0
+ }
+ 
++# Select apps by exact bundle path for a GUI host (MOLE_UNINSTALL_APP_PATHS_FILE,
++# NUL-separated). Paths go through the same eligibility scan as the
++# interactive list, so protected and system apps can never be selected.
++# Requested paths that are not eligible are reported as app_blocked events.
++uninstall_host_paths_mode() {
++    local paths_file="$MOLE_UNINSTALL_APP_PATHS_FILE"
++    if [[ ! -f "$paths_file" || -L "$paths_file" ]]; then
++        log_error "Application path list is missing: $paths_file"
++        return 1
++    fi
++
++    local apps_file=""
++    if ! apps_file=$(scan_applications); then
++        uninstall_abort "could not complete the application scan"
++        return 1
++    fi
++    if [[ ! -f "$apps_file" ]]; then
++        uninstall_abort "application scan produced no list"
++        return 1
++    fi
++    if ! load_applications "$apps_file"; then
++        rm -f "$apps_file"
++        uninstall_abort "no applications available for uninstallation"
++        return 1
++    fi
++    rm -f "$apps_file"
++
++    selected_apps=()
++    local requested app_data app_path matched
++    while IFS= read -r -d '' requested; do
++        while [[ ${#requested} -gt 1 && "$requested" == */ ]]; do
++            requested="${requested%/}"
++        done
++        [[ -n "$requested" ]] || continue
++        matched=false
++        for app_data in "${apps_data[@]}"; do
++            IFS='|' read -r _ app_path _ _ _ _ _ <<< "$app_data"
++            if [[ "$app_path" == "$requested" ]]; then
++                selected_apps+=("$app_data")
++                matched=true
++                break
++            fi
++        done
++        if [[ "$matched" != "true" ]]; then
++            mole_json_event_app_blocked "$requested" "" "not_eligible" ""
++        fi
++    done < "$paths_file"
++
++    if [[ ${#selected_apps[@]} -eq 0 ]]; then
++        # Nothing eligible: the app_blocked events already say why.
++        return 0
++    fi
++    batch_uninstall_applications
++}
++
+ main() {
+     # Set current command for operation logging
+     export MOLE_CURRENT_COMMAND="uninstall"
+@@ -1716,6 +1776,13 @@ main() {
+         return $?
+     fi
+ 
++    # Host-driven uninstall: exact bundle paths, no name matching and no
++    # interactive selector.
++    if [[ -n "${MOLE_UNINSTALL_APP_PATHS_FILE:-}" ]]; then
++        uninstall_host_paths_mode
++        return $?
++    fi
++
+     hide_cursor
+     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
+         echo -e "${YELLOW}${ICON_DRY_RUN} DRY RUN MODE${NC}, No app files or settings will be modified"
+diff --git a/lib/core/host.sh b/lib/core/host.sh
+index 05273769..bda7bf4b 100644
+--- a/lib/core/host.sh
++++ b/lib/core/host.sh
+@@ -230,3 +230,44 @@ mole_json_event_summary() {
+     mole_json_events_enabled || return 0
+     mole_json_emit "{\"v\":1,\"type\":\"summary\",\"command\":$(mole_json_str "${1-}"),\"dry_run\":$(mole_json_bool "${2-}"),\"items\":$(mole_json_num "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"partial\":$(mole_json_bool "${5-}"),\"exit\":$(mole_json_num "${6-}")}"
+ }
++
++# ============================================================================
++# Uninstall Events
++# ============================================================================
++
++# JSON array of the non-empty lines of a newline-separated list.
++mole_json_array_from_lines() {
++    local lines="${1-}" out="[" first=true line
++    while IFS= read -r line; do
++        [[ -n "$line" ]] || continue
++        if [[ "$first" == "true" ]]; then
++            first=false
++        else
++            out+=","
++        fi
++        out+=$(mole_json_str "$line")
++    done <<< "$lines"
++    printf '%s]' "$out"
++}
++
++# Args: path, name, bundle_id, size_kb, needs_sudo, brew_cask,
++#       sensitive_data, running, leftovers (lines), review_only (lines)
++mole_json_event_app() {
++    mole_json_events_enabled || return 0
++    local leftovers review_only
++    leftovers=$(mole_json_array_from_lines "${9-}")
++    review_only=$(mole_json_array_from_lines "${10-}")
++    mole_json_emit "{\"v\":1,\"type\":\"app\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"bundle_id\":$(mole_json_str "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"needs_sudo\":$(mole_json_bool "${5-}"),\"brew_cask\":$(mole_json_bool "${6-}"),\"sensitive_data\":$(mole_json_bool "${7-}"),\"running\":$(mole_json_bool "${8-}"),\"leftovers\":$leftovers,\"review_only\":$review_only}"
++}
++
++# Args: path, name, reason (not_eligible|official_uninstaller|manual_removal), vendor
++mole_json_event_app_blocked() {
++    mole_json_events_enabled || return 0
++    mole_json_emit "{\"v\":1,\"type\":\"app_blocked\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"reason\":$(mole_json_str "${3-}"),\"vendor\":$(mole_json_str "${4-}")}"
++}
++
++# Args: path, name, status (removed|failed), freed_kb, reason
++mole_json_event_app_result() {
++    mole_json_events_enabled || return 0
++    mole_json_emit "{\"v\":1,\"type\":\"app_result\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"status\":$(mole_json_str "${3-}"),\"freed_kb\":$(mole_json_num "${4-}"),\"reason\":$(mole_json_str "${5-}")}"
++}
+diff --git a/lib/uninstall/batch.sh b/lib/uninstall/batch.sh
+index b36ba271..2cb6514b 100755
+--- a/lib/uninstall/batch.sh
++++ b/lib/uninstall/batch.sh
+@@ -1324,6 +1324,7 @@ _batch_scan_app_details() {
+             return "$refresh_rc"
+         elif [[ $refresh_rc -ne 0 ]]; then
+             manual_removal_apps+=("$app_name")
++            mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal" ""
+             continue
+         fi
+         bundle_id="$current_bundle_id"
+@@ -1340,6 +1341,7 @@ _batch_scan_app_details() {
+             return "$app_identity_rc"
+         elif [[ $app_identity_rc -ne 0 ]]; then
+             manual_removal_apps+=("$app_name")
++            mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal" ""
+             continue
+         fi
+         local app_info_identity=""
+@@ -1350,6 +1352,7 @@ _batch_scan_app_details() {
+             return "$app_info_identity_rc"
+         elif [[ $app_info_identity_rc -ne 0 ]]; then
+             manual_removal_apps+=("$app_name")
++            mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal" ""
+             continue
+         fi
+ 
+@@ -1361,6 +1364,7 @@ _batch_scan_app_details() {
+         local official_vendor=""
+         if official_vendor=$(official_uninstaller_vendor "$bundle_id" "$app_name" "$app_path" 2> /dev/null); then
+             blocked_apps+=("$app_name|$official_vendor")
++            mole_json_event_app_blocked "$app_path" "$app_name" "official_uninstaller" "$official_vendor"
+             continue
+         fi
+ 
+@@ -1467,8 +1471,10 @@ _batch_scan_app_details() {
+         if [[ -e "$info_plist" ]]; then
+             exec_name=$(plutil -extract CFBundleExecutable raw "$info_plist" 2> /dev/null || echo "")
+         fi
++        local app_running=false
+         if pgrep -qx "${exec_name:-$app_name}" 2> /dev/null; then
+             running_apps+=("$app_name")
++            app_running=true
+         fi
+ 
+         _batch_scan_stage="Homebrew ownership check"
+@@ -1519,6 +1525,7 @@ _batch_scan_app_details() {
+         if [[ "$needs_sudo" == true && "$is_brew_cask" != "true" ]] &&
+             _mole_privileged_path_has_mutable_ancestor "$app_path"; then
+             manual_removal_apps+=("$app_name")
++            mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal" ""
+             continue
+         fi
+ 
+@@ -1666,6 +1673,9 @@ _batch_scan_app_details() {
+         local encoded_live_sibling_fingerprint
+         encoded_live_sibling_fingerprint=$(printf '%s' "$preview_live_sibling_fingerprint" | base64 | tr -d '\n') || return 1
+         app_details+=("$app_name|$app_path|$bundle_id|$total_kb|$encoded_files|$encoded_system_files|$has_sensitive_data|$needs_sudo|$is_brew_cask|$cask_name|$encoded_diag_system|$encoded_review_system|$encoded_login_item_helpers|$sibling_guard|$app_identity|$original_bundle_id|$encoded_live_sibling_fingerprint|$app_info_identity")
++        mole_json_event_app "$app_path" "$app_name" "$original_bundle_id" "$total_kb" \
++            "$needs_sudo" "$is_brew_cask" "$has_sensitive_data" "$app_running" \
++            "$related_files" "$review_only_system_files"
+     done
+     if [[ -t 1 ]]; then stop_inline_spinner; fi
+ 
+@@ -1788,9 +1798,15 @@ _batch_preview_and_confirm() {
+     fi
+     echo -ne "${PURPLE}${ICON_ARROW}${NC} ${removal_note}  ${GREEN}Enter${NC} confirm, ${GRAY}ESC${NC} cancel: "
+ 
+-    drain_pending_input # Clean up any pending input before confirmation
+-    IFS= read -r -s -n1 key || key=""
+-    drain_pending_input # Clean up any escape sequence remnants
++    local key=""
++    if [[ "${MOLE_ASSUME_YES:-0}" == "1" ]]; then
++        # A GUI host already showed this exact plan and got confirmation.
++        key="y"
++    else
++        drain_pending_input # Clean up any pending input before confirmation
++        IFS= read -r -s -n1 key || key=""
++        drain_pending_input # Clean up any escape sequence remnants
++    fi
+     case "$key" in
+         $'\e' | q | Q)
+             echo ""
+@@ -2318,6 +2334,9 @@ _batch_execute_removals() {
+             total_items=$((total_items + 1))
+             success_items+=("$app_path")
+             success_dock_targets+=("$app_path|$bundle_id")
++            if ! is_uninstall_dry_run; then
++                mole_json_event_app_result "$app_path" "$app_name" "removed" "$total_kb" ""
++            fi
+             # Check for orphaned system extensions (camera, network, endpoint security, etc.)
+             if mole_is_reverse_dns_bundle_id "$bundle_id" && [[ -d /Library/SystemExtensions ]]; then
+                 local system_extension_path=""
+@@ -2349,6 +2368,9 @@ _batch_execute_removals() {
+ 
+             failed_count=$((failed_count + 1))
+             failed_items+=("$app_name:$reason:${suggestion:-}")
++            if ! is_uninstall_dry_run; then
++                mole_json_event_app_result "$app_path" "$app_name" "failed" "0" "$reason"
++            fi
+         fi
+     done
+ }
+@@ -2620,6 +2642,13 @@ batch_uninstall_applications() {
+         return 1
+     fi
+ 
++    # A host preview stops here: the app records and their events are
++    # complete, and nothing below may run without a real confirmation.
++    if [[ "${MOLE_UNINSTALL_PREVIEW_ONLY:-0}" == "1" ]]; then
++        _abort_uninstall_batch
++        return 0
++    fi
++
+     local _confirm_rc=0
+     _batch_preview_and_confirm || _confirm_rc=$?
+     if [[ $_batch_interrupted -eq 1 ]]; then
+diff --git a/tests/uninstall_host_mode.bats b/tests/uninstall_host_mode.bats
+new file mode 100644
+index 00000000..1dfe5818
+--- /dev/null
++++ b/tests/uninstall_host_mode.bats
+@@ -0,0 +1,198 @@
++#!/usr/bin/env bats
++# Host-driven uninstall: exact bundle paths, no prompts, preview-only runs,
++# app events and per-app results.
++
++load helpers/common
++
++setup_file() {
++    mole_test_setup_home uninstall-host-mode
++}
++
++teardown_file() {
++    mole_test_teardown_home
++}
++
++setup() {
++    if [[ "$HOME" != "${BATS_TEST_DIRNAME}/tmp-"* ]]; then
++        printf 'FATAL: HOME is not a test temp dir: %s\n' "$HOME" >&2
++        return 1
++    fi
++    rm -rf "${HOME:?}"/* "$HOME/.config" "$HOME/.cache"
++    mkdir -p "$HOME/Applications" "$HOME/Library/Caches" "$HOME/.config/mole"
++    EVENTS="$BATS_TEST_TMPDIR/events.ndjson"
++    PATHS_FILE="$BATS_TEST_TMPDIR/app-paths"
++    : > "$EVENTS"
++}
++
++sourceable_uninstall_sh() {
++    local out="$1"
++    awk -v script_dir="$PROJECT_ROOT/bin" '
++        /^SCRIPT_DIR=/ { print "SCRIPT_DIR=\"" script_dir "\""; next }
++        /main "\$@"/ { print "# main skipped by test"; next }
++        { print }
++    ' "$PROJECT_ROOT/bin/uninstall.sh" > "$out"
++}
++
++create_fixture_app() {
++    local app_path="$1" bundle_id="$2" name="$3"
++    mkdir -p "$app_path/Contents/MacOS"
++    : > "$app_path/Contents/MacOS/$name"
++    chmod +x "$app_path/Contents/MacOS/$name"
++    cat > "$app_path/Contents/Info.plist" << PLIST
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++    <key>CFBundleIdentifier</key>
++    <string>$bundle_id</string>
++    <key>CFBundleName</key>
++    <string>$name</string>
++    <key>CFBundleExecutable</key>
++    <string>$name</string>
++    <key>CFBundlePackageType</key>
++    <string>APPL</string>
++</dict>
++</plist>
++PLIST
++}
++
++create_fixture_with_leftovers() {
++    FIXTURE_APP="$HOME/Applications/RFMFixture.app"
++    create_fixture_app "$FIXTURE_APP" "com.example.rfmfixture" "RFMFixture"
++    mkdir -p "$HOME/Library/Application Support/RFMFixture" "$HOME/Library/Caches/com.example.rfmfixture"
++    printf 'state' > "$HOME/Library/Application Support/RFMFixture/state.json"
++    printf 'cache' > "$HOME/Library/Caches/com.example.rfmfixture/c.bin"
++    printf '%s\0' "$FIXTURE_APP" > "$PATHS_FILE"
++}
++
++install_uninstall_fakes() {
++    mole_test_fake_command osascript 'exit 1'
++    mole_test_fake_command launchctl 'exit 0'
++    mole_test_fake_command mdfind 'exit 0'
++    mole_test_fake_command killall 'exit 0'
++    mole_test_fake_command sudo 'exit 1'
++}
++
++# Run the real uninstall main() against $HOME/Applications only.
++run_host_uninstall() {
++    local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
++    sourceable_uninstall_sh "$src"
++    run env HOME="$HOME" PATH="$PATH" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_NO_AUTH=1 \
++        MOLE_GUI_HOST=roomformac MOLE_LSREGISTER_PATH="" MOLE_JSON_EVENTS_FILE="$EVENTS" \
++        MOLE_UNINSTALL_APP_PATHS_FILE="$PATHS_FILE" MOLE_ASSUME_YES=1 "$@" \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$SRC_PATH"
++uninstall_print_app_search_dirs() { printf '%s\n' "$HOME/Applications"; }
++is_homebrew_available() { return 1; }
++get_brew_cask_name() { return 1; }
++main ${MAIN_ARGS:-}
++EOF
++}
++
++@test "host path mode selects only exact bundle paths and reports the rest" {
++    command -v jq > /dev/null || skip "jq is required"
++    printf '%s\0' "$HOME/Applications/Code.app/" "$HOME/Applications/Missing.app" > "$PATHS_FILE"
++    local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
++    sourceable_uninstall_sh "$src"
++    run env HOME="$HOME" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_JSON_EVENTS_FILE="$EVENTS" \
++        MOLE_UNINSTALL_APP_PATHS_FILE="$PATHS_FILE" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$SRC_PATH"
++scan_applications() { mktemp "$HOME/apps.XXXXXX"; }
++load_applications() {
++    apps_data=(
++        "0|$HOME/Applications/Code.app|Code|com.example.code|1MB|Never|1024"
++        "0|$HOME/Applications/Xcode Code Helper.app|Xcode Code Helper|com.example.helper|1MB|Never|1024"
++    )
++}
++batch_uninstall_applications() {
++    local app
++    for app in "${selected_apps[@]}"; do
++        printf 'SELECTED %s\n' "$app"
++    done
++}
++uninstall_host_paths_mode
++EOF
++    [ "$status" -eq 0 ]
++    [ "$(grep -c '^SELECTED ' <<< "$output")" -eq 1 ]
++    [[ "$output" == *"SELECTED 0|$HOME/Applications/Code.app|Code|"* ]] || return 1
++    run jq -r 'select(.type == "app_blocked") | [.reason, .path] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'not_eligible\t%s' "$HOME/Applications/Missing.app")" ]
++}
++
++@test "MOLE_ASSUME_YES confirms the plan without reading a key" {
++    local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
++    sourceable_uninstall_sh "$src"
++    run env HOME="$HOME" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_ASSUME_YES=1 \
++        /bin/bash --noprofile --norc -c '
++set -euo pipefail
++source "$SRC_PATH"
++app_details=("Fixture|$HOME/Applications/Fixture.app|com.example.fixture|64|||false|false|false")
++brew_cask_apps=()
++running_apps=()
++sudo_apps=()
++total_estimated_size=64
++# "q" would cancel an interactive confirmation.
++if printf q | _batch_preview_and_confirm; then echo "confirmed"; else echo "declined"; fi
++'
++    [ "$status" -eq 0 ]
++    [[ "$output" == *"confirmed"* ]]
++}
++
++@test "a host preview reports the app with its leftovers and removes nothing" {
++    command -v jq > /dev/null || skip "jq is required"
++    create_fixture_with_leftovers
++    install_uninstall_fakes
++    run_host_uninstall MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    [ "$status" -eq 0 ]
++    [ -d "$FIXTURE_APP" ]
++    [ -f "$HOME/Library/Application Support/RFMFixture/state.json" ]
++    run jq -r 'select(.type == "app") | .path' "$EVENTS"
++    [ "$output" = "$FIXTURE_APP" ]
++    run jq -r 'select(.type == "app") | .leftovers[]' "$EVENTS"
++    [[ "$output" == *"$HOME/Library/Application Support/RFMFixture"* ]] || return 1
++    [[ "$output" == *"$HOME/Library/Caches/com.example.rfmfixture"* ]] || return 1
++    run jq -r 'select(.type == "app_result") | .status' "$EVENTS"
++    [ -z "$output" ]
++}
++
++@test "a host uninstall moves the app and its leftovers to the Trash and reports it" {
++    command -v jq > /dev/null || skip "jq is required"
++    create_fixture_with_leftovers
++    install_uninstall_fakes
++    local trash="$BATS_TEST_TMPDIR/trash"
++    run_host_uninstall MOLE_TEST_TRASH_DIR="$trash"
++    [ "$status" -eq 0 ]
++    [ ! -e "$FIXTURE_APP" ]
++    [ ! -e "$HOME/Library/Application Support/RFMFixture" ]
++    run ls "$trash"
++    [[ "$output" == *"RFMFixture.app"* ]] || return 1
++    run jq -r 'select(.type == "app_result") | [.status, .path] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'removed\t%s' "$FIXTURE_APP")" ]
++}
++
++@test "uninstall --list JSON includes size_kb and last_used_epoch" {
++    local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
++    sourceable_uninstall_sh "$src"
++    local apps_cache="$BATS_TEST_TMPDIR/apps"
++    printf '%s\n' "1700000000|$HOME/Applications/Regular.app|Regular|com.example.regular|420MB|Today|430080" > "$apps_cache"
++    run env HOME="$HOME" SRC_PATH="$src" APPS_CACHE_FILE="$apps_cache" MOLE_TEST_NO_AUTH=1 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$SRC_PATH"
++scan_applications() { cp "$APPS_CACHE_FILE" "$HOME/apps.copy" && printf '%s\n' "$HOME/apps.copy"; }
++load_applications() {
++    apps_data=()
++    while IFS='|' read -r epoch app_path app_name bundle_id size last_used size_kb; do
++        apps_data+=("$epoch|$app_path|$app_name|$bundle_id|$size|$last_used|${size_kb:-0}")
++    done < "$1"
++}
++is_homebrew_available() { return 1; }
++get_brew_cask_name() { return 1; }
++log_operation_session_start() { :; }
++uninstall_list_apps
++EOF
++    [ "$status" -eq 0 ]
++    [[ "$output" == *'"size": "420MB", "size_kb": 430080, "last_used_epoch": 1700000000}'* ]]
++}
