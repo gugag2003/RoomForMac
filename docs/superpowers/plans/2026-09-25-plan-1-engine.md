@@ -10,10 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-roomformac-design.md` · **Roadmap:** `docs/superpowers/plans/2026-09-25-roomformac-roadmap.md` (read its "Decisions made while planning")
 
+**Status:** Implemented on `main` (`08b9311`..`46b3820`). This text was updated afterwards to match what was built. Code blocks show the shipped files, and "As built" notes explain each departure from the original plan. Task 13's CI step is still open (see Task 13 Step 4).
+
 ## Global Constraints
 
 - Mole is pinned to tag `V1.56.0` (commit `239c90d…`). Never run a system-installed `mo`.
 - Engine patches: bash 3.2 compatible (no associative arrays, `mapfile`, `declare -g`, `${x,,}`), safe under `set -euo pipefail`, formatted with `shfmt -i 4 -ci -sr`, clean under `shellcheck`, each patch standalone with its own bats tests, and **inert unless a host variable is set**.
+- Engine patch bats tests: a `[[ ]]` assertion that is not the last statement of a test ends with `|| return 1`. On bash 3.2 (macOS `/bin/bash`) a failing `[[ ]]` does not trip errexit, so a bare one before the last line asserts nothing. Mole's `scripts/audit_bats_assertions.py` rejects bare ones: `scripts/check.sh` runs it over Mole's `tests/*.bats`, and CI runs it over `scripts/tests/*.bats`.
 - Host interface (the only way RoomForMac drives the engine): environment `MOLE_GUI_HOST=roomformac`, `MOLE_NO_AUTH=1`, `MOLE_JSON_EVENTS_FILE`, `MOLE_SELECTION_FILE`, `MOLE_UNINSTALL_APP_PATHS_FILE`, `MOLE_UNINSTALL_PREVIEW_ONLY=1`, `MOLE_ASSUME_YES=1`; analyzer flag `--trash-list FILE`.
 - Event schema: one JSON object per line, `"v":1`. Sizes are KB (`size_kb`) on the wire and bytes (`sizeBytes`) in Swift.
 - Deletion safety: with `MOLE_SELECTION_FILE` set, nothing outside the listed exact paths may be removed and tool-driven cleanups never run. Delete modes follow Mole: Smart Clean permanent, Uninstaller and Terrain to the Trash.
@@ -25,11 +28,24 @@
 
 ## Review Focus
 
-1. **A selected item vanishes or changes between preview and cleaning** (deleted by the user, recreated by an app, swapped for a symlink) → no `removed` event, not charged, and never a deletion of whatever replaced it. Pinned by Task 5 ("disappears before the run") and Task 10 ("items without a removal event are not removed").
+1. **A selected item vanishes or changes between preview and cleaning** (deleted by the user, recreated by an app, swapped for a symlink) → no `removed` event, not charged, and never a deletion of whatever replaced it. Pinned by Task 5 ("disappears before the run") and Task 10 ("items without a removal event are not removed"). *As built:* selections match paths, not file identities. A vanished path is skipped with no `result`, but a folder recreated at a selected path before the run reaches it is cleaned like the original (`docs/engine-protocol.md`, Selections). None of this plan's tests covers the recreated or symlink-swapped case.
 2. **Unusual bytes in paths** (spaces, quotes, backslashes, accents, newlines) through selection files and events → Task 3 escaping/selection tests, Task 8 decoder test, Task 12 integration folder `com.example.gamma café`.
 3. **Cancelling mid-run** must stop the whole process tree and keep accounting honest → Task 9 timeout/cancel tests kill a grandchild; Task 10 tally counts only confirmed removals.
 4. **Truncated or malformed engine output** (killed mid-write, invalid JSON, unknown types, a future `v:2`) → Task 8 decoder and line-buffer tests; Task 9 final unterminated line.
 5. **Very large selections** (thousands of paths) → Task 3 5,000-entry lookup timing test; Task 10 10,000-path selection file test.
+
+## Environment notes
+
+Observed while building this plan on macOS 27.0, Xcode 27.0 (Swift 6.4), bash 3.2 as `/bin/bash`:
+
+- `git -C vendor/mole rev-parse --short HEAD` prints `239c90d5` (8 characters), not `239c90d` (Task 1 Step 4).
+- Mole's full suite (`./scripts/test.sh`) has **3 upstream failures on this Mac**, and they also fail on unpatched `V1.56.0`. Two are sparse-file Mail Downloads tests in `tests/clean_core.bats` (`_clean_mail_downloads removes old attachments` and `_clean_mail_downloads uses dry-run wording and keeps attachments`). The third is `clean_cloud_storage calls expected caches` in `tests/clean_misc.bats`, which fails while Dropbox is running. Treat any other failure as a regression from the patches (Task 7 Step 8, Task 13 Step 2).
+- A platform binary copied into a fake `.app` (`cp /bin/sleep`) is SIGKILLed at exec. Test fixtures symlink it instead (`ln -s /bin/sleep`, Task 3).
+- `mktemp` with no template ignores `TMPDIR` and uses the real per-user temp folder. The integration fake home stubs `mktemp` (Task 12).
+- In bash 3.2 under `en_US.UTF-8`, a bracket range such as `[$'\001'-$'\037']` matches by locale collation and lets `\v` and `\f` through. `host.sh` lists the control bytes explicitly instead (Task 3).
+- Swift Testing's `swift test --filter` matches test IDs, not display names, which is why the integration suite is a raw identifier (Task 12).
+- Checks that grep for a literal `$var` in the middle of a pattern use `grep -F`. BSD `/usr/bin/grep` reads a mid-pattern `$` literally, but other greps (ugrep, for one, when it stands in for `grep`) read it as an anchor and count `0` (Tasks 4–6).
+- Tasks 9 and 10 depend only on Task 8, and Task 10 landed first on `main`. Their package test counts depend on that order (Task 9 Step 8, Task 10 Step 6).
 
 ---
 
@@ -68,9 +84,9 @@ Patched Mole files (edited in `build/mole-work`, exported to `patches/mole/`):
 |---|---|
 | 0001 host helpers | `lib/core/host.sh` (new), `lib/core/common.sh`, `lib/core/sudo.sh`, `lib/core/app_protection.sh`, `tests/host_integration.bats` (new) |
 | 0002 clean events | `lib/core/host.sh`, `lib/core/log.sh`, `lib/core/file_ops.sh`, `bin/clean.sh`, `lib/clean/system.sh`, `tests/clean_json_events.bats` (new) |
-| 0003 clean selection | `lib/core/file_ops.sh`, `bin/clean.sh`, `lib/clean/apps.sh`, `lib/clean/dev.sh`, `lib/clean/brew.sh`, `lib/clean/system.sh`, `tests/clean_selection.bats` (new) |
+| 0003 clean selection | `lib/core/file_ops.sh`, `bin/clean.sh`, `lib/clean/apps.sh`, `lib/clean/dev.sh`, `lib/clean/brew.sh`, `lib/clean/system.sh`, `lib/clean/hints.sh` and `lib/clean/project.sh` (temp-file annotations only), `tests/clean_selection.bats` (new) |
 | 0004 uninstall host mode | `lib/core/host.sh`, `bin/uninstall.sh`, `lib/uninstall/batch.sh`, `tests/uninstall_host_mode.bats` (new) |
-| 0005 analyzer Trash list | `cmd/analyze/trashlist.go` (new), `cmd/analyze/trashlist_test.go` (new), `cmd/analyze/main.go` |
+| 0005 analyzer Trash list | `cmd/analyze/trashlist.go` (new), `cmd/analyze/trashlist_test.go` (new), `cmd/analyze/main.go`; test fixes in `tests/host_integration.bats`, `tests/clean_selection.bats`, `tests/uninstall_host_mode.bats` |
 
 **How to edit Mole in Tasks 3–7:** all edits happen inside `build/mole-work` (created once by `scripts/mole-patches.sh start` in Task 3). Each "Find / Replace with" pair is an exact, unique snippet from Mole `V1.56.0`. After each patch task: commit inside `build/mole-work`, run `scripts/mole-patches.sh export`, rebuild the engine, and commit `patches/mole/` in the RoomForMac repo.
 
@@ -86,7 +102,7 @@ Patched Mole files (edited in `build/mole-work`, exported to `patches/mole/`):
 - Consumes: nothing.
 - Produces: `vendor/mole` checked out at `V1.56.0`; toolchain `go` (≥ 1.26), `bats`, `shellcheck`, `shfmt`, `gtimeout`, `parallel`.
 
-- [ ] **Step 1: Write the Brewfile**
+- [x] **Step 1: Write the Brewfile**
 
 ```ruby
 # Toolchain for building and testing the RoomForMac engine.
@@ -98,12 +114,12 @@ brew "coreutils" # gtimeout, used by Mole's run_with_timeout
 brew "parallel"  # lets Mole's scripts/test.sh run bats files in parallel
 ```
 
-- [ ] **Step 2: Install the toolchain and check versions**
+- [x] **Step 2: Install the toolchain and check versions**
 
 Run: `brew bundle --file Brewfile && go version && bats --version && shellcheck --version | head -2`
 Expected: `go version go1.26` or newer, `Bats 1.x`, a shellcheck version line.
 
-- [ ] **Step 3: Add Mole as a submodule pinned to V1.56.0**
+- [x] **Step 3: Add Mole as a submodule pinned to V1.56.0**
 
 ```bash
 git submodule add https://github.com/tw93/mole.git vendor/mole
@@ -112,16 +128,17 @@ git -C vendor/mole checkout --quiet V1.56.0
 git add .gitmodules vendor/mole
 ```
 
-- [ ] **Step 4: Verify the pin**
+- [x] **Step 4: Verify the pin**
 
 Run: `git -C vendor/mole describe --tags --exact-match && git -C vendor/mole rev-parse --short HEAD`
 Expected:
 ```
 V1.56.0
-239c90d
+239c90d5
 ```
+Git sizes `--short` to the repository, so the abbreviation can be longer than seven characters; it prints 8 for Mole's history. Check that it starts with `239c90d`. The full commit is `239c90d576c747a65104a12610f4b7952cc9bda2`.
 
-- [ ] **Step 5: Write `.gitignore`**
+- [x] **Step 5: Write `.gitignore`**
 
 ```gitignore
 .DS_Store
@@ -133,7 +150,7 @@ xcuserdata/
 *.xcuserstate
 ```
 
-- [ ] **Step 6: Copy the license and write `NOTICE`**
+- [x] **Step 6: Copy the license and write `NOTICE`**
 
 Run: `cp vendor/mole/LICENSE LICENSE`
 
@@ -156,7 +173,7 @@ release pinned in vendor/mole.
 independent project and is not affiliated with or endorsed by Mole.
 ```
 
-- [ ] **Step 7: Write `README.md`**
+- [x] **Step 7: Write `README.md`**
 
 ````markdown
 # RoomForMac
@@ -193,7 +210,7 @@ The host protocol is documented in `docs/engine-protocol.md`.
 GPL-3.0 — see `LICENSE` and `NOTICE`. RoomForMac is an independent project, not affiliated with or endorsed by Mole.
 ````
 
-- [ ] **Step 8: Verify and commit**
+- [x] **Step 8: Verify and commit**
 
 Run: `cmp LICENSE vendor/mole/LICENSE && git status --short`
 Expected: no output from `cmp`; status lists `.gitignore`, `.gitmodules`, `Brewfile`, `LICENSE`, `NOTICE`, `README.md`, `vendor/mole`.
@@ -214,7 +231,7 @@ git commit -m "chore: pin Mole V1.56.0 as the engine submodule"
 - Consumes: `vendor/mole` (Task 1).
 - Produces: `scripts/build-engine.sh` → `$ENGINE_OUT` (default `build/engine`) containing `VERSION`, `mole`, `bin/*.sh`, `bin/analyze-go`, `bin/status-go` (universal), `lib/**`, `host-bin/sudo`; the patched source tree at `build/engine-src` (kept for tests). `VERSION` keys: `mole_tag`, `mole_commit`, `patches_sha256`, `patch_count`. `scripts/mole-patches.sh start | export | test [--tree DIR] FILES… | lint FILES…`.
 
-- [ ] **Step 1: Write the failing build checks** — `scripts/tests/build_engine.bats`
+- [x] **Step 1: Write the failing build checks** — `scripts/tests/build_engine.bats`
 
 ```bash
 #!/usr/bin/env bats
@@ -265,12 +282,12 @@ setup_file() {
 }
 ```
 
-- [ ] **Step 2: Run the checks to verify they fail**
+- [x] **Step 2: Run the checks to verify they fail**
 
 Run: `bats scripts/tests/build_engine.bats`
 Expected: FAIL — `setup_file` cannot find `scripts/build-engine.sh`.
 
-- [ ] **Step 3: Write `scripts/build-engine.sh`**
+- [x] **Step 3: Write `scripts/build-engine.sh`**
 
 ```bash
 #!/bin/bash
@@ -358,7 +375,7 @@ printf 'Engine ready: %s (%s, %d patches)\n' "$OUT" "$tag" "${#patches[@]}"
 
 Note: `"${patches[@]}"` is only expanded when the array is non-empty — bash 3.2 treats an empty array as unbound under `set -u`.
 
-- [ ] **Step 4: Write `scripts/mole-patches.sh`**
+- [x] **Step 4: Write `scripts/mole-patches.sh`**
 
 ```bash
 #!/bin/bash
@@ -410,7 +427,9 @@ cmd_export() {
     [[ -z "$(git -C "$WORK" status --porcelain)" ]] || die "$WORK has uncommitted changes"
     mkdir -p "$PATCH_DIR"
     find "$PATCH_DIR" -name '*.patch' -delete
-    git -C "$WORK" format-patch --quiet --zero-commit --no-signature \
+    # --no-numbered keeps each subject "[PATCH]", so adding a patch never
+    # rewrites the ones before it.
+    git -C "$WORK" format-patch --quiet --zero-commit --no-signature --no-numbered \
         -o "$PATCH_DIR" "$(pinned_commit)..roomformac"
     ls -1 "$PATCH_DIR"
 }
@@ -441,19 +460,21 @@ case "${1:-}" in
 esac
 ```
 
-- [ ] **Step 5: Make the scripts executable and keep the patch directory**
+`--no-numbered` matters from the second patch on. Without it, `format-patch` numbers every subject once there is more than one commit (`[PATCH 1/2]`), so exporting 0002 would also rewrite 0001, and every new patch would change all the files before it. With it, adding a patch leaves the earlier `.patch` files byte-identical. (As built, the flag was added in Task 4's commit, `55fc48f`, when the second export exposed the renumbering.)
+
+- [x] **Step 5: Make the scripts executable and keep the patch directory**
 
 ```bash
 chmod +x scripts/build-engine.sh scripts/mole-patches.sh
 mkdir -p patches/mole && touch patches/mole/.gitkeep
 ```
 
-- [ ] **Step 6: Run the checks to verify they pass**
+- [x] **Step 6: Run the checks to verify they pass**
 
 Run: `bats scripts/tests/build_engine.bats`
 Expected: PASS, 5 tests (the first run downloads Go modules and takes a few minutes).
 
-- [ ] **Step 7: Lint and commit**
+- [x] **Step 7: Lint and commit**
 
 Run: `shellcheck scripts/build-engine.sh scripts/mole-patches.sh && shfmt -d -i 4 -ci -sr scripts/build-engine.sh scripts/mole-patches.sh`
 Expected: no output.
@@ -476,12 +497,12 @@ git commit -m "build: add patched engine build and patch-queue scripts"
 - Consumes: `scripts/mole-patches.sh`, `scripts/build-engine.sh` (Task 2).
 - Produces (bash): in `lib/core/host.sh` — `mole_json_escape STR`, `mole_json_str STR`, `mole_json_num N`, `mole_json_bool B`, `mole_json_events_enabled`, `mole_json_emit JSON_LINE`, `mole_selection_active`, `mole_selection_allows PATH`; in `lib/core/sudo.sh` — `mole_auth_disabled`. Honoured variables: `MOLE_JSON_EVENTS_FILE`, `MOLE_SELECTION_FILE`, `MOLE_NO_AUTH`, `MOLE_GUI_HOST`.
 
-- [ ] **Step 1: Create the patch work tree**
+- [x] **Step 1: Create the patch work tree**
 
 Run: `scripts/mole-patches.sh start`
 Expected: `Ready: …/build/mole-work (branch roomformac, 0 patches applied)`
 
-- [ ] **Step 2: Write the failing tests** — `build/mole-work/tests/host_integration.bats`
+- [x] **Step 2: Write the failing tests** — `build/mole-work/tests/host_integration.bats`
 
 ```bash
 #!/usr/bin/env bats
@@ -522,6 +543,33 @@ write_selection() {
     run mole_json_escape $'a"b\\c\nd\te\001f\037g'
     [ "$status" -eq 0 ]
     [ "$output" = 'a\"b\\c\nd\te\u0001f\u001fg' ]
+}
+
+@test "mole_json_escape escapes every control byte in C and UTF-8 locales" {
+    local locale
+    for locale in C en_US.UTF-8; do
+        run env LC_ALL="$locale" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/host.sh"
+for ((b = 1; b < 32; b++)); do
+    printf -v s "x\\$(printf '%03o' "$b")y"
+    case "$b" in
+        9) want='x\ty' ;;
+        10) want='x\ny' ;;
+        13) want='x\ry' ;;
+        *) printf -v want 'x\\u%04xy' "$b" ;;
+    esac
+    got="$(mole_json_escape "$s")"
+    [[ "$got" == "$want" ]] || {
+        printf 'byte %d: got %q, want %q\n' "$b" "$got" "$want"
+        exit 1
+    }
+done
+echo "every control byte escaped"
+EOF
+        [ "$status" -eq 0 ] || return 1
+        [ "$output" = "every control byte escaped" ] || return 1
+    done
 }
 
 @test "mole_json_escape leaves UTF-8 text unchanged" {
@@ -590,6 +638,50 @@ write_selection() {
     [ "$status" -eq 1 ]
 }
 
+@test "a selection matches accented paths in C and UTF-8 locales" {
+    local selection="$BATS_TEST_TMPDIR/selection" locale
+    write_selection "$selection" "$HOME/Library/Caches/com.example.gamma café" "$HOME/Library/Caches/日本/データ"
+    for locale in C en_US.UTF-8; do
+        run env LC_ALL="$locale" HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SELECTION_FILE="$selection" \
+            /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/host.sh"
+mole_selection_allows "$HOME/Library/Caches/com.example.gamma café" || exit 1
+mole_selection_allows "$HOME/Library/Caches/日本/データ/" || exit 1
+if mole_selection_allows "$HOME/Library/Caches/com.example.gamma cafe"; then exit 1; fi
+if mole_selection_allows "$HOME/Library/Caches/日本"; then exit 1; fi
+echo "accented paths matched"
+EOF
+        [ "$status" -eq 0 ] || return 1
+        [ "$output" = "accented paths matched" ] || return 1
+    done
+}
+
+@test "a selection matches exactly among paths that share a length and ending" {
+    load_host
+    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
+    local tail="shared-ending-that-is-long/data"
+    write_selection "$MOLE_SELECTION_FILE" "/one/$tail" "/two/x/$tail"
+    mole_selection_allows "/one/$tail"
+    mole_selection_allows "/two/x/$tail"
+    run mole_selection_allows "/six/$tail"
+    [ "$status" -eq 1 ]
+    run mole_selection_allows "/two/$tail"
+    [ "$status" -eq 1 ]
+}
+
+@test "a selection matches paths that contain the separator byte" {
+    load_host
+    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
+    write_selection "$MOLE_SELECTION_FILE" $'/tmp/rfm\x1fodd' "/tmp/rfm plain"
+    mole_selection_allows $'/tmp/rfm\x1fodd/'
+    mole_selection_allows "/tmp/rfm plain"
+    run mole_selection_allows $'/tmp/rfm\x1fother'
+    [ "$status" -eq 1 ]
+    run mole_selection_allows "/tmp/rfm"
+    [ "$status" -eq 1 ]
+}
+
 @test "a missing selection file allows nothing" {
     load_host
     MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/does-not-exist"
@@ -626,10 +718,10 @@ if adopt_sudo_session; then echo "adopt: yes"; else echo "adopt: no"; fi
 if ensure_sudo_session "test"; then echo "ensure: yes"; else echo "ensure: no"; fi
 EOF
     [ "$status" -eq 0 ]
-    [[ "$output" == *"request: refused"* ]]
-    [[ "$output" == *"session: no"* ]]
-    [[ "$output" == *"adopt: no"* ]]
-    [[ "$output" == *"ensure: no"* ]]
+    [[ "$output" == *"request: refused"* ]] || return 1
+    [[ "$output" == *"session: no"* ]] || return 1
+    [[ "$output" == *"adopt: no"* ]] || return 1
+    [[ "$output" == *"ensure: no"* ]] || return 1
     [ ! -e "$HOME/sudo-calls" ]
 }
 
@@ -637,7 +729,9 @@ EOF
     local exe="rfmfixture$$"
     local app="$HOME/Applications/RFMFixture.app"
     mkdir -p "$app/Contents/MacOS"
-    cp /bin/sleep "$app/Contents/MacOS/$exe"
+    # A symlink, not a copy: recent macOS kills a copied platform binary at
+    # exec, while the process name still comes from the link's own name.
+    ln -s /bin/sleep "$app/Contents/MacOS/$exe"
     cat > "$app/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -669,12 +763,18 @@ EOF
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+As built, this file differs from the original plan in four ways:
+- It adds four tests. "escapes every control byte in C and UTF-8 locales" pins the explicit control-byte list in Step 4. Three selection tests pin the hash buckets in Step 4: accented paths in both locales, paths that share a length and ending, and paths that contain the separator byte.
+- Every `[[ ]]` assertion before a test's last line ends with `|| return 1` (Global Constraints).
+- The GUI-host fixture symlinks `/bin/sleep` instead of copying it, because macOS 27 SIGKILLs a copied platform binary at exec. `pgrep -x` still matches the link's own name.
+- Patch 0005 later adds `# shellcheck disable=SC2016` above the fake `sudo` and `osascript` commands and moves the 5,000-path timing loop into a plain `/bin/bash` (Task 7 Step 6). This file is the patch-0001 version.
+
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/host_integration.bats`
 Expected: FAIL — `lib/core/host.sh: No such file or directory`, and the no-auth / GUI-host tests fail because `sudo` and `osascript` get called.
 
-- [ ] **Step 4: Create `build/mole-work/lib/core/host.sh`**
+- [x] **Step 4: Create `build/mole-work/lib/core/host.sh`**
 
 ```bash
 #!/bin/bash
@@ -702,6 +802,11 @@ readonly MOLE_HOST_LOADED=1
 # JSON Encoding
 # ============================================================================
 
+# Control bytes still raw after the \n, \r and \t replacements below. They are
+# listed one by one: bash 3.2 matches a range such as [\001-\037] by locale
+# collation, which skips \v and \f under a UTF-8 locale.
+_MOLE_JSON_CONTROL_BYTES=$'\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037'
+
 # Escape a value for a JSON string literal (without the surrounding quotes).
 # Paths may contain quotes, backslashes and control bytes, newlines included.
 mole_json_escape() {
@@ -712,12 +817,12 @@ mole_json_escape() {
     s="${s//$'\r'/\\r}"
     s="${s//$'\t'/\\t}"
     case "$s" in
-        *[$'\001'-$'\037']*)
+        *["$_MOLE_JSON_CONTROL_BYTES"]*)
             local out="" ch code i
             for ((i = 0; i < ${#s}; i++)); do
                 ch="${s:i:1}"
                 case "$ch" in
-                    [$'\001'-$'\037'])
+                    ["$_MOLE_JSON_CONTROL_BYTES"])
                         printf -v code '%d' "'$ch"
                         out+=$(printf '\\u%04x' "$code")
                         ;;
@@ -769,40 +874,61 @@ mole_json_emit() {
 # Exact-Path Selection
 # ============================================================================
 
-# Loaded lazily from MOLE_SELECTION_FILE. A joined string keeps each lookup a
-# single pattern match; entries that contain the separator byte fall back to
-# an exact list scan, the same approach the dry-run ledger uses.
+# Loaded lazily from MOLE_SELECTION_FILE. bash 3.2 has no associative arrays,
+# so entries are spread over an indexed array of 1021 buckets by a hash of the
+# path; each bucket is a joined string, which keeps a lookup to one pattern
+# match over a few entries instead of the whole selection. Entries that
+# contain the separator byte are kept apart and matched by an exact list scan.
+# Loading and lookups run few shell commands per path on purpose: a selection
+# can hold thousands of paths.
 _MOLE_SELECTION_LOADED_FROM=""
 _MOLE_SELECTION_LOAD_OK=false
-_MOLE_SELECTION_JOINED=""
-_MOLE_SELECTION_JOINED_USABLE=true
-_MOLE_SELECTION_PATHS=()
+_MOLE_SELECTION_BUCKETS=()
+_MOLE_SELECTION_SEP_PATHS=()
+_MOLE_SELECTION_HASH=0
 
 mole_selection_active() {
     [[ -n "${MOLE_SELECTION_FILE:-}" ]]
+}
+
+# Set _MOLE_SELECTION_HASH to an arithmetic expression for PATH: a base-31
+# polynomial over its length and last 16 characters, with the powers of 31
+# reduced modulo 1021, the bucket count. Callers index a bucket with
+# (_MOLE_SELECTION_HASH % 1021 + 1021) % 1021; the fold keeps the index in
+# range when printf reports bytes above 0x7f as negative codes (C locale).
+# A collision only lengthens a bucket; matching stays exact.
+_mole_selection_hash() {
+    printf -v _MOLE_SELECTION_HASH '%d*714+%d*550+%d*907+%d*161+%d*104+%d*695+%d*747+%d*584+%d*447+%d*739+%d*452+%d*311+%d*537+%d*182+%d*961+%d*31+%d' \
+        "${#1}" "'${1: -16:1}" "'${1: -15:1}" "'${1: -14:1}" "'${1: -13:1}" \
+        "'${1: -12:1}" "'${1: -11:1}" "'${1: -10:1}" "'${1: -9:1}" "'${1: -8:1}" \
+        "'${1: -7:1}" "'${1: -6:1}" "'${1: -5:1}" "'${1: -4:1}" "'${1: -3:1}" \
+        "'${1: -2:1}" "'${1: -1:1}"
 }
 
 _mole_selection_load() {
     local file="${MOLE_SELECTION_FILE:-}"
     _MOLE_SELECTION_LOADED_FROM="$file"
     _MOLE_SELECTION_LOAD_OK=false
-    _MOLE_SELECTION_PATHS=()
-    _MOLE_SELECTION_JOINED=""
-    _MOLE_SELECTION_JOINED_USABLE=true
+    _MOLE_SELECTION_BUCKETS=()
+    _MOLE_SELECTION_SEP_PATHS=()
     if [[ -z "$file" || ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
         return 1
     fi
     local sep=$'\x1f' entry
     while IFS= read -r -d '' entry; do
-        while [[ ${#entry} -gt 1 && "$entry" == */ ]]; do
-            entry="${entry%/}"
-        done
-        [[ -n "$entry" ]] || continue
-        _MOLE_SELECTION_PATHS+=("$entry")
-        if [[ "$entry" == *"$sep"* ]]; then
-            _MOLE_SELECTION_JOINED_USABLE=false
+        # Rare shapes: empty entries, trailing slashes, the separator byte.
+        if [[ -z "$entry" || "$entry" == */ || "$entry" == *"$sep"* ]]; then
+            while [[ ${#entry} -gt 1 && "$entry" == */ ]]; do
+                entry="${entry%/}"
+            done
+            [[ -n "$entry" ]] || continue
+            if [[ "$entry" == *"$sep"* ]]; then
+                _MOLE_SELECTION_SEP_PATHS+=("$entry")
+                continue
+            fi
         fi
-        _MOLE_SELECTION_JOINED+="$sep$entry$sep"
+        _mole_selection_hash "$entry"
+        _MOLE_SELECTION_BUCKETS[(_MOLE_SELECTION_HASH % 1021 + 1021) % 1021]+="$sep$entry$sep"
     done < "$file"
     _MOLE_SELECTION_LOAD_OK=true
     return 0
@@ -812,40 +938,32 @@ _mole_selection_load() {
 # slashes) is exactly one of the selected paths. Ancestors and descendants of
 # a selected path are not selected. An unreadable selection allows nothing.
 mole_selection_allows() {
-    if ! mole_selection_active; then
-        return 0
-    fi
+    [[ -n "${MOLE_SELECTION_FILE:-}" ]] || return 0
     if [[ "$_MOLE_SELECTION_LOADED_FROM" != "$MOLE_SELECTION_FILE" ]]; then
         _mole_selection_load || true
     fi
-    if [[ "$_MOLE_SELECTION_LOAD_OK" != "true" ]]; then
-        return 1
-    fi
-    local candidate="${1:-}"
+    [[ "$_MOLE_SELECTION_LOAD_OK" == "true" ]] || return 1
+    local candidate="${1:-}" sep=$'\x1f' entry
     while [[ ${#candidate} -gt 1 && "$candidate" == */ ]]; do
         candidate="${candidate%/}"
     done
-    if [[ -z "$candidate" ]]; then
+    [[ -n "$candidate" ]] || return 1
+    if [[ "$candidate" == *"$sep"* ]]; then
+        for entry in "${_MOLE_SELECTION_SEP_PATHS[@]+"${_MOLE_SELECTION_SEP_PATHS[@]}"}"; do
+            [[ "$entry" != "$candidate" ]] || return 0
+        done
         return 1
     fi
-    local sep=$'\x1f'
-    if [[ "$_MOLE_SELECTION_JOINED_USABLE" == "true" && "$candidate" != *"$sep"* ]]; then
-        if [[ "$_MOLE_SELECTION_JOINED" == *"$sep$candidate$sep"* ]]; then
-            return 0
-        fi
-        return 1
-    fi
-    local entry
-    for entry in "${_MOLE_SELECTION_PATHS[@]+"${_MOLE_SELECTION_PATHS[@]}"}"; do
-        if [[ "$entry" == "$candidate" ]]; then
-            return 0
-        fi
-    done
-    return 1
+    _mole_selection_hash "$candidate"
+    [[ "${_MOLE_SELECTION_BUCKETS[(_MOLE_SELECTION_HASH % 1021 + 1021) % 1021]-}" == *"$sep$candidate$sep"* ]]
 }
 ```
 
-- [ ] **Step 5: Load it from `lib/core/common.sh`**
+As built, two parts differ from the original plan:
+- **Control bytes come from an explicit list.** The plan matched them with the range `[$'\001'-$'\037']`. bash 3.2 under `en_US.UTF-8` (the engine's `LANG`) matches ranges by collation, so `\v` and `\f` passed through raw and made invalid JSON.
+- **Selections are looked up in 1021 hash buckets.** The plan kept one joined string of every path and pattern-matched it on each lookup. The 5,000-path timing test then took about 19 s against its 15 s budget. Each lookup now matches only the few entries in one bucket. Paths that contain the separator byte `\x1f` stay in a separate list that is scanned exactly.
+
+- [x] **Step 5: Load it from `lib/core/common.sh`**
 
 Find:
 ```bash
@@ -861,7 +979,7 @@ source "$_MOLE_CORE_DIR/host.sh"
 prepare_mole_tmpdir > /dev/null
 ```
 
-- [ ] **Step 6: Add `mole_auth_disabled` to `lib/core/sudo.sh` and use it at all six auth checks**
+- [x] **Step 6: Add `mole_auth_disabled` to `lib/core/sudo.sh` and use it at all six auth checks**
 
 Find:
 ```bash
@@ -893,7 +1011,7 @@ grep -c 'MOLE_TEST_NO_AUTH:-0}" == "1" \]\]; then' lib/core/sudo.sh
 ```
 Expected: `6`, then `0`.
 
-- [ ] **Step 7: Skip the AppleScript quit under a GUI host** — `lib/core/app_protection.sh`, in `force_kill_app`
+- [x] **Step 7: Skip the AppleScript quit under a GUI host** — `lib/core/app_protection.sh`, in `force_kill_app`
 
 Find:
 ```bash
@@ -909,17 +1027,17 @@ Replace with:
         command -v osascript > /dev/null 2>&1; then
 ```
 
-- [ ] **Step 8: Run the new tests and the neighbouring suites**
+- [x] **Step 8: Run the new tests and the neighbouring suites**
 
 Run: `scripts/mole-patches.sh test tests/host_integration.bats tests/manage_sudo.bats tests/core_common.bats tests/core_safe_functions.bats tests/uninstall.bats`
 Expected: all PASS.
 
-- [ ] **Step 9: Lint**
+- [x] **Step 9: Lint**
 
 Run: `scripts/mole-patches.sh lint lib/core/host.sh lib/core/common.sh lib/core/sudo.sh lib/core/app_protection.sh`
 Expected: no output.
 
-- [ ] **Step 10: Commit inside the work tree and export the patch**
+- [x] **Step 10: Commit inside the work tree and export the patch**
 
 ```bash
 git -C build/mole-work add -A
@@ -933,7 +1051,7 @@ scripts/mole-patches.sh export
 ```
 Expected: `0001-Add-host-integration-helpers-for-GUI-front-ends.patch`
 
-- [ ] **Step 11: Check that the engine ships the helpers** — append to `scripts/tests/build_engine.bats`
+- [x] **Step 11: Check that the engine ships the helpers** — append to `scripts/tests/build_engine.bats`
 
 ```bash
 @test "patched engine ships the host integration helpers" {
@@ -946,7 +1064,7 @@ Expected: `0001-Add-host-integration-helpers-for-GUI-front-ends.patch`
 Run: `bats scripts/tests/build_engine.bats`
 Expected: PASS, 6 tests, and `VERSION` shows `patch_count=1`.
 
-- [ ] **Step 12: Start the protocol document** — `docs/engine-protocol.md`
+- [x] **Step 12: Start the protocol document** — `docs/engine-protocol.md`
 
 ```markdown
 # RoomForMac engine protocol (v1)
@@ -983,6 +1101,29 @@ Every command runs with `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG=en_US.UTF-8`,
 
 The host creates every file it passes with mode `0600` inside a fresh `0700` directory.
 
+### Host helpers (patch 0001)
+
+Patch 0001 adds `lib/core/host.sh` (sourced by `lib/core/common.sh`) and the two switches
+above. It only provides the building blocks: engine commands start writing events with
+patch 0002, and deletion sinks start enforcing the selection with patch 0003. With none of
+the host variables set, the engine behaves exactly like Mole `V1.56.0`.
+
+| Helper | Behaviour |
+|---|---|
+| `mole_json_escape STR`, `mole_json_str STR` | JSON string body, or the quoted literal. Escapes `\`, `"`, `\n`, `\r`, `\t` and every other byte `0x01`–`0x1f` as `\u00xx`, in any locale; all other bytes (UTF-8 included) pass through unchanged. |
+| `mole_json_num N` | `N` as a JSON integer without leading zeros; anything but a plain non-negative integer becomes `0`. |
+| `mole_json_bool B` | `true` for the string `true`, otherwise `false`. |
+| `mole_json_emit LINE` | Appends `LINE` and a newline to `MOLE_JSON_EVENTS_FILE`; does nothing when the variable is unset. A failed write never fails the run. |
+| `mole_selection_allows PATH` | Always succeeds without `MOLE_SELECTION_FILE`. With it, succeeds only when `PATH`, ignoring trailing slashes, equals one listed path; parents and children of a listed path are refused. |
+| `mole_auth_disabled` | True with `MOLE_NO_AUTH=1` (or Mole's own test switches). `request_sudo_access`, `request_sudo_access_with_password`, `has_sudo_session`, `adopt_sudo_session`, `ensure_sudo_session` and `ensure_sudo_session_with_password` then fail without running `sudo`. |
+| `force_kill_app` | With `MOLE_GUI_HOST` set to any non-empty value, skips the AppleScript Quit; the SIGTERM and SIGKILL ladder that follows is unchanged (its `sudo -n` retry fails at `host-bin/sudo`). |
+
+Selection file format: each absolute path followed by a NUL byte. Paths may contain any
+other byte (spaces, quotes, backslashes, newlines, UTF-8). Empty entries and a final path
+without its NUL are ignored. The engine reads the file once, on its first lookup, so the
+host writes it completely before starting the engine. A missing, unreadable, non-regular
+or symlinked selection file allows nothing.
+
 ## JSON conventions
 
 - One object per line, UTF-8, first key `"v":1`. Hosts skip lines they cannot parse and types they do not know.
@@ -991,7 +1132,7 @@ The host creates every file it passes with mode `0600` inside a fresh `0700` dir
 - A run is complete only when its `summary` event arrived and the process exited 0.
 ```
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add patches/mole scripts/tests/build_engine.bats docs/engine-protocol.md
@@ -1010,7 +1151,7 @@ git commit -m "feat(engine): patch 0001 host helpers, no-auth and GUI-host switc
 - Consumes: `mole_json_emit`, `mole_json_str`, `mole_json_num`, `mole_json_bool`, `mole_json_events_enabled` (Task 3).
 - Produces (bash, `lib/core/host.sh`): `mole_json_event_section NAME`; `mole_json_event_candidate PATH SIZE_KB SIZE_KNOWN SECTION`; `mole_json_event_item SECTION PATH SIZE_KB COUNT SIZE_KNOWN COVERED_BY`; `mole_json_event_result COMMAND ACTION PATH DETAIL`; `mole_json_event_summary COMMAND DRY_RUN ITEMS SIZE_KB PARTIAL EXIT`. Wire events `section`, `candidate`, `item`, `result`, `summary` (exact shapes in the tests below).
 
-- [ ] **Step 1: Write the failing tests** — `build/mole-work/tests/clean_json_events.bats`
+- [x] **Step 1: Write the failing tests** — `build/mole-work/tests/clean_json_events.bats`
 
 ```bash
 #!/usr/bin/env bats
@@ -1147,12 +1288,12 @@ EOF
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/clean_json_events.bats`
 Expected: FAIL — `mole_json_event_item: command not found`, no result lines, no events from the pipeline.
 
-- [ ] **Step 3: Add the clean event functions** — append to `lib/core/host.sh`
+- [x] **Step 3: Add the clean event functions** — append to `lib/core/host.sh`
 
 ```bash
 
@@ -1209,7 +1350,7 @@ mole_json_event_summary() {
 }
 ```
 
-- [ ] **Step 4: Mirror `log_operation` into the event stream** — `lib/core/log.sh`
+- [x] **Step 4: Mirror `log_operation` into the event stream** — `lib/core/log.sh`
 
 Find:
 ```bash
@@ -1252,7 +1393,7 @@ log_operation() {
     oplog_enabled || return 0
 ```
 
-- [ ] **Step 5: Report batched admin removals** — `lib/core/file_ops.sh`
+- [x] **Step 5: Report batched admin removals** — `lib/core/file_ops.sh`
 
 Find:
 ```bash
@@ -1294,7 +1435,7 @@ Replace with:
             done < "$batch_result_file"
 ```
 
-- [ ] **Step 6: Emit sections, candidates, items and the summary** — `bin/clean.sh`
+- [x] **Step 6: Emit sections, candidates, items and the summary** — `bin/clean.sh`
 
 Find:
 ```bash
@@ -1357,39 +1498,43 @@ Replace with:
     log_operation_session_end "clean" "$files_cleaned" "$total_size_cleaned"
 ```
 
-- [ ] **Step 7: Log Time Machine outcomes so they reach the stream** — `lib/clean/system.sh`, `clean_time_machine_failed_backups`
+- [x] **Step 7: Report Time Machine outcomes to the stream** — `lib/clean/system.sh`, `clean_time_machine_failed_backups`
 
-Immediately after each of these two success lines, add a `log_operation … REMOVED` line at the same indentation:
+`tmutil delete` bypasses `log_operation`, so report each outcome with `mole_json_event_result` directly. Don't add `log_operation` lines here: that would also write new entries to Mole's operations log with no host variable set, and the patch must stay inert without one.
+
+Immediately after each of these two success lines, add the comment and `REMOVED` line at the same indentation:
 ```bash
                     echo -e "  ${line_color}${ICON_SUCCESS}${NC} Incomplete backup: $backup_name${NC} · ${line_color}$size_human${NC}"
-                    log_operation "clean" "REMOVED" "$inprogress_file" "$size_human"
+                    # tmutil deletions bypass log_operation; report each outcome directly.
+                    mole_json_event_result "clean" "REMOVED" "$inprogress_file" "$size_human"
 ```
 ```bash
                         echo -e "  ${line_color}${ICON_SUCCESS}${NC} Incomplete APFS backup in $bundle_name: $backup_name${NC} · ${line_color}$size_human${NC}"
-                        log_operation "clean" "REMOVED" "$inprogress_file" "$size_human"
+                        # tmutil deletions bypass log_operation; report each outcome directly.
+                        mole_json_event_result "clean" "REMOVED" "$inprogress_file" "$size_human"
 ```
-Immediately after each of these two failure lines, add a `log_operation … FAILED` line:
+Immediately after each of these two failure lines, add a `FAILED` line:
 ```bash
                     echo -e "  ${YELLOW}!${NC} Could not delete: $backup_name · try manually with sudo"
-                    log_operation "clean" "FAILED" "$inprogress_file" "tmutil delete"
+                    mole_json_event_result "clean" "FAILED" "$inprogress_file" "tmutil delete"
 ```
 ```bash
                         echo -e "  ${YELLOW}!${NC} Could not delete from bundle: $backup_name"
-                        log_operation "clean" "FAILED" "$inprogress_file" "tmutil delete"
+                        mole_json_event_result "clean" "FAILED" "$inprogress_file" "tmutil delete"
 ```
-Verify: `grep -c 'log_operation "clean" "\(REMOVED\|FAILED\)" "$inprogress_file"' lib/clean/system.sh` → `4`. (These paths need admin access, so they stay dormant until Plan 7.)
+Verify: `grep -cF -e 'mole_json_event_result "clean" "REMOVED" "$inprogress_file"' -e 'mole_json_event_result "clean" "FAILED" "$inprogress_file"' lib/clean/system.sh` → `4`. This section is not gated by admin access, but `tmutil delete` needs root and Full Disk Access. Under `MOLE_NO_AUTH=1` these lines can therefore only report `failed` (see the clean-events notes in Step 11).
 
-- [ ] **Step 8: Run the new tests and neighbouring suites**
+- [x] **Step 8: Run the new tests and neighbouring suites**
 
 Run: `scripts/mole-patches.sh test tests/clean_json_events.bats tests/host_integration.bats tests/clean_core.bats tests/clean_system_maintenance.bats tests/file_ops_mole_delete.bats tests/history.bats`
 Expected: all PASS.
 
-- [ ] **Step 9: Lint**
+- [x] **Step 9: Lint**
 
 Run: `scripts/mole-patches.sh lint lib/core/host.sh lib/core/log.sh lib/core/file_ops.sh bin/clean.sh lib/clean/system.sh`
 Expected: no output.
 
-- [ ] **Step 10: Commit inside the work tree, export, rebuild**
+- [x] **Step 10: Commit inside the work tree, export, rebuild**
 
 ```bash
 git -C build/mole-work add -A
@@ -1402,9 +1547,11 @@ run summary."
 scripts/mole-patches.sh export
 bats scripts/tests/build_engine.bats
 ```
-Expected: two patch files listed; build checks PASS with `patch_count=2`.
+Expected: two patch files listed; `git status --short patches/mole` shows only the new `0002-*.patch` (0001 is byte-identical thanks to `--no-numbered`); build checks PASS with `patch_count=2`.
 
-- [ ] **Step 11: Document the clean events** — append to `docs/engine-protocol.md`
+As built, this is the export that surfaced the renumbering. Commit `55fc48f` therefore also added `--no-numbered` to `scripts/mole-patches.sh` (shown in Task 2 Step 4), with the body "Export patches with --no-numbered so adding a patch leaves the earlier patch files byte-identical."
+
+- [x] **Step 11: Document the clean events** — append to `docs/engine-protocol.md`
 
 ```markdown
 
@@ -1420,9 +1567,37 @@ Expected: two patch files listed; build checks PASS with `patch_count=2`.
 
 Hosts total a preview from `item` events whose `covered_by` is `null`, and charge only
 `result` events with `action: removed` whose `path` is one of the paths they selected.
+
+Details:
+
+- `result` events are written whenever `MOLE_JSON_EVENTS_FILE` is set, even with
+  `MO_NO_OPLOG=1`, and never while `MOLE_DRY_RUN=1` (which `--dry-run` sets).
+  `log_operation` actions other than `REMOVED`, `SKIPPED` and `FAILED` (such as `REBUILT`)
+  are not reported. Two removal paths bypass `log_operation` and report directly:
+  - Batched admin removals in `safe_sudo_find_delete` (`detail: "batch"`). They only run in
+    the System section, which needs admin access, so they never run under `MOLE_NO_AUTH=1`
+    and write no `result` events there.
+  - Time Machine `tmutil delete` outcomes (`detail` is the human-readable size on
+    success, `"tmutil delete"` otherwise). The Time Machine section is not gated by admin
+    access: a real run without `--external` calls `tmutil delete` without `sudo` for each
+    old incomplete backup it finds on a locally mounted backup volume or backup disk image
+    while Time Machine is idle. `tmutil delete` needs root and Full Disk Access, so when
+    the engine runs as a normal user (as RoomForMac always runs it, with
+    `MOLE_NO_AUTH=1`), the attempt can only report `action: "failed"` with
+    `detail: "tmutil delete"`, never `removed`. The same `failed` result is written when
+    the delete times out or the section runs out of time before trying it.
+- `summary`: `items` and `size_kb` are the run totals (for a dry run, the sums of `count`
+  and `size_kb` over `item` rows whose `covered_by` is `null`); `partial` is `true` when a
+  dry-run total leaves out items of unknown size; `exit` is `0`, or the status of the
+  cleanup step that stopped the run early (`124` timeout, `128` and above a signal, any
+  other value a required step that failed). Only a run that reaches the end of the
+  cleanup pass writes a `summary`. A run whose engine process is killed, or stopped by
+  `SIGINT` or `SIGTERM`, writes none, and so does one that ends before or outside that
+  pass: invalid arguments, `--help`, `--whitelist`, a dry run that cannot create its
+  preview file, or Mole's test mode (`MOLE_TEST_MODE=1`), for example.
 ```
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add patches/mole docs/engine-protocol.md
@@ -1433,7 +1608,7 @@ git commit -m "feat(engine): patch 0002 machine-readable clean events"
 ### Task 5: Engine patch 0003 — exact-path selections for clean
 
 **Files:**
-- Modify (Mole): `lib/core/file_ops.sh` (`safe_remove`, `safe_remove_symlink`, `safe_sudo_remove`, `safe_sudo_find_delete`), `bin/clean.sh` (`append_dry_run_cleanup_target`, `record_dry_run_cleanup_target`), `lib/clean/apps.sh` (`_remove_verified_container_stub`), `lib/clean/dev.sh` (`clean_tool_cache`, bun cache, `clean_go_cache_root`, automation browsers, unavailable simulators), `lib/clean/brew.sh` (`clean_homebrew`), `lib/clean/system.sh` (Time Machine)
+- Modify (Mole): `lib/core/file_ops.sh` (`safe_remove`, `safe_remove_symlink`, `safe_sudo_remove`, `safe_sudo_find_delete`), `bin/clean.sh` (`append_dry_run_cleanup_target`, `record_dry_run_cleanup_target`), `lib/clean/apps.sh` (`_remove_verified_container_stub`), `lib/clean/dev.sh` (`clean_tool_cache`, bun cache, `clean_go_cache_root`, automation browsers, unavailable simulators), `lib/clean/brew.sh` (`clean_homebrew`), `lib/clean/system.sh` (Time Machine); `# SAFE: exact …` annotations on temp-file removals in `lib/clean/apps.sh`, `lib/clean/hints.sh`, `lib/clean/project.sh` (Step 9)
 - Create (Mole): `tests/clean_selection.bats`
 - Modify (RoomForMac): `docs/engine-protocol.md`; create `patches/mole/0003-*.patch`
 
@@ -1443,7 +1618,7 @@ git commit -m "feat(engine): patch 0002 machine-readable clean events"
 
 **Why every sink:** Mole's clean modules call `safe_remove`, `safe_sudo_remove`, `safe_find_delete` (→ `safe_remove`) and friends directly in dozens of places, and several modules wrap them in process-state guards (running browsers, dev tools, Claude/Codex apps) that must keep working. So the selection is enforced at the deletion sinks, inside the normal clean run, the same way Mole already enforces the user whitelist at `safe_remove` (#710). Cleanups that run a tool instead of deleting a previewed path cannot be scoped and are skipped.
 
-- [ ] **Step 1: Write the failing tests** — `build/mole-work/tests/clean_selection.bats`
+- [x] **Step 1: Write the failing tests** — `build/mole-work/tests/clean_selection.bats`
 
 ```bash
 #!/usr/bin/env bats
@@ -1555,8 +1730,8 @@ if safe_remove "$HOME/sel/keep" true; then echo "keep: removed"; else echo "keep
 if safe_remove "$HOME/sel/drop" true; then echo "drop: removed"; else echo "drop: refused"; fi
 EOF
     [ "$status" -eq 0 ]
-    [[ "$output" == *"keep: refused"* ]]
-    [[ "$output" == *"drop: removed"* ]]
+    [[ "$output" == *"keep: refused"* ]] || return 1
+    [[ "$output" == *"drop: removed"* ]] || return 1
     [ -d "$HOME/sel/keep" ]
     [ ! -e "$HOME/sel/drop" ]
 }
@@ -1576,9 +1751,9 @@ if append_dry_run_cleanup_target "$HOME/sel/b" 4 1 true; then echo "b direct: li
 if record_dry_run_cleanup_target "$HOME/sel/a" 4 1 true; then echo "a: listed"; else echo "a: skipped"; fi
 EOF
     [ "$status" -eq 0 ]
-    [[ "$output" == *"b: skipped"* ]]
-    [[ "$output" == *"b direct: skipped"* ]]
-    [[ "$output" == *"a: listed"* ]]
+    [[ "$output" == *"b: skipped"* ]] || return 1
+    [[ "$output" == *"b direct: skipped"* ]] || return 1
+    [[ "$output" == *"a: listed"* ]] || return 1
 }
 
 @test "tool-driven cache cleanups never run under a selection" {
@@ -1691,9 +1866,9 @@ EOF
     done < "$preview"
 
     run jq -r 'select(.type == "result" and .action == "removed") | .path' "$EVENTS"
-    [[ "$output" == *"$caches/com.example.alpha"* ]]
-    [[ "$output" == *"$caches/com.example.gamma"* ]]
-    [[ "$output" != *"$caches/com.example.beta"* ]]
+    [[ "$output" == *"$caches/com.example.alpha"* ]] || return 1
+    [[ "$output" == *"$caches/com.example.gamma"* ]] || return 1
+    [[ "$output" != *"$caches/com.example.beta"* ]] || return 1
     [ ! -s "$RM_GUARD_LOG" ]
 }
 
@@ -1714,14 +1889,16 @@ EOF
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+As built: `[[ ]]` assertions carry `|| return 1` (Global Constraints). Patch 0005 later adds `# shellcheck disable=SC2016` above the fake `brew` in "Homebrew cleanup is skipped under a selection" (Task 7 Step 6).
+
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/clean_selection.bats`
 Expected: FAIL — unselected paths get removed or listed, the tool marker and `brew-calls` appear, and the selected run removes `com.example.beta` too. (The "vanishes" test may already pass; it pins existing behaviour.)
 
 **Do not run a selected real clean against your real home at any point.** Every real run in this plan uses a fake `HOME` plus the `rm` guard.
 
-- [ ] **Step 3: Gate the four core deletion sinks** — `lib/core/file_ops.sh`
+- [x] **Step 3: Gate the four core deletion sinks** — `lib/core/file_ops.sh`
 
 In `safe_remove`, find:
 ```bash
@@ -1814,7 +1991,7 @@ Replace with:
 ```
 (`safe_find_delete` needs no gate: it removes every match through `safe_remove`.)
 
-- [ ] **Step 4: Gate the dry-run recorder** — `bin/clean.sh`
+- [x] **Step 4: Gate the dry-run recorder** — `bin/clean.sh`
 
 Find:
 ```bash
@@ -1859,7 +2036,7 @@ record_dry_run_cleanup_target() {
     fi
 ```
 
-- [ ] **Step 5: Gate the stub-container remover** — `lib/clean/apps.sh`
+- [x] **Step 5: Gate the stub-container remover** — `lib/clean/apps.sh`
 
 Find:
 ```bash
@@ -1879,7 +2056,7 @@ _remove_verified_container_stub() {
     [[ -d "$container_dir" ]] || return 1
 ```
 
-- [ ] **Step 6: Skip tool-driven cleanups under a selection** — `lib/clean/dev.sh` and `lib/clean/brew.sh`
+- [x] **Step 6: Skip tool-driven cleanups under a selection** — `lib/clean/dev.sh` and `lib/clean/brew.sh`
 
 `lib/clean/dev.sh`, find:
 ```bash
@@ -1972,7 +2149,7 @@ clean_homebrew() {
     fi
 ```
 
-- [ ] **Step 7: Delete selected unavailable simulators one by one** — `lib/clean/dev.sh`
+- [x] **Step 7: Delete selected unavailable simulators one by one** — `lib/clean/dev.sh`
 
 Insert this helper immediately above the line `clean_dev_mobile() {`:
 ```bash
@@ -2014,7 +2191,7 @@ Replace with:
                     if ((unavailable_before == 0)); then
 ```
 
-- [ ] **Step 8: Gate Time Machine deletions per file** — `lib/clean/system.sh`
+- [x] **Step 8: Gate Time Machine deletions per file** — `lib/clean/system.sh`
 
 Find (first block, 16-space indent):
 ```bash
@@ -2045,28 +2222,46 @@ Replace with:
                         continue
                     fi
 ```
-Verify: `grep -c 'mole_selection_allows "$inprogress_file"' lib/clean/system.sh` → `2`.
+Verify: `grep -cF 'mole_selection_allows "$inprogress_file"' lib/clean/system.sh` → `2`.
 
-- [ ] **Step 9: Audit that no deletion path was missed**
+- [x] **Step 9: Audit that no deletion path was missed**
 
 Run inside `build/mole-work`:
 ```bash
 grep -nE 'mole_selection_(allows|active)' lib/core/file_ops.sh bin/clean.sh lib/clean/*.sh | wc -l
 grep -nE '(^|[^_a-z])(rm -[a-zA-Z]*[rf]|/bin/rm |rmdir|find .* -delete|-exec rm|tmutil delete|simctl .*delete|brew (cleanup|autoremove)|kill -(TERM|9))' lib/clean/*.sh bin/clean.sh | grep -vE 'SAFE: exact|temp_file|tmp_file|scan_file|_tmp"|_stage"|pending_file|processed_file|matches_file|output_file|du_tmp|mktemp|dry-run|echo -e|debug_log|#'
 ```
-Expected: the first count is `16`. Every line printed by the second command is one of: `_remove_verified_container_stub` (gated, Step 5), `clean_homebrew` (gated), `bun pm cache rm` (gated), the two `tmutil delete` lines (gated), `simctl … delete` (gated), or `clean_dev_automation_browsers` kills (gated). Anything else is a new deletion path — gate it with `mole_selection_allows` (path-based) or `mole_selection_active` (tool-driven) before continuing.
+On the first run, the second command also prints 19 `rm -f` lines in `lib/clean/apps.sh`, `hints.sh` and `project.sh`. They remove the modules' own temp files, not user data. Mark each one with a trailing comment (Mole's `# SAFE: exact …` convention for reviewed removals, which the audit filter skips), then rerun both commands:
 
-- [ ] **Step 10: Run the tests and neighbouring suites**
+| File | Removal (as in `V1.56.0`) | Trailing comment |
+|---|---|---|
+| `lib/clean/apps.sh` | `rm -f "$installed_bundles"` in `clean_orphaned_app_data` | `# SAFE: exact tracked temp file created above` |
+| `lib/clean/hints.sh` | `rm -f "$project_dirs_file"` (2×) and `rm -f "$nested_dirs_file"` (2×) in `probe_project_artifact_hints` | `# SAFE: exact temp file created by mktemp_file above` |
+| `lib/clean/project.sh` | the four `rm -f` lines for `$target_output`/`$tag_output`/`$processed_output`/`$error_output` in `scan_purge_targets` (including `cleanup_scan_outputs`) | `# SAFE: exact temp files derived from the caller's mktemp scan output` |
+| `lib/clean/project.sh` | the three `rm -f` commands for scan temps plus their `.targets`, `.tags`, `.processed` and `.errors` siblings (`$temp`, `$interrupted_temp`, `$scan_output`) in `clean_project_artifacts`; first join the two-line `$interrupted_temp` command onto one line so the comment can follow it | `# SAFE: exact scan temp files created by mktemp for this purge` |
+| `lib/clean/project.sh` | the three `rm -f "…/purge_scanning"` lines | `# SAFE: exact progress marker written by this purge scan` |
+| `lib/clean/project.sh` | `rm -f "$dedupe_output"` | `# SAFE: exact temp file created by mktemp_file above` |
+| `lib/clean/project.sh` | `rm -f "${_size_tmpfiles[$item_index]}"`, `rm -f "$group_sort_temp"`, `rm -f "$item_sort_temp"` | `# SAFE: exact temp file created by mktemp above` |
+
+Expected: the first count is `16`. The second command then prints exactly nine lines, and each is gated:
+- `command rm -f -- "$metadata_plist"` and `command rmdir -- "$container_dir"` in `_remove_verified_container_stub` (Step 5)
+- the `log_operation "clean" "FAILED" … "simctl delete (status $delete_rc)"` report in `_clean_selected_unavailable_simulators` (Step 7)
+- the `kill -TERM` and `kill -9` lines in `clean_dev_automation_browsers` (Step 6)
+- the two `tmutil delete "$inprogress_file"` commands and their two `mole_json_event_result … "tmutil delete"` reports (Step 8, Task 4 Step 7)
+
+`clean_homebrew`, `bun pm cache rm` and `simctl delete` itself (through `_run_simctl`) are gated too, but the pattern does not print them. Any other line is a new deletion path. Gate it with `mole_selection_allows` (path-based) or `mole_selection_active` (tool-driven) before continuing.
+
+- [x] **Step 10: Run the tests and neighbouring suites**
 
 Run: `scripts/mole-patches.sh test tests/clean_selection.bats tests/clean_json_events.bats tests/host_integration.bats tests/clean_core.bats tests/clean_dev_caches.bats tests/clean_apps.bats tests/clean_user_core.bats tests/core_safe_functions.bats tests/file_ops_safe_remove_symlink.bats`
 Expected: all PASS.
 
-- [ ] **Step 11: Lint**
+- [x] **Step 11: Lint**
 
-Run: `scripts/mole-patches.sh lint lib/core/file_ops.sh bin/clean.sh lib/clean/apps.sh lib/clean/dev.sh lib/clean/brew.sh lib/clean/system.sh`
+Run: `scripts/mole-patches.sh lint lib/core/file_ops.sh bin/clean.sh lib/clean/apps.sh lib/clean/dev.sh lib/clean/brew.sh lib/clean/system.sh lib/clean/hints.sh lib/clean/project.sh`
 Expected: no output.
 
-- [ ] **Step 12: Commit inside the work tree, export, rebuild**
+- [x] **Step 12: Commit inside the work tree, export, rebuild**
 
 ```bash
 git -C build/mole-work add -A
@@ -2082,7 +2277,7 @@ bats scripts/tests/build_engine.bats
 ```
 Expected: three patch files; build checks PASS with `patch_count=3`.
 
-- [ ] **Step 13: Document selections** — append to `docs/engine-protocol.md`
+- [x] **Step 13: Document selections** — append to `docs/engine-protocol.md`
 
 ```markdown
 
@@ -2090,12 +2285,13 @@ Expected: three patch files; build checks PASS with `patch_count=3`.
 
 - The file lists absolute paths separated by NUL bytes, exactly as the preview's `item.path` reported them. Trailing slashes are ignored; parents and children of a listed path are **not** selected.
 - Real runs remove only listed paths. Dry runs preview only listed paths, which gives fresh sizes for a selection just before cleaning.
-- Cleanups driven by an external tool never run under a selection: Homebrew cleanup/autoremove, npm/pip/uv/corepack/conda caches (`clean_tool_cache`), `bun pm cache rm`, `go clean`, and stopping leaked automation browsers. Unavailable simulators are deleted one by one with `simctl delete <udid>`.
+- Cleanups driven by an external tool never run under a selection: Homebrew cleanup/autoremove, npm/pnpm/pip/uv/corepack/conda/mise caches and Nix garbage collection (`clean_tool_cache`), `bun pm cache rm`, `go clean`, and stopping leaked automation browsers. Unavailable simulators are deleted one by one with `simctl delete <udid>`; each selected device reports a `result` for its previewed path `~/Library/Developer/CoreSimulator/Devices/<udid>` (`detail: "simulator"` when removed, `"simctl delete (status N)"` when it failed).
 - A selection file that is missing, a symlink, or unreadable allows nothing.
+- Selections match paths, not file identities. A selected path that no longer exists when the run reaches it is skipped and gets no `result`; whatever the cleanup finds at a selected path at run time (a folder an app recreated, for example) is cleaned like the original.
 - Hosts select a covered item (`covered_by` set) only when its covering ancestor is not selected, so no bytes are counted twice.
 ```
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 git add patches/mole docs/engine-protocol.md
@@ -2116,7 +2312,7 @@ git commit -m "feat(engine): patch 0003 exact-path selections for clean"
 
 **Why exact paths and preview-only:** `mo uninstall NAME` matches by name *and substring* (asking for "Code" can match Xcode) and prompts `[y/N]`; and two teardown helpers (`unload_launch_plist`, `_uninstall_unload_launch_plists`) do not check for dry runs themselves, so a host preview must stop before the removal phase instead of relying on `--dry-run` alone.
 
-- [ ] **Step 1: Write the failing tests** — `build/mole-work/tests/uninstall_host_mode.bats`
+- [x] **Step 1: Write the failing tests** — `build/mole-work/tests/uninstall_host_mode.bats`
 
 ```bash
 #!/usr/bin/env bats
@@ -2237,7 +2433,7 @@ uninstall_host_paths_mode
 EOF
     [ "$status" -eq 0 ]
     [ "$(grep -c '^SELECTED ' <<< "$output")" -eq 1 ]
-    [[ "$output" == *"SELECTED 0|$HOME/Applications/Code.app|Code|"* ]]
+    [[ "$output" == *"SELECTED 0|$HOME/Applications/Code.app|Code|"* ]] || return 1
     run jq -r 'select(.type == "app_blocked") | [.reason, .path] | @tsv' "$EVENTS"
     [ "$output" = "$(printf 'not_eligible\t%s' "$HOME/Applications/Missing.app")" ]
 }
@@ -2272,8 +2468,8 @@ if printf q | _batch_preview_and_confirm; then echo "confirmed"; else echo "decl
     run jq -r 'select(.type == "app") | .path' "$EVENTS"
     [ "$output" = "$FIXTURE_APP" ]
     run jq -r 'select(.type == "app") | .leftovers[]' "$EVENTS"
-    [[ "$output" == *"$HOME/Library/Application Support/RFMFixture"* ]]
-    [[ "$output" == *"$HOME/Library/Caches/com.example.rfmfixture"* ]]
+    [[ "$output" == *"$HOME/Library/Application Support/RFMFixture"* ]] || return 1
+    [[ "$output" == *"$HOME/Library/Caches/com.example.rfmfixture"* ]] || return 1
     run jq -r 'select(.type == "app_result") | .status' "$EVENTS"
     [ -z "$output" ]
 }
@@ -2288,7 +2484,7 @@ if printf q | _batch_preview_and_confirm; then echo "confirmed"; else echo "decl
     [ ! -e "$FIXTURE_APP" ]
     [ ! -e "$HOME/Library/Application Support/RFMFixture" ]
     run ls "$trash"
-    [[ "$output" == *"RFMFixture.app"* ]]
+    [[ "$output" == *"RFMFixture.app"* ]] || return 1
     run jq -r 'select(.type == "app_result") | [.status, .path] | @tsv' "$EVENTS"
     [ "$output" = "$(printf 'removed\t%s' "$FIXTURE_APP")" ]
 }
@@ -2321,12 +2517,14 @@ EOF
 
 Note on `run_host_uninstall`: its extra arguments are `NAME=value` pairs placed inside the `env` command, so they become environment variables for that single run (for example `MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run`).
 
-- [ ] **Step 2: Run the tests to verify they fail**
+As built: `[[ ]]` assertions before a test's last line carry `|| return 1` (Global Constraints). Patch 0005 later adds `# shellcheck disable=SC2016` above the single-quoted inner-bash script in "MOLE_ASSUME_YES confirms the plan without reading a key" (Task 7 Step 6).
+
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/uninstall_host_mode.bats`
 Expected: FAIL — `uninstall_host_paths_mode: command not found`, the `q` key declines, no `app` events, and the list JSON lacks `size_kb`.
 
-- [ ] **Step 3: Add the uninstall events** — append to `lib/core/host.sh`
+- [x] **Step 3: Add the uninstall events** — append to `lib/core/host.sh`
 
 ```bash
 
@@ -2372,7 +2570,7 @@ mole_json_event_app_result() {
 }
 ```
 
-- [ ] **Step 4: Select apps by exact path** — `bin/uninstall.sh`
+- [x] **Step 4: Select apps by exact path** — `bin/uninstall.sh`
 
 Insert immediately above the line `main() {`:
 ```bash
@@ -2455,7 +2653,7 @@ Replace with:
     fi
 ```
 
-- [ ] **Step 5: Add sizes and last use to the list JSON** — `bin/uninstall.sh`, `uninstall_list_apps`
+- [x] **Step 5: Add sizes and last use to the list JSON** — `bin/uninstall.sh`, `uninstall_list_apps`
 
 Find:
 ```bash
@@ -2498,7 +2696,7 @@ Replace with:
                 "$((10#$last_used_epoch))"
 ```
 
-- [ ] **Step 6: Emit app and blocked events during the scan** — `lib/uninstall/batch.sh`, `_batch_scan_app_details`
+- [x] **Step 6: Emit app and blocked events during the scan** — `lib/uninstall/batch.sh`, `_batch_scan_app_details`
 
 Find:
 ```bash
@@ -2530,7 +2728,7 @@ Replace with:
 Report every "cannot be removed safely" app (four sites), inside `build/mole-work`:
 ```bash
 perl -pi -e 's/^([ \t]*)manual_removal_apps\+=\("\$app_name"\)$/$1manual_removal_apps+=("\$app_name")\n$1mole_json_event_app_blocked "\$app_path" "\$app_name" "manual_removal" ""/' lib/uninstall/batch.sh
-grep -c 'mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal"' lib/uninstall/batch.sh
+grep -cF 'mole_json_event_app_blocked "$app_path" "$app_name" "manual_removal"' lib/uninstall/batch.sh
 ```
 Expected: `4`, and each new line sits directly under its `manual_removal_apps+=` line with the same indentation.
 
@@ -2548,7 +2746,7 @@ Replace with:
     done
 ```
 
-- [ ] **Step 7: Stop after the scan for previews, and skip the key prompt when the host confirmed**
+- [x] **Step 7: Stop after the scan for previews, and skip the key prompt when the host confirmed**
 
 In `batch_uninstall_applications`, find:
 ```bash
@@ -2591,7 +2789,7 @@ Replace with:
     fi
 ```
 
-- [ ] **Step 8: Report each app's outcome** — `lib/uninstall/batch.sh`, `_batch_execute_removals`
+- [x] **Step 8: Report each app's outcome** — `lib/uninstall/batch.sh`, `_batch_execute_removals`
 
 Find:
 ```bash
@@ -2621,17 +2819,17 @@ Replace with:
             fi
 ```
 
-- [ ] **Step 9: Run the tests and neighbouring suites**
+- [x] **Step 9: Run the tests and neighbouring suites**
 
 Run: `scripts/mole-patches.sh test tests/uninstall_host_mode.bats tests/uninstall.bats tests/uninstall_safety.bats tests/uninstall_steam_launcher.bats tests/uninstall_scan_bash32.bats tests/uninstall_remove_file_list.bats tests/host_integration.bats`
 Expected: all PASS.
 
-- [ ] **Step 10: Lint**
+- [x] **Step 10: Lint**
 
 Run: `scripts/mole-patches.sh lint lib/core/host.sh bin/uninstall.sh lib/uninstall/batch.sh`
 Expected: no output.
 
-- [ ] **Step 11: Commit inside the work tree, export, rebuild**
+- [x] **Step 11: Commit inside the work tree, export, rebuild**
 
 ```bash
 git -C build/mole-work add -A
@@ -2647,7 +2845,7 @@ bats scripts/tests/build_engine.bats
 ```
 Expected: four patch files; build checks PASS with `patch_count=4`.
 
-- [ ] **Step 12: Document the uninstall mode** — append to `docs/engine-protocol.md`
+- [x] **Step 12: Document the uninstall mode** — append to `docs/engine-protocol.md`
 
 ```markdown
 
@@ -2668,9 +2866,29 @@ Expected: four patch files; build checks PASS with `patch_count=4`.
 `uninstall --list` (stdout is a pipe → JSON array) adds `size_kb` and `last_used_epoch` to each app.
 While admin access is off, apps with `needs_sudo` or `brew_cask` cannot be removed (the batch
 needs a sudo session); hosts show them as needing a password and never send them.
+
+Details:
+
+- With `MOLE_UNINSTALL_APP_PATHS_FILE` set, name arguments, the `[y/N]` prompt and the
+  interactive selector are never used; `MOLE_ASSUME_YES=1` answers the one remaining
+  confirmation, the batch's `Enter` / `ESC` key.
+- `app` events come from the scan, so previews and real runs both write one for each selected
+  app that passed it, before anything is removed. A `not_eligible` event carries the requested
+  path (trailing slashes removed) with an empty `name` and `vendor`.
+- `app_result` events are written only for real runs, never with `--dry-run`. `freed_kb` is the
+  scanned `size_kb` of a removed app and `0` for a failed one; `reason` is empty on success.
+- Exit status `0`: the run finished (per-app failures are reported by `app_result`), or no
+  requested path was eligible (only `app_blocked` events). A non-zero status before removals
+  start removes nothing: a missing path list, a scan that could not finish, every selected app
+  blocked during the scan, or a batch that needs the sudo session `MOLE_NO_AUTH=1` refuses. A
+  timeout or signal during removals leaves `app_result` events only for apps already handled.
+- In `uninstall --list`, `size_kb` is the scanned bundle size and `last_used_epoch` the last use
+  in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
+  when neither is known). These two fields are the only change without a host variable; they
+  are added keys, and the existing ones are unchanged.
 ```
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add patches/mole docs/engine-protocol.md
@@ -2683,13 +2901,14 @@ git commit -m "feat(engine): patch 0004 host-driven uninstall mode"
 **Files:**
 - Create (Mole): `cmd/analyze/trashlist.go`, `cmd/analyze/trashlist_test.go`
 - Modify (Mole): `cmd/analyze/main.go` (flag, usage, dispatch)
+- Modify (Mole, test fixes carried by this patch): `tests/host_integration.bats`, `tests/clean_selection.bats`, `tests/uninstall_host_mode.bats` (Step 6)
 - Modify (RoomForMac): `docs/engine-protocol.md`; create `patches/mole/0005-*.patch`
 
 **Interfaces:**
 - Consumes: `trashPathWithProgress` / `moveToTrash` / `validateTrashTarget` from `cmd/analyze/delete.go` (Mole's own Trash route and protected-path rules).
 - Produces: `analyze-go --trash-list FILE` — reads NUL-separated paths, moves each to the Trash deepest-first, prints `result` events (`action` `removed` / `skipped` (missing) / `failed`) and one `summary` (`command:"analyze"`, `items` = removed count, `partial` = any failure) on stdout; exit 0 unless FILE cannot be read. Go: `runTrashList(listPath string, out io.Writer) int`, `readTrashList(r io.Reader) ([]string, error)`, test seam `var trashListMover func(string) error`.
 
-- [ ] **Step 1: Write the failing tests** — `build/mole-work/cmd/analyze/trashlist_test.go`
+- [x] **Step 1: Write the failing tests** — `build/mole-work/cmd/analyze/trashlist_test.go`
 
 ```go
 //go:build darwin
@@ -2814,12 +3033,12 @@ func TestRunTrashListFailsWhenTheListIsMissing(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `(cd build/mole-work && go test ./cmd/analyze -run 'TrashList' -count=1)`
 Expected: FAIL — `undefined: readTrashList`, `undefined: trashListMover`, `undefined: runTrashList`.
 
-- [ ] **Step 3: Implement** — `build/mole-work/cmd/analyze/trashlist.go`
+- [x] **Step 3: Implement** — `build/mole-work/cmd/analyze/trashlist.go`
 
 ```go
 //go:build darwin
@@ -2937,7 +3156,7 @@ func runTrashList(listPath string, out io.Writer) int {
 }
 ```
 
-- [ ] **Step 4: Wire the flag** — `build/mole-work/cmd/analyze/main.go`
+- [x] **Step 4: Wire the flag** — `build/mole-work/cmd/analyze/main.go`
 
 Find:
 ```go
@@ -2982,12 +3201,119 @@ Replace with:
 	}
 ```
 
-- [ ] **Step 5: Run the Go tests and vet**
+- [x] **Step 5: Run the Go tests and vet**
 
 Run: `(cd build/mole-work && gofmt -l ./cmd/analyze && go vet ./cmd/analyze && go test ./cmd/analyze -count=1)`
 Expected: `gofmt -l` prints nothing; vet clean; all analyze tests PASS. (Mole's existing delete tests may move temp files to your Trash; that is upstream behaviour. The new tests never do.)
 
-- [ ] **Step 6: Commit inside the work tree, export, rebuild**
+- [x] **Step 6: Fix the host tests that keep Mole's full suite red** — `tests/host_integration.bats`, `tests/clean_selection.bats`, `tests/uninstall_host_mode.bats`
+
+Mole's `scripts/test.sh` shellchecks every test file, and it runs bats files in parallel. Two tests added by patches 0001, 0003 and 0004 fail there, even though each passes on its own:
+- Four single-quoted scripts trip SC2016 ("expressions don't expand in single quotes"). The quoting is intentional: a fake command or an inner bash expands them later.
+- The 5,000-path timing loop runs about fourteen times slower in a Bats test body, because every command also runs the Bats DEBUG trap. Parallel workers then push it past its 15 s limit.
+
+As built, these fixes ride in patch 0005 so the earlier `.patch` files stay unchanged. They belong to 0001, 0003 and 0004 and could be folded back into those patches later (with `start`, then a fixup rebase in `build/mole-work`, then `export`).
+
+`tests/host_integration.bats`, find:
+```bash
+@test "MOLE_NO_AUTH refuses every sudo entry point without running sudo" {
+    mole_test_fake_command sudo 'printf "%s\n" "$*" >> "$HOME/sudo-calls"; exit 0'
+```
+Replace with:
+```bash
+@test "MOLE_NO_AUTH refuses every sudo entry point without running sudo" {
+    # shellcheck disable=SC2016  # the fake sudo expands these when it runs
+    mole_test_fake_command sudo 'printf "%s\n" "$*" >> "$HOME/sudo-calls"; exit 0'
+```
+
+Find:
+```bash
+    pgrep -x "$exe" > /dev/null
+    mole_test_fake_command osascript 'printf "%s\n" "$*" >> "$HOME/osascript-calls"; exit 0'
+```
+Replace with:
+```bash
+    pgrep -x "$exe" > /dev/null
+    # shellcheck disable=SC2016  # the fake osascript expands these when it runs
+    mole_test_fake_command osascript 'printf "%s\n" "$*" >> "$HOME/osascript-calls"; exit 0'
+```
+
+Find:
+```bash
+@test "selection lookups stay fast for 5000 selected paths" {
+    load_host
+    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
+    : > "$MOLE_SELECTION_FILE"
+    local i
+    for ((i = 0; i < 5000; i++)); do
+        printf '%s\0' "$HOME/Library/Caches/com.example.vendor$i/data" >> "$MOLE_SELECTION_FILE"
+    done
+    local started=$SECONDS
+    for ((i = 0; i < 1000; i++)); do
+        mole_selection_allows "$HOME/Library/Caches/com.example.other$i/data" || true
+    done
+    mole_selection_allows "$HOME/Library/Caches/com.example.vendor4999/data"
+    [ $((SECONDS - started)) -lt 15 ]
+}
+```
+Replace with:
+```bash
+@test "selection lookups stay fast for 5000 selected paths" {
+    local selection="$BATS_TEST_TMPDIR/selection"
+    : > "$selection"
+    local i
+    for ((i = 0; i < 5000; i++)); do
+        printf '%s\0' "$HOME/Library/Caches/com.example.vendor$i/data" >> "$selection"
+    done
+    # Time the load and lookups in a plain bash, the way Mole runs them. In a
+    # Bats test body every command also runs the Bats DEBUG trap, which made
+    # this loop about fourteen times slower than Mole itself, and parallel
+    # test workers then pushed that overhead past the limit.
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SELECTION_FILE="$selection" \
+        /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/host.sh"
+started=$SECONDS
+for ((i = 0; i < 1000; i++)); do
+    mole_selection_allows "$HOME/Library/Caches/com.example.other$i/data" || true
+done
+mole_selection_allows "$HOME/Library/Caches/com.example.vendor4999/data"
+echo "elapsed=$((SECONDS - started))"
+EOF
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^elapsed=([0-9]+)$ ]] || return 1
+    [ "${BASH_REMATCH[1]}" -lt 15 ]
+}
+```
+
+`tests/clean_selection.bats`, find:
+```bash
+@test "Homebrew cleanup is skipped under a selection" {
+    mole_test_fake_command brew 'printf "%s\n" "$*" >> "$HOME/brew-calls"; exit 0'
+```
+Replace with:
+```bash
+@test "Homebrew cleanup is skipped under a selection" {
+    # shellcheck disable=SC2016  # the fake brew expands these when it runs
+    mole_test_fake_command brew 'printf "%s\n" "$*" >> "$HOME/brew-calls"; exit 0'
+```
+
+`tests/uninstall_host_mode.bats`, find (in "MOLE_ASSUME_YES confirms the plan without reading a key"):
+```bash
+    sourceable_uninstall_sh "$src"
+    run env HOME="$HOME" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_ASSUME_YES=1 \
+```
+Replace with:
+```bash
+    sourceable_uninstall_sh "$src"
+    # shellcheck disable=SC2016  # inner bash expands these from its environment
+    run env HOME="$HOME" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_ASSUME_YES=1 \
+```
+
+Run: `scripts/mole-patches.sh test tests/host_integration.bats tests/clean_selection.bats tests/uninstall_host_mode.bats && (cd build/mole-work && shellcheck --rcfile .shellcheckrc tests/host_integration.bats tests/clean_selection.bats tests/uninstall_host_mode.bats)`
+Expected: all PASS; shellcheck prints nothing.
+
+- [x] **Step 7: Commit inside the work tree, export, rebuild**
 
 ```bash
 git -C build/mole-work add -A
@@ -2995,18 +3321,24 @@ git -C build/mole-work commit -m "Add analyze --trash-list for GUI front ends
 
 Moves the NUL-separated paths in FILE to the Trash through the analyzer's
 own validation and Trash route, deepest first, and prints one JSON result
-per path plus a summary in the host event schema."
+per path plus a summary in the host event schema.
+
+Also fixes two tests from the earlier host patches so Mole's full suite
+passes: four intentionally single-quoted fake commands and inner-bash
+scripts carry the SC2016 directive Mole's test lint requires, and the
+5000-path selection timing test times the lookups in a plain bash, as
+Mole runs them, instead of under the Bats DEBUG trap."
 scripts/mole-patches.sh export
 bats scripts/tests/build_engine.bats
 ```
-Expected: five patch files; build checks PASS with `patch_count=5`.
+Expected: five patch files, with 0001–0004 byte-identical; build checks PASS with `patch_count=5`.
 
-- [ ] **Step 7: Run Mole's full test suite on the patched tree**
+- [x] **Step 8: Run Mole's full test suite on the patched tree**
 
 Run: `(cd build/mole-work && ./scripts/test.sh)`
-Expected: PASS. Any failure in an existing Mole test means a patch changed upstream behaviour: fix the patch (not the upstream test), re-export, and rerun.
+Expected: PASS, apart from the three upstream failures listed in Environment notes (two sparse-file Mail Downloads tests in `clean_core.bats`, and `clean_misc.bats`'s Dropbox test while Dropbox is running). Those fail the same way on unpatched `V1.56.0`, which you can confirm by running the same file in a clean clone of `vendor/mole`. Any other failure in an existing Mole test means a patch changed upstream behaviour: fix the patch (not the upstream test), re-export, and rerun.
 
-- [ ] **Step 8: Document the Trash list** — append to `docs/engine-protocol.md`
+- [x] **Step 9: Document the Trash list** — append to `docs/engine-protocol.md`
 
 ```markdown
 
@@ -3018,11 +3350,17 @@ Expected: PASS. Any failure in an existing Mole test means a patch changed upstr
 - Hosts route `.app` bundles to the uninstaller instead of this command.
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add patches/mole docs/engine-protocol.md
-git commit -m "feat(engine): patch 0005 analyzer Trash list"
+git commit -m "feat(engine): patch 0005 analyzer Trash list
+
+Patch 0005 also fixes two tests that patches 0001, 0003 and 0004 added,
+which kept Mole's full suite red while those patch files stay unchanged:
+four single-quoted fake-command and inner-bash scripts get the SC2016
+directive Mole's test lint needs, and the 5000-path selection timing test
+times the lookups in a plain bash instead of under the Bats DEBUG trap."
 ```
 
 ---
@@ -3039,7 +3377,7 @@ git commit -m "feat(engine): patch 0005 analyzer Trash list"
 - Consumes: the wire schema in `docs/engine-protocol.md` (Tasks 3–7).
 - Produces: `public enum EngineEvent { case section(String), candidate(CleanCandidate), item(CleanItem), result(ItemResult), summary(RunSummary), app(AppPreview), appBlocked(BlockedApp), appResult(AppResult) }`; `EngineEventDecoder.decode(_ line: String) -> EngineEvent?`; models with `sizeBytes: Int64`; `InstalledApp.decodeList(from: Data) throws -> [InstalledApp]` (internal); `DiskLevel`/`DiskEntry`/`LargeFile`, `SystemSnapshot` (Decodable with `EngineJSON.decoder()`, snake_case → camelCase, so properties are named `bundleId`, `sizeKb`, `isDir`, `rxRateMbs`…); `EngineJSON.decoder() -> JSONDecoder` (internal); `public enum EngineError: Error, Equatable { installationInvalid(String), launchFailed(executable:reason:), nonZeroExit(code:stderrTail:), terminatedBySignal(_:stderrTail:), timedOut, cancelled, malformedOutput(String) }`; `NDJSONLineBuffer { mutating append(_ chunk: Data) -> [String]; mutating finish() -> [String] }`.
 
-- [ ] **Step 1: Create the package manifest** — `Packages/MoleEngine/Package.swift`
+- [x] **Step 1: Create the package manifest** — `Packages/MoleEngine/Package.swift`
 
 ```swift
 // swift-tools-version: 6.2
@@ -3058,7 +3396,7 @@ let package = Package(
 )
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `Packages/MoleEngine/Tests/MoleEngineTests/EngineEventDecoderTests.swift`
 ```swift
@@ -3237,12 +3575,12 @@ struct ReportDecodingTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: FAIL to compile — `cannot find 'EngineEventDecoder' in scope`, `cannot find type 'CleanItem'`, and so on.
 
-- [ ] **Step 4: Write the models**
+- [x] **Step 4: Write the models**
 
 `Sources/MoleEngine/Models/CleanItem.swift`
 ```swift
@@ -3597,7 +3935,7 @@ public struct SystemSnapshot: Sendable, Hashable, Decodable {
 }
 ```
 
-- [ ] **Step 5: Write the protocol layer**
+- [x] **Step 5: Write the protocol layer**
 
 `Sources/MoleEngine/Protocol/EngineJSON.swift`
 ```swift
@@ -3749,7 +4087,7 @@ private struct RawEvent: Decodable {
 }
 ```
 
-- [ ] **Step 6: Write the line buffer** — `Sources/MoleEngine/Runner/NDJSONLineBuffer.swift`
+- [x] **Step 6: Write the line buffer** — `Sources/MoleEngine/Runner/NDJSONLineBuffer.swift`
 
 ```swift
 import Foundation
@@ -3787,12 +4125,12 @@ public struct NDJSONLineBuffer: Sendable {
 }
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: PASS — 15 tests in 3 suites, no warnings under Swift 6 strict concurrency.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Packages/MoleEngine
@@ -3813,7 +4151,7 @@ git commit -m "feat(engine-kit): MoleEngine models and v1 event decoding"
 
 **Why `posix_spawn` instead of `Process`:** Foundation's `Process` cannot put the child in its own process group, and Mole starts many subprocesses; cancelling must stop all of them. `POSIX_SPAWN_CLOEXEC_DEFAULT` also keeps the app's own file descriptors out of the engine.
 
-- [ ] **Step 1: Write the test helpers** — `Tests/MoleEngineTests/Support/StubScript.swift`
+- [x] **Step 1: Write the test helpers** — `Tests/MoleEngineTests/Support/StubScript.swift`
 
 ```swift
 import Darwin
@@ -3875,7 +4213,7 @@ func eventually(timeout: Duration = .seconds(5), _ condition: () -> Bool) async 
 }
 ```
 
-- [ ] **Step 2: Write the failing tests** — `Tests/MoleEngineTests/MoleRunnerTests.swift`
+- [x] **Step 2: Write the failing tests** — `Tests/MoleEngineTests/MoleRunnerTests.swift`
 
 ```swift
 import Darwin
@@ -3997,12 +4335,12 @@ struct MoleRunnerTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter MoleRunner`
 Expected: FAIL to compile — `cannot find 'MoleRunner' in scope`, `cannot find type 'EngineCommand'`.
 
-- [ ] **Step 4: Write the small runner types**
+- [x] **Step 4: Write the small runner types**
 
 `Sources/MoleEngine/Runner/Duration+TimeInterval.swift`
 ```swift
@@ -4099,7 +4437,7 @@ extension EngineRunning {
 }
 ```
 
-- [ ] **Step 5: Write the process layer**
+- [x] **Step 5: Write the process layer**
 
 `Sources/MoleEngine/Runner/Spawner.swift`
 ```swift
@@ -4321,7 +4659,7 @@ enum FileDescriptorReader {
 }
 ```
 
-- [ ] **Step 6: Write the runner** — `Sources/MoleEngine/Runner/MoleRunner.swift`
+- [x] **Step 6: Write the runner** — `Sources/MoleEngine/Runner/MoleRunner.swift`
 
 ```swift
 import Darwin
@@ -4425,17 +4763,17 @@ extension EngineError {
 }
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass, in parallel and serially**
+- [x] **Step 7: Run the tests to verify they pass, in parallel and serially**
 
 Run: `swift test --package-path Packages/MoleEngine --filter MoleRunner && swift test --package-path Packages/MoleEngine --filter MoleRunner --no-parallel`
 Expected: PASS both times, 7 tests. The first run after a build can be slow to start processes; the timeout test waits for `ready` and uses a 2-second limit so a cold start does not make it flaky.
 
-- [ ] **Step 8: Run the whole package**
+- [x] **Step 8: Run the whole package**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS, 22 tests.
+Expected: PASS, 22 tests if Task 10 has not landed yet, or 38 if it has. Tasks 9 and 10 both depend only on Task 8, and on `main` Task 10 landed first.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add Packages/MoleEngine
@@ -4457,7 +4795,7 @@ git commit -m "feat(engine-kit): process-group runner with streaming, timeouts a
 
 **Allowance rule these types encode (spec §7.2):** bytes are charged only for selected items with a `removed` result, using the size from the preview the user approved; covered children are never listed next to a selected ancestor, so nothing is counted twice; missing, skipped and failed items cost nothing.
 
-- [ ] **Step 1: Write the test helper** — `Tests/MoleEngineTests/Support/TestInstallation.swift`
+- [x] **Step 1: Write the test helper** — `Tests/MoleEngineTests/Support/TestInstallation.swift`
 
 ```swift
 import Foundation
@@ -4499,7 +4837,7 @@ extension EngineEnvironment {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `Tests/MoleEngineTests/EngineInstallationTests.swift`
 ```swift
@@ -4672,12 +5010,12 @@ struct CleanSelectionTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: FAIL to compile — `cannot find 'EngineInstallation' in scope`, `cannot find 'RunFiles' in scope`, `cannot find 'CleanSelection' in scope`.
 
-- [ ] **Step 4: Write the engine types**
+- [x] **Step 4: Write the engine types**
 
 `Sources/MoleEngine/Engine/EngineVersion.swift`
 ```swift
@@ -4878,7 +5216,7 @@ struct RunFiles: Sendable {
 }
 ```
 
-- [ ] **Step 5: Write the selection and tally**
+- [x] **Step 5: Write the selection and tally**
 
 `Sources/MoleEngine/Clean/CleanSelection.swift`
 ```swift
@@ -4988,12 +5326,12 @@ public struct CleanRunTally: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS, 38 tests.
+Expected: PASS, 38 tests once Task 9 has landed. Without Task 9 it is 31, and that is what `main` had here, since Task 10 landed first.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Packages/MoleEngine
@@ -5017,7 +5355,7 @@ git commit -m "feat(engine-kit): engine installation, environment, selections an
   - `StatusService.snapshots(interval: Duration = .seconds(2)) -> AsyncThrowingStream<SystemSnapshot, any Error>`
   - Internal: `struct Invocation { arguments; variables }`, `struct EventRun { events(executable:timeout:source:configure:); stdoutData(executable:timeout:configure:); stream(executable:timeout:source:configure:transform:) }`. Test helpers: `FakeRunner(respond:)` with `calls: [Call]` (`command`, `eventsFileExisted`, `files`), `nulSeparatedPaths(_:)`, `collectAll(_:)`.
 
-- [ ] **Step 1: Write the fake runner** — `Tests/MoleEngineTests/Support/FakeRunner.swift`
+- [x] **Step 1: Write the fake runner** — `Tests/MoleEngineTests/Support/FakeRunner.swift`
 
 ```swift
 import Foundation
@@ -5090,7 +5428,7 @@ func collectAll<Element>(_ stream: AsyncThrowingStream<Element, any Error>) asyn
 }
 ```
 
-- [ ] **Step 2: Write the failing tests** — `Tests/MoleEngineTests/ServicesTests.swift`
+- [x] **Step 2: Write the failing tests** — `Tests/MoleEngineTests/ServicesTests.swift`
 
 ```swift
 import Foundation
@@ -5278,12 +5616,12 @@ struct ServicesTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: FAIL to compile — `cannot find 'CleanService' in scope` and the other services.
 
-- [ ] **Step 4: Write the shared run plumbing** — `Sources/MoleEngine/Services/EventRun.swift`
+- [x] **Step 4: Write the shared run plumbing** — `Sources/MoleEngine/Services/EventRun.swift`
 
 ```swift
 import Foundation
@@ -5356,7 +5694,7 @@ struct EventRun: Sendable {
                     continuation.finish(throwing: error)
                     return
                 }
-                defer { files.remove() }
+                var failure: (any Error)?
                 do {
                     let invocation = try configure(files)
                     var variables = environment.variables(for: installation)
@@ -5377,10 +5715,13 @@ struct EventRun: Sendable {
                             continuation.yield(element)
                         }
                     }
-                    continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    failure = error
                 }
+                // Remove the scratch files before the stream ends, so a caller
+                // that has finished iterating never finds them.
+                files.remove()
+                continuation.finish(throwing: failure)
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -5388,7 +5729,9 @@ struct EventRun: Sendable {
 }
 ```
 
-- [ ] **Step 5: Write the services**
+As built, `stream` finishes differently from the original plan. The plan used `defer { files.remove() }` and called `continuation.finish()` inside the `do`/`catch`. A `defer` runs only when the task's closure returns, which is after `finish()` has already ended the caller's `for try await` loop. So a caller could see the stream end while the run's scratch directory (events file, selection or list file, stderr log) still existed. `runFilesAreRemovedAfterTheRun` checks right after `collectAll`, so it raced the cleanup. The shipped version records the error in `failure`, removes the files, and only then calls `continuation.finish(throwing: failure)`. A `nil` failure finishes normally.
+
+- [x] **Step 5: Write the services**
 
 `Sources/MoleEngine/Services/CleanService.swift`
 ```swift
@@ -5630,12 +5973,12 @@ public struct StatusService: Sendable {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `swift build --package-path Packages/MoleEngine --build-tests 2>&1 | grep -E "error|warning:" ; swift test --package-path Packages/MoleEngine`
 Expected: no errors or warnings; PASS, 50 tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Packages/MoleEngine
@@ -5655,7 +5998,7 @@ git commit -m "feat(engine-kit): clean, uninstall, analyzer and status services"
 
 These tests run only when `RFM_ENGINE_DIR` points at a built engine; otherwise the suite reports "skipped". They are the parser coverage against real engine output (roadmap decision 4). The uninstall test scans your real `/Applications` read-only, which takes a minute or two on a cold metadata cache.
 
-- [ ] **Step 1: Write the fake home** — `Tests/MoleEngineTests/Support/FakeHome.swift`
+- [x] **Step 1: Write the fake home** — `Tests/MoleEngineTests/Support/FakeHome.swift`
 
 ```swift
 import Foundation
@@ -5704,6 +6047,15 @@ struct FakeHome {
         try fake.writeStub("launchctl", "exit 0")
         try fake.writeStub("mdfind", "exit 0")
         try fake.writeStub("killall", "exit 0")
+        // macOS mktemp ignores TMPDIR when it gets no template and uses the
+        // real per-user temp folder; keep those temp files in the fake root.
+        try fake.writeStub("mktemp", """
+        case "$*" in
+            "") exec /usr/bin/mktemp "${TMPDIR%/}/tmp.XXXXXXXXXX" ;;
+            -d) exec /usr/bin/mktemp -d "${TMPDIR%/}/tmp.XXXXXXXXXX" ;;
+        esac
+        exec /usr/bin/mktemp "$@"
+        """)
         try fake.writeStub("rm", """
         for arg in "$@"; do
             case "$arg" in
@@ -5774,7 +6126,9 @@ struct FakeHome {
 }
 ```
 
-- [ ] **Step 2: Write the integration tests** — `Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
+As built, `FakeHome` also stubs `mktemp`. On macOS 27, a bare `mktemp` or `mktemp -d` (no template) ignores `TMPDIR` and creates its file in the real per-user temp folder, outside the fake root. Mole calls bare `mktemp` in several places (for example in `lib/clean/project.sh`). Without the stub, those temp files land outside the fake root that the tests and the `rm` guard confine the run to. The stub routes those two forms to `${TMPDIR}/tmp.XXXXXXXXXX` and passes every other form to `/usr/bin/mktemp` unchanged.
+
+- [x] **Step 2: Write the integration tests** — `Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
 
 ```swift
 import Foundation
@@ -5795,12 +6149,13 @@ enum IntegrationEngine {
     }
 }
 
+// The raw identifier is the suite's display name and also its test ID, so
+// `swift test --filter "Engine integration"` selects it (filters match IDs).
 @Suite(
-    "Engine integration",
     .enabled(if: IntegrationEngine.root != nil, "set RFM_ENGINE_DIR to a built engine"),
     .serialized
 )
-struct EngineIntegrationTests {
+struct `Engine integration` {
     @Test(.timeLimit(.minutes(2)))
     func statusStreamsLiveSnapshots() async throws {
         let service = StatusService(installation: try IntegrationEngine.installation())
@@ -5909,12 +6264,14 @@ struct EngineIntegrationTests {
 }
 ```
 
-- [ ] **Step 3: Confirm the suite skips without an engine**
+As built, the suite is the raw identifier ``struct `Engine integration` `` instead of `@Suite("Engine integration", …) struct EngineIntegrationTests`. Swift Testing's `swift test --filter` matches test IDs, which come from type and function names, not from display names. With the original declaration, `--filter "Engine integration"` in Step 4 selected nothing. A raw identifier (Swift 6.2) makes the display name and the ID the same string. The file name is unchanged.
+
+- [x] **Step 3: Confirm the suite skips without an engine**
 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: PASS — 50 tests pass and `Suite "Engine integration" skipped: "set RFM_ENGINE_DIR to a built engine"`.
 
-- [ ] **Step 4: Run it against the patched engine**
+- [x] **Step 4: Run it against the patched engine**
 
 Run: `scripts/build-engine.sh && RFM_ENGINE_DIR="$PWD/build/engine" swift test --package-path Packages/MoleEngine --filter "Engine integration"`
 Expected: PASS, 5 tests, no `rm` refusals.
@@ -5924,7 +6281,7 @@ If a test fails, read it as a finding, not as noise:
 - `items.contains { isUnder($0, beta) }` failing means Mole previews `~/Library/Caches` children at a different granularity than expected; print `items.map(\.path)` and adjust only the fixture layout, never the safety assertions.
 - The uninstall test failing at `listApps` usually means a stub is missing for a tool the scan now calls; add it to `FakeHome.make()`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Packages/MoleEngine
@@ -5942,7 +6299,7 @@ git commit -m "test(engine-kit): end-to-end engine integration suite"
 - Consumes: everything above.
 - Produces: one CI job on `macos-26` that audits the build checks for bare `[[ ]]` assertions, builds the patched engine, runs the build checks, the patch tests, the analyzer Go tests, Mole's full suite on the patched tree, and the Swift package including the integration suite.
 
-- [ ] **Step 1: Write the workflow** — `.github/workflows/ci.yml`
+- [x] **Step 1: Write the workflow** — `.github/workflows/ci.yml`
 
 ```yaml
 name: CI
@@ -6002,7 +6359,7 @@ jobs:
         run: swift test --package-path Packages/MoleEngine
 ```
 
-- [ ] **Step 2: Run the same sequence locally**
+- [x] **Step 2: Run the same sequence locally**
 
 Run:
 ```bash
@@ -6013,9 +6370,9 @@ shellcheck scripts/*.sh && shfmt -d -i 4 -ci -sr scripts/*.sh \
   && (cd build/engine-src && go test ./cmd/analyze -run TrashList -count=1 && ./scripts/test.sh) \
   && RFM_ENGINE_DIR="$PWD/build/engine" swift test --package-path Packages/MoleEngine
 ```
-Expected: every step passes.
+Expected: every step passes. On a Mac where the three upstream failures in Environment notes reproduce, `./scripts/test.sh` exits non-zero and the chain stops before `swift test`. Check that its only failures are those three, then run the last command on its own.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -6026,11 +6383,13 @@ git commit -m "ci: build the patched engine and run every engine and package tes
 
 Pushing publishes the repository contents. Ask first; once approved: `git push -u origin main`, then check the run in GitHub Actions. Expected: the `Engine and MoleEngine` job is green.
 
+**Still open (2026-09-26):** `main` (`796c9c5`) is on `origin`, but its push run (Actions run `36269862650`) ended in `startup_failure` with no jobs started. GitHub reports "This run likely failed because of a workflow file issue". A `pull_request` run on the same day failed the same way. This step stays unticked until a run of the `Engine and MoleEngine` job completes green.
+
 ---
 
 ## Done when
 
-- `patches/mole/` holds five patches that apply cleanly to `V1.56.0`, each with its own tests, and Mole's full suite passes on the patched tree.
+- `patches/mole/` holds five patches that apply cleanly to `V1.56.0`, each with its own tests, and Mole's full suite passes on the patched tree, apart from the three upstream failures in Environment notes that also fail on unpatched `V1.56.0`.
 - `scripts/build-engine.sh` produces `build/engine` with universal binaries, `host-bin/sudo` and a `VERSION` recording `patch_count=5`.
 - `swift test --package-path Packages/MoleEngine` passes 50 unit tests, and with `RFM_ENGINE_DIR` set, the 5 integration tests too.
 - `docs/engine-protocol.md` documents every host variable and event the package relies on.
