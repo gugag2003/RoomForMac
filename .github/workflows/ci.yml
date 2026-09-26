@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: Engine and MoleEngine
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: vendor/mole/go.mod
+          cache-dependency-path: vendor/mole/go.sum
+
+      - name: Install tools
+        run: brew install bats-core shellcheck shfmt coreutils parallel
+
+      - name: Lint build scripts
+        run: |
+          shellcheck scripts/*.sh
+          shfmt -d -i 4 -ci -sr scripts/*.sh
+
+      - name: Build the patched engine
+        run: scripts/build-engine.sh
+
+      - name: Engine build checks
+        run: bats scripts/tests
+
+      - name: Patch tests
+        run: >-
+          scripts/mole-patches.sh test --tree build/engine-src
+          tests/host_integration.bats tests/clean_json_events.bats
+          tests/clean_selection.bats tests/uninstall_host_mode.bats
+
+      - name: Analyzer Trash-list tests
+        run: cd build/engine-src && go test ./cmd/analyze -run TrashList -count=1
+
+      - name: Mole's full suite on the patched tree
+        run: cd build/engine-src && ./scripts/test.sh
+
+      - name: MoleEngine unit and integration tests
+        env:
+          RFM_ENGINE_DIR: ${{ github.workspace }}/build/engine
+        run: swift test --package-path Packages/MoleEngine
