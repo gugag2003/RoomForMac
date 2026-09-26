@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-roomformac-design.md` · **Roadmap:** `docs/superpowers/plans/2026-09-25-roomformac-roadmap.md` (read its "Decisions made while planning")
 
-**Status:** Implemented on `main` (`08b9311`..`46b3820`). This text was updated afterwards to match what was built. Code blocks show the shipped files, and "As built" notes explain each departure from the original plan. Task 13's CI step is still open (see Task 13 Step 4).
+**Status:** Implemented on `main` (`08b9311`..`9a2b22e`). This text was updated afterwards to match what was built. Code blocks show the shipped files, and "As built" notes explain each departure from the original plan. Task 13's CI step is still open (see Task 13 Step 4).
 
 ## Global Constraints
 
@@ -40,6 +40,7 @@ Observed while building this plan on macOS 27.0, Xcode 27.0 (Swift 6.4), bash 3.
 
 - `git -C vendor/mole rev-parse --short HEAD` prints `239c90d5` (8 characters), not `239c90d` (Task 1 Step 4).
 - Mole's full suite (`./scripts/test.sh`) has **3 upstream failures on this Mac**, and they also fail on unpatched `V1.56.0`. Two are sparse-file Mail Downloads tests in `tests/clean_core.bats` (`_clean_mail_downloads removes old attachments` and `_clean_mail_downloads uses dry-run wording and keeps attachments`). The third is `clean_cloud_storage calls expected caches` in `tests/clean_misc.bats`, which fails while Dropbox is running. Treat any other failure as a regression from the patches (Task 7 Step 8, Task 13 Step 2).
+- A fourth upstream test is flaky under load. `batch_uninstall_applications uses brew uninstall for casks (mocked)` in `tests/brew_uninstall.bats` failed once in the full parallel suite on 2026-09-26, and sometimes takes `pre-auths sudo for brew-only casks` with it. With every core busy, unpatched `V1.56.0` failed it in 2 of 5 runs of the file and the patched tree in 1 of 5. On their own, both pass. Rerun the file alone before calling it a regression. In that same run, the two Mail Downloads tests passed, so how they behave depends on the Mac. Do not run two copies of the same bats file at once: each file uses one fixed `tests/tmp-<name>` home, so concurrent copies delete each other's fixtures.
 - A platform binary copied into a fake `.app` (`cp /bin/sleep`) is SIGKILLed at exec. Test fixtures symlink it instead (`ln -s /bin/sleep`, Task 3).
 - `mktemp` with no template ignores `TMPDIR` and uses the real per-user temp folder. The integration fake home stubs `mktemp` (Task 12).
 - In bash 3.2 under `en_US.UTF-8`, a bracket range such as `[$'\001'-$'\037']` matches by locale collation and lets `\v` and `\f` through. `host.sh` lists the control bytes explicitly instead (Task 3).
@@ -1128,9 +1129,13 @@ or symlinked selection file allows nothing.
 
 - One object per line, UTF-8, first key `"v":1`. Hosts skip lines they cannot parse and types they do not know.
 - Strings escape `"`, `\`, `\n`, `\r`, `\t`, and other control bytes as `\u00XX`.
-- Sizes are integer kilobytes (`size_kb`); booleans are JSON booleans.
+- Sizes are integer kilobytes (`size_kb`, `freed_kb`) of at most 9007199254740991 (2^53 − 1,
+  the largest count whose bytes fit in a signed 64-bit integer); booleans are JSON booleans.
+  A larger size makes its line malformed, so hosts skip it.
 - A run is complete only when its `summary` event arrived and the process exited 0.
 ```
+
+As built: the size limit in JSON conventions, and its mention of `freed_kb` (a patch 0004 field), came later with Task 8's overflow fix (`42e03de`, see Task 8 Step 5).
 
 - [x] **Step 13: Commit**
 
@@ -2885,8 +2890,11 @@ Details:
 - In `uninstall --list`, `size_kb` is the scanned bundle size and `last_used_epoch` the last use
   in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
   when neither is known). These two fields are the only change without a host variable; they
-  are added keys, and the existing ones are unchanged.
+  are added keys, and the existing ones are unchanged. A `size_kb` above the limit in the JSON
+  conventions makes the whole array malformed.
 ```
+
+As built: the last sentence, about a `size_kb` above the limit, came later with Task 8's overflow fix (`42e03de`, see Task 8 Step 5).
 
 - [x] **Step 13: Commit**
 
@@ -3375,7 +3383,7 @@ times the lookups in a plain bash instead of under the Bats DEBUG trap."
 
 **Interfaces:**
 - Consumes: the wire schema in `docs/engine-protocol.md` (Tasks 3–7).
-- Produces: `public enum EngineEvent { case section(String), candidate(CleanCandidate), item(CleanItem), result(ItemResult), summary(RunSummary), app(AppPreview), appBlocked(BlockedApp), appResult(AppResult) }`; `EngineEventDecoder.decode(_ line: String) -> EngineEvent?`; models with `sizeBytes: Int64`; `InstalledApp.decodeList(from: Data) throws -> [InstalledApp]` (internal); `DiskLevel`/`DiskEntry`/`LargeFile`, `SystemSnapshot` (Decodable with `EngineJSON.decoder()`, snake_case → camelCase, so properties are named `bundleId`, `sizeKb`, `isDir`, `rxRateMbs`…); `EngineJSON.decoder() -> JSONDecoder` (internal); `public enum EngineError: Error, Equatable { installationInvalid(String), launchFailed(executable:reason:), nonZeroExit(code:stderrTail:), terminatedBySignal(_:stderrTail:), timedOut, cancelled, malformedOutput(String) }`; `NDJSONLineBuffer { mutating append(_ chunk: Data) -> [String]; mutating finish() -> [String] }`.
+- Produces: `public enum EngineEvent { case section(String), candidate(CleanCandidate), item(CleanItem), result(ItemResult), summary(RunSummary), app(AppPreview), appBlocked(BlockedApp), appResult(AppResult) }`; `EngineEventDecoder.decode(_ line: String) -> EngineEvent?`; models with `sizeBytes: Int64`; `InstalledApp.decodeList(from: Data) throws -> [InstalledApp]` (internal); `DiskLevel`/`DiskEntry`/`LargeFile`, `SystemSnapshot` (Decodable with `EngineJSON.decoder()`, snake_case → camelCase, so properties are named `bundleId`, `sizeKb`, `isDir`, `rxRateMbs`…); `EngineJSON.decoder() -> JSONDecoder` and `EngineJSON.bytes(fromKilobytes: Int64?) -> Int64?` (internal); `public enum EngineError: Error, Equatable { installationInvalid(String), launchFailed(executable:reason:), nonZeroExit(code:stderrTail:), terminatedBySignal(_:stderrTail:), timedOut, cancelled, malformedOutput(String) }`; `NDJSONLineBuffer { mutating append(_ chunk: Data) -> [String]; mutating finish() -> [String] }`.
 
 - [x] **Step 1: Create the package manifest** — `Packages/MoleEngine/Package.swift`
 
@@ -3400,6 +3408,7 @@ let package = Package(
 
 `Packages/MoleEngine/Tests/MoleEngineTests/EngineEventDecoderTests.swift`
 ```swift
+import Foundation
 import Testing
 @testable import MoleEngine
 
@@ -3467,6 +3476,37 @@ struct EngineEventDecoderTests {
     ])
     func skipsLinesItCannotUse(_ line: String) {
         #expect(EngineEventDecoder.decode(line) == nil)
+    }
+
+    @Test(arguments: sizedEvents, [Int64.max, Int64.max / 1024 + 1])
+    func skipsSizesTooLargeToCountInBytes(_ template: String, _ kilobytes: Int64) {
+        #expect(EngineEventDecoder.decode(template.replacingOccurrences(of: "<KB>", with: String(kilobytes))) == nil)
+    }
+
+    @Test(arguments: sizedEvents)
+    func keepsTheLargestSizeThatFitsInBytes(_ template: String) {
+        let line = template.replacingOccurrences(of: "<KB>", with: String(Int64.max / 1024))
+        #expect(sizeBytes(of: EngineEventDecoder.decode(line)) == Int64.max / 1024 * 1024)
+    }
+}
+
+/// Every event that carries a size, with `<KB>` where the kilobytes go.
+private let sizedEvents = [
+    #"{"v":1,"type":"candidate","section":"S","path":"/a","size_kb":<KB>,"size_known":true}"#,
+    #"{"v":1,"type":"item","section":"S","path":"/a","size_kb":<KB>}"#,
+    #"{"v":1,"type":"summary","command":"clean","dry_run":true,"items":1,"size_kb":<KB>,"partial":false,"exit":0}"#,
+    #"{"v":1,"type":"app","path":"/Applications/Foo.app","name":"Foo","size_kb":<KB>}"#,
+    #"{"v":1,"type":"app_result","path":"/Applications/Foo.app","name":"Foo","status":"removed","freed_kb":<KB>}"#,
+]
+
+private func sizeBytes(of event: EngineEvent?) -> Int64? {
+    switch event {
+    case .candidate(let candidate): candidate.sizeBytes
+    case .item(let item): item.sizeBytes
+    case .summary(let summary): summary.sizeBytes
+    case .app(let app): app.sizeBytes
+    case .appResult(let result): result.freedBytes
+    default: nil
     }
 }
 ```
@@ -3536,6 +3576,28 @@ struct ReportDecodingTests {
         #expect(throws: EngineError.malformedOutput("uninstall --list printed no JSON array")) {
             try InstalledApp.decodeList(from: Data("nothing here".utf8))
         }
+    }
+
+    @Test(arguments: [Int64.max, Int64.max / 1024 + 1])
+    func rejectsAnInventorySizeTooLargeToCountInBytes(_ kilobytes: Int64) {
+        #expect(throws: EngineError.malformedOutput("uninstall --list reported a size too large to count in bytes: /Applications/Huge.app")) {
+            try InstalledApp.decodeList(from: inventory(sizeKb: kilobytes))
+        }
+    }
+
+    @Test func keepsTheLargestInventorySizeThatFitsInBytes() throws {
+        let apps = try InstalledApp.decodeList(from: inventory(sizeKb: Int64.max / 1024))
+        #expect(apps.first?.sizeBytes == Int64.max / 1024 * 1024)
+    }
+
+    @Test func aSizeSetTooLargeByHandCountsAsNoBytes() throws {
+        var app = try #require(InstalledApp.decodeList(from: inventory(sizeKb: 1)).first)
+        app.sizeKb = .max
+        #expect(app.sizeBytes == 0)
+    }
+
+    private func inventory(sizeKb: Int64) -> Data {
+        Data(#"[{"name": "Huge", "bundle_id": "com.example.huge", "source": "App", "uninstall_name": "Huge", "path": "/Applications/Huge.app", "size": "8EB", "size_kb": \#(sizeKb)}]"#.utf8)
     }
 
     @Test func decodesADiskLevel() throws {
@@ -3791,7 +3853,9 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
     public var sizeKb: Int64?
     public var lastUsedEpoch: Int64?
 
-    public var sizeBytes: Int64 { max(sizeKb ?? 0, 0) * 1024 }
+    /// 0 when the size is unknown. Decoding rejects sizes too large to count
+    /// in bytes; one set that large by hand counts as 0 too.
+    public var sizeBytes: Int64 { EngineJSON.bytes(fromKilobytes: sizeKb) ?? 0 }
 
     public var lastUsed: Date? {
         guard let lastUsedEpoch, lastUsedEpoch > 0 else { return nil }
@@ -3806,7 +3870,11 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
         guard let start = data.firstIndex(of: UInt8(ascii: "[")) else {
             throw EngineError.malformedOutput("uninstall --list printed no JSON array")
         }
-        return try EngineJSON.decoder().decode([InstalledApp].self, from: Data(data[start...]))
+        let apps = try EngineJSON.decoder().decode([InstalledApp].self, from: Data(data[start...]))
+        if let app = apps.first(where: { EngineJSON.bytes(fromKilobytes: $0.sizeKb) == nil }) {
+            throw EngineError.malformedOutput("uninstall --list reported a size too large to count in bytes: \(app.path)")
+        }
+        return apps
     }
 }
 ```
@@ -3948,6 +4016,14 @@ enum EngineJSON {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
     }
+
+    /// An engine size in kilobytes as bytes; missing and negative sizes count
+    /// as 0. Nil when the bytes do not fit in Int64, which makes the output
+    /// carrying the size malformed.
+    static func bytes(fromKilobytes kilobytes: Int64?) -> Int64? {
+        let (bytes, overflow) = max(kilobytes ?? 0, 0).multipliedReportingOverflow(by: 1024)
+        return overflow ? nil : bytes
+    }
 }
 ```
 
@@ -4034,6 +4110,11 @@ private struct RawEvent: Decodable {
     var freedKb: Int64?
 
     var event: EngineEvent? {
+        // Like a size too large for Int64 itself, a size too large to count
+        // in bytes makes the whole line malformed.
+        guard let sizeBytes = EngineJSON.bytes(fromKilobytes: sizeKb),
+              let freedBytes = EngineJSON.bytes(fromKilobytes: freedKb)
+        else { return nil }
         switch type {
         case "section":
             guard let name else { return nil }
@@ -4042,13 +4123,13 @@ private struct RawEvent: Decodable {
             guard let path else { return nil }
             return .candidate(CleanCandidate(
                 section: section ?? "", path: path,
-                sizeBytes: bytes(sizeKb), sizeKnown: sizeKnown ?? false
+                sizeBytes: sizeBytes, sizeKnown: sizeKnown ?? false
             ))
         case "item":
             guard let path else { return nil }
             return .item(CleanItem(
                 section: section ?? "", path: path,
-                sizeBytes: bytes(sizeKb), sizeKnown: sizeKnown ?? false,
+                sizeBytes: sizeBytes, sizeKnown: sizeKnown ?? false,
                 count: max(count ?? 1, 1), coveredBy: coveredBy
             ))
         case "result":
@@ -4057,13 +4138,13 @@ private struct RawEvent: Decodable {
         case "summary":
             return .summary(RunSummary(
                 command: command ?? "", dryRun: dryRun ?? false, items: items ?? 0,
-                sizeBytes: bytes(sizeKb), partial: partial ?? false, exitCode: exit ?? 0
+                sizeBytes: sizeBytes, partial: partial ?? false, exitCode: exit ?? 0
             ))
         case "app":
             guard let path else { return nil }
             return .app(AppPreview(
                 path: path, name: name ?? "", bundleId: bundleId ?? "",
-                sizeBytes: bytes(sizeKb), needsAdmin: needsSudo ?? false,
+                sizeBytes: sizeBytes, needsAdmin: needsSudo ?? false,
                 homebrewCask: brewCask ?? false, hasSensitiveData: sensitiveData ?? false,
                 isRunning: running ?? false, leftovers: leftovers ?? [], reviewOnly: reviewOnly ?? []
             ))
@@ -4074,18 +4155,16 @@ private struct RawEvent: Decodable {
             guard let path, let status = status.flatMap(AppResult.Status.init(rawValue:)) else { return nil }
             return .appResult(AppResult(
                 path: path, name: name ?? "", status: status,
-                freedBytes: bytes(freedKb), reason: reason ?? ""
+                freedBytes: freedBytes, reason: reason ?? ""
             ))
         default:
             return nil
         }
     }
-
-    private func bytes(_ kilobytes: Int64?) -> Int64 {
-        max(kilobytes ?? 0, 0) * 1024
-    }
 }
 ```
+
+As built, sizes become bytes through an overflow check that commit `42e03de` added after the package was done. The original plan multiplied `size_kb` and `freed_kb` by 1024 directly, so an absurd size such as `Int64.max` trapped the host instead of being skipped like any other malformed line. `EngineJSON.bytes(fromKilobytes:)` uses `multipliedReportingOverflow` and returns nil when the bytes do not fit in `Int64`. This extends the rule decoding already applied to sizes too large for `Int64` itself. An event line with such a size decodes to nil and is skipped, an `uninstall --list` array containing one throws `malformedOutput`, and `InstalledApp.sizeBytes` counts a size that large set by hand as 0. The largest accepted size is 2^53 − 1 KB (`Int64.max / 1024`). In Step 2, the last two tests in `EngineEventDecoderTests` and the three inventory-size tests in `ReportDecodingTests` pin the rule, and the protocol document states the limit (Task 3 Step 12 and Task 6 Step 12). Because one item can now reach almost `Int64.max` bytes, `CleanRunTally.removedBytes` stops at `Int64.max` instead of overflowing (Task 10 Step 5).
 
 - [x] **Step 6: Write the line buffer** — `Sources/MoleEngine/Runner/NDJSONLineBuffer.swift`
 
@@ -4128,7 +4207,7 @@ public struct NDJSONLineBuffer: Sendable {
 - [x] **Step 7: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS — 15 tests in 3 suites, no warnings under Swift 6 strict concurrency.
+Expected: PASS — 20 tests in 3 suites, no warnings under Swift 6 strict concurrency.
 
 - [x] **Step 8: Commit**
 
@@ -4771,7 +4850,7 @@ Expected: PASS both times, 7 tests. The first run after a build can be slow to s
 - [x] **Step 8: Run the whole package**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS, 22 tests if Task 10 has not landed yet, or 38 if it has. Tasks 9 and 10 both depend only on Task 8, and on `main` Task 10 landed first.
+Expected: PASS, 27 tests if Task 10 has not landed yet, or 44 if it has. Tasks 9 and 10 both depend only on Task 8, and on `main` Task 10 landed first.
 
 - [x] **Step 9: Commit**
 
@@ -5006,6 +5085,16 @@ struct CleanSelectionTests {
         #expect(tally.removedItems.isEmpty)
         #expect(tally.notRemovedItems == [other])
         #expect(tally.removedBytes == 0)
+    }
+
+    @Test func removedBytesStopsAtTheLargestCountInsteadOfOverflowing() {
+        let largest = Int64.max / 1024 * 1024
+        let first = CleanItem(section: "S", path: "/Users/test/a", sizeBytes: largest, sizeKnown: true)
+        let second = CleanItem(section: "S", path: "/Users/test/b", sizeBytes: largest, sizeKnown: true)
+        var tally = CleanRunTally(selection: [first, second])
+        tally.record(.result(ItemResult(command: "clean", action: .removed, path: first.path)))
+        tally.record(.result(ItemResult(command: "clean", action: .removed, path: second.path)))
+        #expect(tally.removedBytes == .max)
     }
 }
 ```
@@ -5311,9 +5400,12 @@ public struct CleanRunTally: Sendable, Equatable {
         sortedItems.filter { outcome(for: $0)?.action != .removed }
     }
 
-    /// Previewed size of the confirmed removals.
+    /// Previewed size of the confirmed removals, stopping at Int64.max.
     public var removedBytes: Int64 {
-        removedItems.reduce(0) { $0 + $1.sizeBytes }
+        removedItems.reduce(0) { total, item in
+            let (sum, overflow) = total.addingReportingOverflow(item.sizeBytes)
+            return overflow ? .max : sum
+        }
     }
 
     public func outcome(for item: CleanItem) -> ItemResult? {
@@ -5326,10 +5418,12 @@ public struct CleanRunTally: Sendable, Equatable {
 }
 ```
 
+As built, `removedBytes` adds with `addingReportingOverflow` and stops at `Int64.max`. Commit `9a2b22e` added this after Task 8's overflow rule (Task 8 Step 5) let each item reach (2^53 − 1) × 1024 bytes, so two confirmed removals of that size overflowed the plain sum and trapped the host. `removedBytesStopsAtTheLargestCountInsteadOfOverflowing` in Step 2 pins it.
+
 - [x] **Step 6: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS, 38 tests once Task 9 has landed. Without Task 9 it is 31, and that is what `main` had here, since Task 10 landed first.
+Expected: PASS, 44 tests once Task 9 has landed. Without Task 9 it is 37. That is the order `main` took, since Task 10 landed first; its commit ran 31, because the overflow tests in Tasks 8 and 10 came later.
 
 - [x] **Step 7: Commit**
 
@@ -5976,7 +6070,7 @@ public struct StatusService: Sendable {
 - [x] **Step 6: Run the tests to verify they pass**
 
 Run: `swift build --package-path Packages/MoleEngine --build-tests 2>&1 | grep -E "error|warning:" ; swift test --package-path Packages/MoleEngine`
-Expected: no errors or warnings; PASS, 50 tests.
+Expected: no errors or warnings; PASS, 56 tests.
 
 - [x] **Step 7: Commit**
 
@@ -6269,7 +6363,7 @@ As built, the suite is the raw identifier ``struct `Engine integration` `` inste
 - [x] **Step 3: Confirm the suite skips without an engine**
 
 Run: `swift test --package-path Packages/MoleEngine`
-Expected: PASS — 50 tests pass and `Suite "Engine integration" skipped: "set RFM_ENGINE_DIR to a built engine"`.
+Expected: PASS — 56 tests pass and `Suite "Engine integration" skipped: "set RFM_ENGINE_DIR to a built engine"`. The summary line reads `Test run with 61 tests in 9 suites passed`, because it counts the 5 skipped integration tests too.
 
 - [x] **Step 4: Run it against the patched engine**
 
@@ -6391,6 +6485,6 @@ Pushing publishes the repository contents. Ask first; once approved: `git push -
 
 - `patches/mole/` holds five patches that apply cleanly to `V1.56.0`, each with its own tests, and Mole's full suite passes on the patched tree, apart from the three upstream failures in Environment notes that also fail on unpatched `V1.56.0`.
 - `scripts/build-engine.sh` produces `build/engine` with universal binaries, `host-bin/sudo` and a `VERSION` recording `patch_count=5`.
-- `swift test --package-path Packages/MoleEngine` passes 50 unit tests, and with `RFM_ENGINE_DIR` set, the 5 integration tests too.
+- `swift test --package-path Packages/MoleEngine` passes 56 unit tests, and with `RFM_ENGINE_DIR` set, the 5 integration tests too.
 - `docs/engine-protocol.md` documents every host variable and event the package relies on.
 - The next plan (App shell, design system, onboarding) can start: it bundles `build/engine` into the app and calls the services above.
