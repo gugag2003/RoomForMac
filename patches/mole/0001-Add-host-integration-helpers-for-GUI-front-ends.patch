@@ -1,0 +1,569 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Fri, 25 Sep 2026 23:45:39 -0300
+Subject: [PATCH] Add host integration helpers for GUI front ends
+
+Adds lib/core/host.sh (JSON events, exact-path selections) and two
+switches for GUI hosts: MOLE_NO_AUTH disables every sudo entry point and
+MOLE_GUI_HOST skips the AppleScript quit in force_kill_app. All inert
+unless the variables are set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/core/app_protection.sh  |   5 +-
+ lib/core/common.sh          |   1 +
+ lib/core/host.sh            | 180 +++++++++++++++++++++++++
+ lib/core/sudo.sh            |  19 ++-
+ tests/host_integration.bats | 256 ++++++++++++++++++++++++++++++++++++
+ 5 files changed, 454 insertions(+), 7 deletions(-)
+ create mode 100644 lib/core/host.sh
+ create mode 100644 tests/host_integration.bats
+
+diff --git a/lib/core/app_protection.sh b/lib/core/app_protection.sh
+index d4973a90..99d06892 100644
+--- a/lib/core/app_protection.sh
++++ b/lib/core/app_protection.sh
+@@ -2195,7 +2195,10 @@ force_kill_app() {
+     # flow (including unsaved-state prompts). osascript is best-effort: we
+     # cap the wait so a hung app, an automation-permission dialog, or a
+     # missing osascript binary can never stall the uninstall.
+-    if [[ "${MOLE_TEST_MODE:-0}" != "1" && "${MOLE_TEST_NO_AUTH:-0}" != "1" ]] &&
++    # A GUI host (MOLE_GUI_HOST) quits apps through its own API before it runs
++    # the uninstall; an AppleScript Quit here would only add a per-app
++    # Automation permission prompt on the host's behalf.
++    if [[ "${MOLE_TEST_MODE:-0}" != "1" && "${MOLE_TEST_NO_AUTH:-0}" != "1" && -z "${MOLE_GUI_HOST:-}" ]] &&
+         command -v osascript > /dev/null 2>&1; then
+         local quit_target=""
+         if mole_is_reverse_dns_bundle_id "$bundle_id"; then
+diff --git a/lib/core/common.sh b/lib/core/common.sh
+index 16cf01dc..616b9e5f 100755
+--- a/lib/core/common.sh
++++ b/lib/core/common.sh
+@@ -14,6 +14,7 @@ _MOLE_CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ 
+ # Load core modules
+ source "$_MOLE_CORE_DIR/base.sh"
++source "$_MOLE_CORE_DIR/host.sh"
+ prepare_mole_tmpdir > /dev/null
+ source "$_MOLE_CORE_DIR/log.sh"
+ 
+diff --git a/lib/core/host.sh b/lib/core/host.sh
+new file mode 100644
+index 00000000..6f3bb694
+--- /dev/null
++++ b/lib/core/host.sh
+@@ -0,0 +1,180 @@
++#!/bin/bash
++# Mole - Host Integration
++# Machine-readable events and exact-path selections for graphical front ends.
++#
++# Everything here is inert unless a host sets one of:
++#   MOLE_JSON_EVENTS_FILE  Append newline-delimited JSON events (schema v1).
++#   MOLE_SELECTION_FILE    NUL-separated exact paths. Deletion sinks refuse any
++#                          other path; cleanups that run a tool instead of
++#                          deleting previewed paths are skipped.
++# Related switches live next to the code they change:
++#   MOLE_NO_AUTH=1         lib/core/sudo.sh never requests or adopts sudo.
++#   MOLE_GUI_HOST=<name>   lib/core/app_protection.sh skips AppleScript quits.
++
++set -euo pipefail
++
++# Prevent multiple sourcing
++if [[ -n "${MOLE_HOST_LOADED:-}" ]]; then
++    return 0
++fi
++readonly MOLE_HOST_LOADED=1
++
++# ============================================================================
++# JSON Encoding
++# ============================================================================
++
++# Control bytes still raw after the \n, \r and \t replacements below. They are
++# listed one by one: bash 3.2 matches a range such as [\001-\037] by locale
++# collation, which skips \v and \f under a UTF-8 locale.
++_MOLE_JSON_CONTROL_BYTES=$'\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037'
++
++# Escape a value for a JSON string literal (without the surrounding quotes).
++# Paths may contain quotes, backslashes and control bytes, newlines included.
++mole_json_escape() {
++    local s="${1-}"
++    s="${s//\\/\\\\}"
++    s="${s//\"/\\\"}"
++    s="${s//$'\n'/\\n}"
++    s="${s//$'\r'/\\r}"
++    s="${s//$'\t'/\\t}"
++    case "$s" in
++        *["$_MOLE_JSON_CONTROL_BYTES"]*)
++            local out="" ch code i
++            for ((i = 0; i < ${#s}; i++)); do
++                ch="${s:i:1}"
++                case "$ch" in
++                    ["$_MOLE_JSON_CONTROL_BYTES"])
++                        printf -v code '%d' "'$ch"
++                        out+=$(printf '\\u%04x' "$code")
++                        ;;
++                    *) out+="$ch" ;;
++                esac
++            done
++            s="$out"
++            ;;
++    esac
++    printf '%s' "$s"
++}
++
++mole_json_str() {
++    printf '"%s"' "$(mole_json_escape "${1-}")"
++}
++
++mole_json_num() {
++    if [[ "${1-}" =~ ^[0-9]+$ ]]; then
++        printf '%s' "$((10#$1))"
++    else
++        printf '0'
++    fi
++}
++
++mole_json_bool() {
++    if [[ "${1-}" == "true" ]]; then
++        printf 'true'
++    else
++        printf 'false'
++    fi
++}
++
++# ============================================================================
++# Event Stream
++# ============================================================================
++
++mole_json_events_enabled() {
++    [[ -n "${MOLE_JSON_EVENTS_FILE:-}" ]]
++}
++
++# Append one JSON object as a single line. A write failure never stops a
++# cleanup; the host treats a run without a summary event as incomplete.
++mole_json_emit() {
++    mole_json_events_enabled || return 0
++    printf '%s\n' "${1-}" >> "$MOLE_JSON_EVENTS_FILE" 2> /dev/null || true
++}
++
++# ============================================================================
++# Exact-Path Selection
++# ============================================================================
++
++# Loaded lazily from MOLE_SELECTION_FILE. bash 3.2 has no associative arrays,
++# so entries are spread over an indexed array of 1021 buckets by a hash of the
++# path; each bucket is a joined string, which keeps a lookup to one pattern
++# match over a few entries instead of the whole selection. Entries that
++# contain the separator byte are kept apart and matched by an exact list scan.
++# Loading and lookups run few shell commands per path on purpose: a selection
++# can hold thousands of paths.
++_MOLE_SELECTION_LOADED_FROM=""
++_MOLE_SELECTION_LOAD_OK=false
++_MOLE_SELECTION_BUCKETS=()
++_MOLE_SELECTION_SEP_PATHS=()
++_MOLE_SELECTION_HASH=0
++
++mole_selection_active() {
++    [[ -n "${MOLE_SELECTION_FILE:-}" ]]
++}
++
++# Set _MOLE_SELECTION_HASH to an arithmetic expression for PATH: a base-31
++# polynomial over its length and last 16 characters, with the powers of 31
++# reduced modulo 1021, the bucket count. Callers index a bucket with
++# (_MOLE_SELECTION_HASH % 1021 + 1021) % 1021; the fold keeps the index in
++# range when printf reports bytes above 0x7f as negative codes (C locale).
++# A collision only lengthens a bucket; matching stays exact.
++_mole_selection_hash() {
++    printf -v _MOLE_SELECTION_HASH '%d*714+%d*550+%d*907+%d*161+%d*104+%d*695+%d*747+%d*584+%d*447+%d*739+%d*452+%d*311+%d*537+%d*182+%d*961+%d*31+%d' \
++        "${#1}" "'${1: -16:1}" "'${1: -15:1}" "'${1: -14:1}" "'${1: -13:1}" \
++        "'${1: -12:1}" "'${1: -11:1}" "'${1: -10:1}" "'${1: -9:1}" "'${1: -8:1}" \
++        "'${1: -7:1}" "'${1: -6:1}" "'${1: -5:1}" "'${1: -4:1}" "'${1: -3:1}" \
++        "'${1: -2:1}" "'${1: -1:1}"
++}
++
++_mole_selection_load() {
++    local file="${MOLE_SELECTION_FILE:-}"
++    _MOLE_SELECTION_LOADED_FROM="$file"
++    _MOLE_SELECTION_LOAD_OK=false
++    _MOLE_SELECTION_BUCKETS=()
++    _MOLE_SELECTION_SEP_PATHS=()
++    if [[ -z "$file" || ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
++        return 1
++    fi
++    local sep=$'\x1f' entry
++    while IFS= read -r -d '' entry; do
++        # Rare shapes: empty entries, trailing slashes, the separator byte.
++        if [[ -z "$entry" || "$entry" == */ || "$entry" == *"$sep"* ]]; then
++            while [[ ${#entry} -gt 1 && "$entry" == */ ]]; do
++                entry="${entry%/}"
++            done
++            [[ -n "$entry" ]] || continue
++            if [[ "$entry" == *"$sep"* ]]; then
++                _MOLE_SELECTION_SEP_PATHS+=("$entry")
++                continue
++            fi
++        fi
++        _mole_selection_hash "$entry"
++        _MOLE_SELECTION_BUCKETS[(_MOLE_SELECTION_HASH % 1021 + 1021) % 1021]+="$sep$entry$sep"
++    done < "$file"
++    _MOLE_SELECTION_LOAD_OK=true
++    return 0
++}
++
++# Succeeds when no selection is active, or when PATH (ignoring trailing
++# slashes) is exactly one of the selected paths. Ancestors and descendants of
++# a selected path are not selected. An unreadable selection allows nothing.
++mole_selection_allows() {
++    [[ -n "${MOLE_SELECTION_FILE:-}" ]] || return 0
++    if [[ "$_MOLE_SELECTION_LOADED_FROM" != "$MOLE_SELECTION_FILE" ]]; then
++        _mole_selection_load || true
++    fi
++    [[ "$_MOLE_SELECTION_LOAD_OK" == "true" ]] || return 1
++    local candidate="${1:-}" sep=$'\x1f' entry
++    while [[ ${#candidate} -gt 1 && "$candidate" == */ ]]; do
++        candidate="${candidate%/}"
++    done
++    [[ -n "$candidate" ]] || return 1
++    if [[ "$candidate" == *"$sep"* ]]; then
++        for entry in "${_MOLE_SELECTION_SEP_PATHS[@]+"${_MOLE_SELECTION_SEP_PATHS[@]}"}"; do
++            [[ "$entry" != "$candidate" ]] || return 0
++        done
++        return 1
++    fi
++    _mole_selection_hash "$candidate"
++    [[ "${_MOLE_SELECTION_BUCKETS[(_MOLE_SELECTION_HASH % 1021 + 1021) % 1021]-}" == *"$sep$candidate$sep"* ]]
++}
+diff --git a/lib/core/sudo.sh b/lib/core/sudo.sh
+index a54f5577..4ee857cf 100644
+--- a/lib/core/sudo.sh
++++ b/lib/core/sudo.sh
+@@ -4,6 +4,13 @@
+ 
+ set -euo pipefail
+ 
++# Administrator access is off for scripted test runs and for hosts that set
++# MOLE_NO_AUTH=1 (a GUI front end that has not been granted admin access).
++# Every sudo entry point below checks this first, so no prompt can appear.
++mole_auth_disabled() {
++    [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" || "${MOLE_NO_AUTH:-0}" == "1" ]]
++}
++
+ # ============================================================================
+ # Touch ID and Clamshell Detection
+ # ============================================================================
+@@ -72,7 +79,7 @@ request_sudo_access() {
+     local prompt_msg="${1:-Admin access required}"
+ 
+     # Tests must never trigger real password or Touch ID prompts.
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         return 1
+     fi
+ 
+@@ -212,7 +219,7 @@ request_sudo_access_with_password() {
+     local prompt_msg="${2:-Admin access required}"
+ 
+     # Tests must never trigger real password or Touch ID prompts.
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         return 1
+     fi
+ 
+@@ -280,7 +287,7 @@ _stop_sudo_keepalive() {
+ 
+ # Check if sudo session is active
+ has_sudo_session() {
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         return 1
+     fi
+ 
+@@ -288,7 +295,7 @@ has_sudo_session() {
+ }
+ 
+ adopt_sudo_session() {
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         MOLE_SUDO_ESTABLISHED="false"
+         return 1
+     fi
+@@ -342,7 +349,7 @@ ensure_sudo_session() {
+         return 0
+     fi
+ 
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         MOLE_SUDO_ESTABLISHED="false"
+         return 1
+     fi
+@@ -376,7 +383,7 @@ ensure_sudo_session_with_password() {
+         return 0
+     fi
+ 
+-    if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
++    if mole_auth_disabled; then
+         MOLE_SUDO_ESTABLISHED="false"
+         unset password
+         return 1
+diff --git a/tests/host_integration.bats b/tests/host_integration.bats
+new file mode 100644
+index 00000000..9e46778f
+--- /dev/null
++++ b/tests/host_integration.bats
+@@ -0,0 +1,256 @@
++#!/usr/bin/env bats
++# Host integration helpers: JSON events, exact-path selections, no-auth mode,
++# and GUI-host app quitting.
++
++load helpers/common
++
++setup_file() {
++    mole_test_setup_home host-integration
++}
++
++teardown_file() {
++    mole_test_teardown_home
++}
++
++setup() {
++    if [[ "$HOME" != "${BATS_TEST_DIRNAME}/tmp-"* ]]; then
++        printf 'FATAL: HOME is not a test temp dir: %s\n' "$HOME" >&2
++        return 1
++    fi
++    unset MOLE_JSON_EVENTS_FILE MOLE_SELECTION_FILE
++}
++
++load_host() {
++    # shellcheck source=lib/core/host.sh
++    source "$PROJECT_ROOT/lib/core/host.sh"
++}
++
++write_selection() {
++    local file="$1"
++    shift
++    printf '%s\0' "$@" > "$file"
++}
++
++@test "mole_json_escape escapes quotes, backslashes and control bytes" {
++    load_host
++    run mole_json_escape $'a"b\\c\nd\te\001f\037g'
++    [ "$status" -eq 0 ]
++    [ "$output" = 'a\"b\\c\nd\te\u0001f\u001fg' ]
++}
++
++@test "mole_json_escape escapes every control byte in C and UTF-8 locales" {
++    local locale
++    for locale in C en_US.UTF-8; do
++        run env LC_ALL="$locale" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/host.sh"
++for ((b = 1; b < 32; b++)); do
++    printf -v s "x\\$(printf '%03o' "$b")y"
++    case "$b" in
++        9) want='x\ty' ;;
++        10) want='x\ny' ;;
++        13) want='x\ry' ;;
++        *) printf -v want 'x\\u%04xy' "$b" ;;
++    esac
++    got="$(mole_json_escape "$s")"
++    [[ "$got" == "$want" ]] || {
++        printf 'byte %d: got %q, want %q\n' "$b" "$got" "$want"
++        exit 1
++    }
++done
++echo "every control byte escaped"
++EOF
++        [ "$status" -eq 0 ] || return 1
++        [ "$output" = "every control byte escaped" ] || return 1
++    done
++}
++
++@test "mole_json_escape leaves UTF-8 text unchanged" {
++    load_host
++    run mole_json_escape 'Café Ünïcode 日本'
++    [ "$output" = 'Café Ünïcode 日本' ]
++}
++
++@test "mole_json_num and mole_json_bool always produce valid JSON" {
++    load_host
++    [ "$(mole_json_num 2048)" = "2048" ]
++    [ "$(mole_json_num 007)" = "7" ]
++    [ "$(mole_json_num '')" = "0" ]
++    [ "$(mole_json_num 'n/a')" = "0" ]
++    [ "$(mole_json_bool true)" = "true" ]
++    [ "$(mole_json_bool yes)" = "false" ]
++}
++
++@test "mole_json_emit appends one line per event only when a file is set" {
++    load_host
++    local events="$BATS_TEST_TMPDIR/events.ndjson"
++    mole_json_emit '{"v":1,"n":0}'
++    [ ! -e "$events" ]
++    MOLE_JSON_EVENTS_FILE="$events"
++    mole_json_emit '{"v":1,"n":1}'
++    mole_json_emit '{"v":1,"n":2}'
++    run cat "$events"
++    [ "${#lines[@]}" -eq 2 ]
++    [ "${lines[0]}" = '{"v":1,"n":1}' ]
++    [ "${lines[1]}" = '{"v":1,"n":2}' ]
++}
++
++@test "without a selection file every path is allowed" {
++    load_host
++    mole_selection_allows "/anything/at/all"
++}
++
++@test "a selection allows exact paths and ignores trailing slashes" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    write_selection "$MOLE_SELECTION_FILE" "$HOME/Library/Caches/com.example.a" "$HOME/Library/Caches/com.example.b/"
++    mole_selection_allows "$HOME/Library/Caches/com.example.a"
++    mole_selection_allows "$HOME/Library/Caches/com.example.a/"
++    mole_selection_allows "$HOME/Library/Caches/com.example.b"
++    run mole_selection_allows "$HOME/Library/Caches/com.example.c"
++    [ "$status" -eq 1 ]
++}
++
++@test "a selection never allows the parent or a child of a selected path" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    write_selection "$MOLE_SELECTION_FILE" "$HOME/Library/Caches/com.example.a"
++    run mole_selection_allows "$HOME/Library/Caches"
++    [ "$status" -eq 1 ]
++    run mole_selection_allows "$HOME/Library/Caches/com.example.a/child"
++    [ "$status" -eq 1 ]
++}
++
++@test "a selection matches paths with spaces, quotes and newlines" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    local odd=$'/tmp/rfm dir/"quoted"/new\nline'
++    write_selection "$MOLE_SELECTION_FILE" "$odd"
++    mole_selection_allows "$odd"
++    run mole_selection_allows "/tmp/rfm dir"
++    [ "$status" -eq 1 ]
++}
++
++@test "a selection matches accented paths in C and UTF-8 locales" {
++    local selection="$BATS_TEST_TMPDIR/selection" locale
++    write_selection "$selection" "$HOME/Library/Caches/com.example.gamma café" "$HOME/Library/Caches/日本/データ"
++    for locale in C en_US.UTF-8; do
++        run env LC_ALL="$locale" HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SELECTION_FILE="$selection" \
++            /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/host.sh"
++mole_selection_allows "$HOME/Library/Caches/com.example.gamma café" || exit 1
++mole_selection_allows "$HOME/Library/Caches/日本/データ/" || exit 1
++if mole_selection_allows "$HOME/Library/Caches/com.example.gamma cafe"; then exit 1; fi
++if mole_selection_allows "$HOME/Library/Caches/日本"; then exit 1; fi
++echo "accented paths matched"
++EOF
++        [ "$status" -eq 0 ] || return 1
++        [ "$output" = "accented paths matched" ] || return 1
++    done
++}
++
++@test "a selection matches exactly among paths that share a length and ending" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    local tail="shared-ending-that-is-long/data"
++    write_selection "$MOLE_SELECTION_FILE" "/one/$tail" "/two/x/$tail"
++    mole_selection_allows "/one/$tail"
++    mole_selection_allows "/two/x/$tail"
++    run mole_selection_allows "/six/$tail"
++    [ "$status" -eq 1 ]
++    run mole_selection_allows "/two/$tail"
++    [ "$status" -eq 1 ]
++}
++
++@test "a selection matches paths that contain the separator byte" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    write_selection "$MOLE_SELECTION_FILE" $'/tmp/rfm\x1fodd' "/tmp/rfm plain"
++    mole_selection_allows $'/tmp/rfm\x1fodd/'
++    mole_selection_allows "/tmp/rfm plain"
++    run mole_selection_allows $'/tmp/rfm\x1fother'
++    [ "$status" -eq 1 ]
++    run mole_selection_allows "/tmp/rfm"
++    [ "$status" -eq 1 ]
++}
++
++@test "a missing selection file allows nothing" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/does-not-exist"
++    run mole_selection_allows "$HOME/anything"
++    [ "$status" -eq 1 ]
++}
++
++@test "selection lookups stay fast for 5000 selected paths" {
++    load_host
++    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    : > "$MOLE_SELECTION_FILE"
++    local i
++    for ((i = 0; i < 5000; i++)); do
++        printf '%s\0' "$HOME/Library/Caches/com.example.vendor$i/data" >> "$MOLE_SELECTION_FILE"
++    done
++    local started=$SECONDS
++    for ((i = 0; i < 1000; i++)); do
++        mole_selection_allows "$HOME/Library/Caches/com.example.other$i/data" || true
++    done
++    mole_selection_allows "$HOME/Library/Caches/com.example.vendor4999/data"
++    [ $((SECONDS - started)) -lt 15 ]
++}
++
++@test "MOLE_NO_AUTH refuses every sudo entry point without running sudo" {
++    mole_test_fake_command sudo 'printf "%s\n" "$*" >> "$HOME/sudo-calls"; exit 0'
++    run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" \
++        MOLE_NO_AUTH=1 MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++if request_sudo_access "test"; then echo "request: granted"; else echo "request: refused"; fi
++if has_sudo_session; then echo "session: yes"; else echo "session: no"; fi
++if adopt_sudo_session; then echo "adopt: yes"; else echo "adopt: no"; fi
++if ensure_sudo_session "test"; then echo "ensure: yes"; else echo "ensure: no"; fi
++EOF
++    [ "$status" -eq 0 ]
++    [[ "$output" == *"request: refused"* ]] || return 1
++    [[ "$output" == *"session: no"* ]] || return 1
++    [[ "$output" == *"adopt: no"* ]] || return 1
++    [[ "$output" == *"ensure: no"* ]] || return 1
++    [ ! -e "$HOME/sudo-calls" ]
++}
++
++@test "MOLE_GUI_HOST skips the AppleScript quit in force_kill_app" {
++    local exe="rfmfixture$$"
++    local app="$HOME/Applications/RFMFixture.app"
++    mkdir -p "$app/Contents/MacOS"
++    # A symlink, not a copy: recent macOS kills a copied platform binary at
++    # exec, while the process name still comes from the link's own name.
++    ln -s /bin/sleep "$app/Contents/MacOS/$exe"
++    cat > "$app/Contents/Info.plist" << PLIST
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++    <key>CFBundleExecutable</key>
++    <string>$exe</string>
++    <key>CFBundleIdentifier</key>
++    <string>com.example.rfmfixture</string>
++</dict>
++</plist>
++PLIST
++    # Detach the fixture so launchd reaps it after the kill (no zombie left
++    # behind for force_kill_app's pgrep to keep seeing).
++    ("$app/Contents/MacOS/$exe" 300 > /dev/null 2>&1 &)
++    sleep 0.3
++    pgrep -x "$exe" > /dev/null
++    mole_test_fake_command osascript 'printf "%s\n" "$*" >> "$HOME/osascript-calls"; exit 0'
++    run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" APP="$app" \
++        MOLE_GUI_HOST=roomformac MOLE_NO_AUTH=1 MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++force_kill_app "RFMFixture" "$APP"
++EOF
++    pkill -x "$exe" 2> /dev/null || true
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/osascript-calls" ]
++}

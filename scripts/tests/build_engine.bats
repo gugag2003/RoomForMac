@@ -44,3 +44,9 @@ setup_file() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"cpu"'* ]]
 }
+
+@test "patched engine ships the host integration helpers" {
+    [ -f "$ENGINE_OUT/lib/core/host.sh" ]
+    grep -q '^mole_selection_allows()' "$ENGINE_OUT/lib/core/host.sh"
+    grep -q '^mole_auth_disabled()' "$ENGINE_OUT/lib/core/sudo.sh"
+}
