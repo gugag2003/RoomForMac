@@ -14,7 +14,9 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
     public var sizeKb: Int64?
     public var lastUsedEpoch: Int64?
 
-    public var sizeBytes: Int64 { max(sizeKb ?? 0, 0) * 1024 }
+    /// 0 when the size is unknown. Decoding rejects sizes too large to count
+    /// in bytes; one set that large by hand counts as 0 too.
+    public var sizeBytes: Int64 { EngineJSON.bytes(fromKilobytes: sizeKb) ?? 0 }
 
     public var lastUsed: Date? {
         guard let lastUsedEpoch, lastUsedEpoch > 0 else { return nil }
@@ -29,6 +31,10 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
         guard let start = data.firstIndex(of: UInt8(ascii: "[")) else {
             throw EngineError.malformedOutput("uninstall --list printed no JSON array")
         }
-        return try EngineJSON.decoder().decode([InstalledApp].self, from: Data(data[start...]))
+        let apps = try EngineJSON.decoder().decode([InstalledApp].self, from: Data(data[start...]))
+        if let app = apps.first(where: { EngineJSON.bytes(fromKilobytes: $0.sizeKb) == nil }) {
+            throw EngineError.malformedOutput("uninstall --list reported a size too large to count in bytes: \(app.path)")
+        }
+        return apps
     }
 }

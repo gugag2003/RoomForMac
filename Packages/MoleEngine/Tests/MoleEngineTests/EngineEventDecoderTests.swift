@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MoleEngine
 
@@ -65,5 +66,36 @@ struct EngineEventDecoderTests {
     ])
     func skipsLinesItCannotUse(_ line: String) {
         #expect(EngineEventDecoder.decode(line) == nil)
+    }
+
+    @Test(arguments: sizedEvents, [Int64.max, Int64.max / 1024 + 1])
+    func skipsSizesTooLargeToCountInBytes(_ template: String, _ kilobytes: Int64) {
+        #expect(EngineEventDecoder.decode(template.replacingOccurrences(of: "<KB>", with: String(kilobytes))) == nil)
+    }
+
+    @Test(arguments: sizedEvents)
+    func keepsTheLargestSizeThatFitsInBytes(_ template: String) {
+        let line = template.replacingOccurrences(of: "<KB>", with: String(Int64.max / 1024))
+        #expect(sizeBytes(of: EngineEventDecoder.decode(line)) == Int64.max / 1024 * 1024)
+    }
+}
+
+/// Every event that carries a size, with `<KB>` where the kilobytes go.
+private let sizedEvents = [
+    #"{"v":1,"type":"candidate","section":"S","path":"/a","size_kb":<KB>,"size_known":true}"#,
+    #"{"v":1,"type":"item","section":"S","path":"/a","size_kb":<KB>}"#,
+    #"{"v":1,"type":"summary","command":"clean","dry_run":true,"items":1,"size_kb":<KB>,"partial":false,"exit":0}"#,
+    #"{"v":1,"type":"app","path":"/Applications/Foo.app","name":"Foo","size_kb":<KB>}"#,
+    #"{"v":1,"type":"app_result","path":"/Applications/Foo.app","name":"Foo","status":"removed","freed_kb":<KB>}"#,
+]
+
+private func sizeBytes(of event: EngineEvent?) -> Int64? {
+    switch event {
+    case .candidate(let candidate): candidate.sizeBytes
+    case .item(let item): item.sizeBytes
+    case .summary(let summary): summary.sizeBytes
+    case .app(let app): app.sizeBytes
+    case .appResult(let result): result.freedBytes
+    default: nil
     }
 }

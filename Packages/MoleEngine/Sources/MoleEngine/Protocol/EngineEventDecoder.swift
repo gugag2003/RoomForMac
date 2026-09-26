@@ -47,6 +47,11 @@ private struct RawEvent: Decodable {
     var freedKb: Int64?
 
     var event: EngineEvent? {
+        // Like a size too large for Int64 itself, a size too large to count
+        // in bytes makes the whole line malformed.
+        guard let sizeBytes = EngineJSON.bytes(fromKilobytes: sizeKb),
+              let freedBytes = EngineJSON.bytes(fromKilobytes: freedKb)
+        else { return nil }
         switch type {
         case "section":
             guard let name else { return nil }
@@ -55,13 +60,13 @@ private struct RawEvent: Decodable {
             guard let path else { return nil }
             return .candidate(CleanCandidate(
                 section: section ?? "", path: path,
-                sizeBytes: bytes(sizeKb), sizeKnown: sizeKnown ?? false
+                sizeBytes: sizeBytes, sizeKnown: sizeKnown ?? false
             ))
         case "item":
             guard let path else { return nil }
             return .item(CleanItem(
                 section: section ?? "", path: path,
-                sizeBytes: bytes(sizeKb), sizeKnown: sizeKnown ?? false,
+                sizeBytes: sizeBytes, sizeKnown: sizeKnown ?? false,
                 count: max(count ?? 1, 1), coveredBy: coveredBy
             ))
         case "result":
@@ -70,13 +75,13 @@ private struct RawEvent: Decodable {
         case "summary":
             return .summary(RunSummary(
                 command: command ?? "", dryRun: dryRun ?? false, items: items ?? 0,
-                sizeBytes: bytes(sizeKb), partial: partial ?? false, exitCode: exit ?? 0
+                sizeBytes: sizeBytes, partial: partial ?? false, exitCode: exit ?? 0
             ))
         case "app":
             guard let path else { return nil }
             return .app(AppPreview(
                 path: path, name: name ?? "", bundleId: bundleId ?? "",
-                sizeBytes: bytes(sizeKb), needsAdmin: needsSudo ?? false,
+                sizeBytes: sizeBytes, needsAdmin: needsSudo ?? false,
                 homebrewCask: brewCask ?? false, hasSensitiveData: sensitiveData ?? false,
                 isRunning: running ?? false, leftovers: leftovers ?? [], reviewOnly: reviewOnly ?? []
             ))
@@ -87,14 +92,10 @@ private struct RawEvent: Decodable {
             guard let path, let status = status.flatMap(AppResult.Status.init(rawValue:)) else { return nil }
             return .appResult(AppResult(
                 path: path, name: name ?? "", status: status,
-                freedBytes: bytes(freedKb), reason: reason ?? ""
+                freedBytes: freedBytes, reason: reason ?? ""
             ))
         default:
             return nil
         }
-    }
-
-    private func bytes(_ kilobytes: Int64?) -> Int64 {
-        max(kilobytes ?? 0, 0) * 1024
     }
 }

@@ -27,6 +27,28 @@ struct ReportDecodingTests {
         }
     }
 
+    @Test(arguments: [Int64.max, Int64.max / 1024 + 1])
+    func rejectsAnInventorySizeTooLargeToCountInBytes(_ kilobytes: Int64) {
+        #expect(throws: EngineError.malformedOutput("uninstall --list reported a size too large to count in bytes: /Applications/Huge.app")) {
+            try InstalledApp.decodeList(from: inventory(sizeKb: kilobytes))
+        }
+    }
+
+    @Test func keepsTheLargestInventorySizeThatFitsInBytes() throws {
+        let apps = try InstalledApp.decodeList(from: inventory(sizeKb: Int64.max / 1024))
+        #expect(apps.first?.sizeBytes == Int64.max / 1024 * 1024)
+    }
+
+    @Test func aSizeSetTooLargeByHandCountsAsNoBytes() throws {
+        var app = try #require(InstalledApp.decodeList(from: inventory(sizeKb: 1)).first)
+        app.sizeKb = .max
+        #expect(app.sizeBytes == 0)
+    }
+
+    private func inventory(sizeKb: Int64) -> Data {
+        Data(#"[{"name": "Huge", "bundle_id": "com.example.huge", "source": "App", "uninstall_name": "Huge", "path": "/Applications/Huge.app", "size": "8EB", "size_kb": \#(sizeKb)}]"#.utf8)
+    }
+
     @Test func decodesADiskLevel() throws {
         let json = """
         {

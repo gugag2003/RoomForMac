@@ -59,7 +59,9 @@ or symlinked selection file allows nothing.
 
 - One object per line, UTF-8, first key `"v":1`. Hosts skip lines they cannot parse and types they do not know.
 - Strings escape `"`, `\`, `\n`, `\r`, `\t`, and other control bytes as `\u00XX`.
-- Sizes are integer kilobytes (`size_kb`); booleans are JSON booleans.
+- Sizes are integer kilobytes (`size_kb`, `freed_kb`) of at most 9007199254740991 (2^53 − 1,
+  the largest count whose bytes fit in a signed 64-bit integer); booleans are JSON booleans.
+  A larger size makes its line malformed, so hosts skip it.
 - A run is complete only when its `summary` event arrived and the process exited 0.
 
 ## Clean events (`bin/clean.sh`, patch 0002)
@@ -148,7 +150,8 @@ Details:
 - In `uninstall --list`, `size_kb` is the scanned bundle size and `last_used_epoch` the last use
   in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
   when neither is known). These two fields are the only change without a host variable; they
-  are added keys, and the existing ones are unchanged.
+  are added keys, and the existing ones are unchanged. A `size_kb` above the limit in the JSON
+  conventions makes the whole array malformed.
 
 ## Analyzer Trash list (`bin/analyze-go --trash-list FILE`, patch 0005)
 
