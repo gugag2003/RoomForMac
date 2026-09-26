@@ -1,0 +1,388 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Sat, 26 Sep 2026 15:27:49 -0300
+Subject: [PATCH] Add analyze --trash-list for GUI front ends
+
+Moves the NUL-separated paths in FILE to the Trash through the analyzer's
+own validation and Trash route, deepest first, and prints one JSON result
+per path plus a summary in the host event schema.
+
+Also fixes two tests from the earlier host patches so Mole's full suite
+passes: four intentionally single-quoted fake commands and inner-bash
+scripts carry the SC2016 directive Mole's test lint requires, and the
+5000-path selection timing test times the lookups in a plain bash, as
+Mole runs them, instead of under the Bats DEBUG trap.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ cmd/analyze/main.go            |  10 ++-
+ cmd/analyze/trashlist.go       | 113 +++++++++++++++++++++++++++++++
+ cmd/analyze/trashlist_test.go  | 120 +++++++++++++++++++++++++++++++++
+ tests/clean_selection.bats     |   1 +
+ tests/host_integration.bats    |  33 ++++++---
+ tests/uninstall_host_mode.bats |   1 +
+ 6 files changed, 267 insertions(+), 11 deletions(-)
+ create mode 100644 cmd/analyze/trashlist.go
+ create mode 100644 cmd/analyze/trashlist_test.go
+
+diff --git a/cmd/analyze/main.go b/cmd/analyze/main.go
+index fef10d99..38febd4d 100644
+--- a/cmd/analyze/main.go
++++ b/cmd/analyze/main.go
+@@ -19,7 +19,8 @@ import (
+ )
+ 
+ var (
+-	jsonMode = flag.Bool("json", false, "output analysis as JSON instead of TUI")
++	jsonMode  = flag.Bool("json", false, "output analysis as JSON instead of TUI")
++	trashList = flag.String("trash-list", "", "move the NUL-separated paths in FILE to the Trash and print NDJSON results")
+ )
+ 
+ // usageText is the help every other Mole subcommand prints by hand. The Go flag
+@@ -31,6 +32,9 @@ Explore disk usage. Without PATH, scans a machine-wide overview.
+ 
+ Options:
+   --json          Output the analysis as JSON instead of the interactive TUI
++  --trash-list FILE
++                  Move the NUL-separated paths in FILE to the Trash and print
++                  one JSON result per path (for GUI front ends)
+   -h, --help      Show this help message
+ 
+ Examples:
+@@ -68,6 +72,10 @@ func main() {
+ 		os.Exit(code)
+ 	}
+ 
++	if *trashList != "" {
++		os.Exit(runTrashList(*trashList, os.Stdout))
++	}
++
+ 	abs, isOverview, err := resolveScanTarget(os.Getenv("MO_ANALYZE_PATH"), flag.Args())
+ 	if err != nil {
+ 		fmt.Fprintln(os.Stderr, err)
+diff --git a/cmd/analyze/trashlist.go b/cmd/analyze/trashlist.go
+new file mode 100644
+index 00000000..cd417041
+--- /dev/null
++++ b/cmd/analyze/trashlist.go
+@@ -0,0 +1,113 @@
++//go:build darwin
++
++package main
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"io/fs"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++)
++
++// trashResultEvent and trashSummaryEvent are the NDJSON lines --trash-list
++// prints, in the host event schema (v1) the bash commands also use.
++type trashResultEvent struct {
++	V       int    `json:"v"`
++	Type    string `json:"type"`
++	Command string `json:"command"`
++	Action  string `json:"action"`
++	Path    string `json:"path"`
++	Detail  string `json:"detail"`
++}
++
++type trashSummaryEvent struct {
++	V       int    `json:"v"`
++	Type    string `json:"type"`
++	Command string `json:"command"`
++	DryRun  bool   `json:"dry_run"`
++	Items   int    `json:"items"`
++	SizeKB  int64  `json:"size_kb"`
++	Partial bool   `json:"partial"`
++	Exit    int    `json:"exit"`
++}
++
++// trashListMover moves one listed path to the Trash with the analyzer's own
++// validation and Trash route. Tests replace it so they never touch the real
++// Trash.
++var trashListMover = func(path string) error {
++	_, err := trashPathWithProgress(path, nil)
++	return err
++}
++
++// readTrashList parses NUL-separated paths, dropping empty entries and
++// trailing slashes. "/" itself is kept so validation can reject it.
++func readTrashList(r io.Reader) ([]string, error) {
++	data, err := io.ReadAll(r)
++	if err != nil {
++		return nil, err
++	}
++	var paths []string
++	for _, raw := range bytes.Split(data, []byte{0}) {
++		path := string(raw)
++		for len(path) > 1 && strings.HasSuffix(path, "/") {
++			path = strings.TrimSuffix(path, "/")
++		}
++		if path != "" {
++			paths = append(paths, path)
++		}
++	}
++	return paths, nil
++}
++
++// runTrashList moves every listed path to the Trash, deepest first so a
++// listed child is reported before its listed parent takes it along, and
++// prints one result per path plus a summary. Per-item failures are reported
++// in the events; the exit code is 1 only when the list cannot be read.
++func runTrashList(listPath string, out io.Writer) int {
++	file, err := os.Open(listPath)
++	if err != nil {
++		fmt.Fprintf(os.Stderr, "cannot open trash list: %v\n", err)
++		return 1
++	}
++	paths, err := readTrashList(file)
++	_ = file.Close()
++	if err != nil {
++		fmt.Fprintf(os.Stderr, "cannot read trash list: %v\n", err)
++		return 1
++	}
++
++	sort.SliceStable(paths, func(i, j int) bool {
++		return strings.Count(paths[i], string(filepath.Separator)) > strings.Count(paths[j], string(filepath.Separator))
++	})
++
++	encoder := json.NewEncoder(out)
++	encoder.SetEscapeHTML(false)
++	removed, failed := 0, 0
++	for _, path := range paths {
++		event := trashResultEvent{V: 1, Type: "result", Command: "analyze", Path: path}
++		switch err := trashListMover(path); {
++		case err == nil:
++			event.Action = "removed"
++			removed++
++		case errors.Is(err, fs.ErrNotExist):
++			event.Action = "skipped"
++			event.Detail = "missing"
++		default:
++			event.Action = "failed"
++			event.Detail = err.Error()
++			failed++
++		}
++		_ = encoder.Encode(event)
++	}
++	_ = encoder.Encode(trashSummaryEvent{
++		V: 1, Type: "summary", Command: "analyze",
++		Items: removed, Partial: failed > 0,
++	})
++	return 0
++}
+diff --git a/cmd/analyze/trashlist_test.go b/cmd/analyze/trashlist_test.go
+new file mode 100644
+index 00000000..f91b24ae
+--- /dev/null
++++ b/cmd/analyze/trashlist_test.go
+@@ -0,0 +1,120 @@
++//go:build darwin
++
++package main
++
++import (
++	"bytes"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func decodeTrashEvents(t *testing.T, out []byte) []map[string]any {
++	t.Helper()
++	var events []map[string]any
++	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte("\n")) {
++		var event map[string]any
++		if err := json.Unmarshal(line, &event); err != nil {
++			t.Fatalf("invalid JSON line %q: %v", line, err)
++		}
++		events = append(events, event)
++	}
++	return events
++}
++
++func TestReadTrashListSplitsOnNULAndTrimsSlashes(t *testing.T) {
++	got, err := readTrashList(strings.NewReader("/a/b/\x00\x00/c d\x00/\x00"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := "/a/b|/c d|/"; strings.Join(got, "|") != want {
++		t.Fatalf("got %q, want %q", strings.Join(got, "|"), want)
++	}
++}
++
++func TestRunTrashListReportsEachPathDeepestFirst(t *testing.T) {
++	dir := t.TempDir()
++	parent := filepath.Join(dir, "parent")
++	child := filepath.Join(parent, "child")
++	keep := filepath.Join(dir, "keep")
++	for _, p := range []string{child, keep} {
++		if err := os.MkdirAll(p, 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	missing := filepath.Join(dir, "missing")
++
++	var moved []string
++	original := trashListMover
++	trashListMover = func(path string) error {
++		if _, err := os.Lstat(path); err != nil {
++			return err
++		}
++		moved = append(moved, path)
++		return os.RemoveAll(path)
++	}
++	t.Cleanup(func() { trashListMover = original })
++
++	list := filepath.Join(dir, "list")
++	if err := os.WriteFile(list, []byte(parent+"\x00"+child+"\x00"+missing+"\x00"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++
++	var out bytes.Buffer
++	if code := runTrashList(list, &out); code != 0 {
++		t.Fatalf("exit code %d", code)
++	}
++	if got := strings.Join(moved, "|"); got != child+"|"+parent {
++		t.Fatalf("moved %q, want the child before its parent", got)
++	}
++	if _, err := os.Stat(keep); err != nil {
++		t.Fatalf("an unlisted path was touched: %v", err)
++	}
++
++	events := decodeTrashEvents(t, out.Bytes())
++	if len(events) != 4 {
++		t.Fatalf("got %d events, want 4:\n%s", len(events), out.String())
++	}
++	want := map[string]string{child: "removed", parent: "removed", missing: "skipped"}
++	for _, event := range events[:3] {
++		path, _ := event["path"].(string)
++		if event["v"] != float64(1) || event["type"] != "result" || event["command"] != "analyze" || event["action"] != want[path] {
++			t.Fatalf("unexpected result event %v", event)
++		}
++	}
++	summary := events[3]
++	if summary["type"] != "summary" || summary["items"] != float64(2) || summary["partial"] != false || summary["exit"] != float64(0) {
++		t.Fatalf("unexpected summary %v", summary)
++	}
++}
++
++func TestRunTrashListRefusesProtectedPathsWithoutMovingThem(t *testing.T) {
++	list := filepath.Join(t.TempDir(), "list")
++	if err := os.WriteFile(list, []byte("/System\x00"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	var out bytes.Buffer
++	if code := runTrashList(list, &out); code != 0 {
++		t.Fatalf("exit code %d", code)
++	}
++	events := decodeTrashEvents(t, out.Bytes())
++	detail, _ := events[0]["detail"].(string)
++	if events[0]["action"] != "failed" || !strings.Contains(detail, "protected") {
++		t.Fatalf("expected a protected-path failure, got %v", events[0])
++	}
++	if events[1]["partial"] != true {
++		t.Fatalf("the summary should be partial: %v", events[1])
++	}
++	if _, err := os.Stat("/System"); err != nil {
++		t.Fatal("/System must still exist")
++	}
++}
++
++func TestRunTrashListFailsWhenTheListIsMissing(t *testing.T) {
++	var out bytes.Buffer
++	if code := runTrashList(filepath.Join(t.TempDir(), "absent"), &out); code != 1 {
++		t.Fatalf("exit code %d, want 1", code)
++	}
++}
+diff --git a/tests/clean_selection.bats b/tests/clean_selection.bats
+index 49d1df70..214eb78c 100644
+--- a/tests/clean_selection.bats
++++ b/tests/clean_selection.bats
+@@ -173,6 +173,7 @@ EOF
+ }
+ 
+ @test "Homebrew cleanup is skipped under a selection" {
++    # shellcheck disable=SC2016  # the fake brew expands these when it runs
+     mole_test_fake_command brew 'printf "%s\n" "$*" >> "$HOME/brew-calls"; exit 0'
+     SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
+     printf '%s\0' "$HOME/unrelated" > "$SELECTION_FILE"
+diff --git a/tests/host_integration.bats b/tests/host_integration.bats
+index 9e46778f..b9772454 100644
+--- a/tests/host_integration.bats
++++ b/tests/host_integration.bats
+@@ -183,22 +183,34 @@ EOF
+ }
+ 
+ @test "selection lookups stay fast for 5000 selected paths" {
+-    load_host
+-    MOLE_SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
+-    : > "$MOLE_SELECTION_FILE"
++    local selection="$BATS_TEST_TMPDIR/selection"
++    : > "$selection"
+     local i
+     for ((i = 0; i < 5000; i++)); do
+-        printf '%s\0' "$HOME/Library/Caches/com.example.vendor$i/data" >> "$MOLE_SELECTION_FILE"
+-    done
+-    local started=$SECONDS
+-    for ((i = 0; i < 1000; i++)); do
+-        mole_selection_allows "$HOME/Library/Caches/com.example.other$i/data" || true
++        printf '%s\0' "$HOME/Library/Caches/com.example.vendor$i/data" >> "$selection"
+     done
+-    mole_selection_allows "$HOME/Library/Caches/com.example.vendor4999/data"
+-    [ $((SECONDS - started)) -lt 15 ]
++    # Time the load and lookups in a plain bash, the way Mole runs them. In a
++    # Bats test body every command also runs the Bats DEBUG trap, which made
++    # this loop about fourteen times slower than Mole itself, and parallel
++    # test workers then pushed that overhead past the limit.
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SELECTION_FILE="$selection" \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/host.sh"
++started=$SECONDS
++for ((i = 0; i < 1000; i++)); do
++    mole_selection_allows "$HOME/Library/Caches/com.example.other$i/data" || true
++done
++mole_selection_allows "$HOME/Library/Caches/com.example.vendor4999/data"
++echo "elapsed=$((SECONDS - started))"
++EOF
++    [ "$status" -eq 0 ]
++    [[ "$output" =~ ^elapsed=([0-9]+)$ ]] || return 1
++    [ "${BASH_REMATCH[1]}" -lt 15 ]
+ }
+ 
+ @test "MOLE_NO_AUTH refuses every sudo entry point without running sudo" {
++    # shellcheck disable=SC2016  # the fake sudo expands these when it runs
+     mole_test_fake_command sudo 'printf "%s\n" "$*" >> "$HOME/sudo-calls"; exit 0'
+     run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" \
+         MOLE_NO_AUTH=1 MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
+@@ -242,6 +254,7 @@ PLIST
+     ("$app/Contents/MacOS/$exe" 300 > /dev/null 2>&1 &)
+     sleep 0.3
+     pgrep -x "$exe" > /dev/null
++    # shellcheck disable=SC2016  # the fake osascript expands these when it runs
+     mole_test_fake_command osascript 'printf "%s\n" "$*" >> "$HOME/osascript-calls"; exit 0'
+     run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" APP="$app" \
+         MOLE_GUI_HOST=roomformac MOLE_NO_AUTH=1 MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
+diff --git a/tests/uninstall_host_mode.bats b/tests/uninstall_host_mode.bats
+index 1dfe5818..3a180ec8 100644
+--- a/tests/uninstall_host_mode.bats
++++ b/tests/uninstall_host_mode.bats
+@@ -124,6 +124,7 @@ EOF
+ @test "MOLE_ASSUME_YES confirms the plan without reading a key" {
+     local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
+     sourceable_uninstall_sh "$src"
++    # shellcheck disable=SC2016  # inner bash expands these from its environment
+     run env HOME="$HOME" SRC_PATH="$src" MOLE_TEST_NO_AUTH=1 MOLE_ASSUME_YES=1 \
+         /bin/bash --noprofile --norc -c '
+ set -euo pipefail

@@ -149,3 +149,10 @@ Details:
   in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
   when neither is known). These two fields are the only change without a host variable; they
   are added keys, and the existing ones are unchanged.
+
+## Analyzer Trash list (`bin/analyze-go --trash-list FILE`, patch 0005)
+
+- FILE lists absolute paths separated by NUL bytes. Each is moved to the Trash with the analyzer's own validation (protected and critical paths are refused), deepest paths first.
+- stdout: one `result` event per path (`command:"analyze"`, `action` `removed` / `skipped` (missing) / `failed` with `detail`), then one `summary` (`items` = removed count, `partial` = any failure, `size_kb` 0).
+- Exit code 0 when the list was processed; 1 only when FILE cannot be read.
+- Hosts route `.app` bundles to the uninstaller instead of this command.
