@@ -47,4 +47,14 @@ struct CleanSelectionTests {
         #expect(tally.notRemovedItems == [other])
         #expect(tally.removedBytes == 0)
     }
+
+    @Test func removedBytesStopsAtTheLargestCountInsteadOfOverflowing() {
+        let largest = Int64.max / 1024 * 1024
+        let first = CleanItem(section: "S", path: "/Users/test/a", sizeBytes: largest, sizeKnown: true)
+        let second = CleanItem(section: "S", path: "/Users/test/b", sizeBytes: largest, sizeKnown: true)
+        var tally = CleanRunTally(selection: [first, second])
+        tally.record(.result(ItemResult(command: "clean", action: .removed, path: first.path)))
+        tally.record(.result(ItemResult(command: "clean", action: .removed, path: second.path)))
+        #expect(tally.removedBytes == .max)
+    }
 }

@@ -54,9 +54,12 @@ public struct CleanRunTally: Sendable, Equatable {
         sortedItems.filter { outcome(for: $0)?.action != .removed }
     }
 
-    /// Previewed size of the confirmed removals.
+    /// Previewed size of the confirmed removals, stopping at Int64.max.
     public var removedBytes: Int64 {
-        removedItems.reduce(0) { $0 + $1.sizeBytes }
+        removedItems.reduce(0) { total, item in
+            let (sum, overflow) = total.addingReportingOverflow(item.sizeBytes)
+            return overflow ? .max : sum
+        }
     }
 
     public func outcome(for item: CleanItem) -> ItemResult? {
