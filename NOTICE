@@ -1,0 +1,15 @@
+RoomForMac
+Copyright (C) 2026 RoomForMac contributors
+
+RoomForMac is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 3 (see LICENSE).
+
+Cleaning engine
+---------------
+RoomForMac bundles and drives Mole (https://github.com/tw93/mole), an
+open-source command-line toolkit licensed under GPL-3.0, copyright the Mole
+contributors. RoomForMac applies the patches in patches/mole/ to the Mole
+release pinned in vendor/mole.
+
+"Mole" and the Mole logo are trademarks of the Mole project. RoomForMac is an
+independent project and is not affiliated with or endorsed by Mole.
