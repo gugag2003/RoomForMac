@@ -1,10 +1,121 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "App %@" : {
+
+    },
+    "Copied" : {
+
+    },
+    "Copy diagnostics" : {
+
+    },
+    "Details:" : {
+
+    },
+    "Exit code %lld" : {
+
+    },
+    "Expected engine: %@" : {
+
+    },
+    "Expected: %@" : {
+
+    },
+    "Found: %@" : {
+
+    },
+    "It stopped with error code %lld." : {
+
+    },
+    "Message: %@" : {
+
+    },
+    "Open download page" : {
+
+    },
+    "Part of RoomForMac's engine couldn't run. macOS may have blocked it, or the app is damaged." : {
+
+    },
+    "Reinstall RoomForMac" : {
+
+    },
     "RoomForMac" : {
       "shouldTranslate" : false
     },
+    "RoomForMac couldn't read the engine's answer." : {
+
+    },
+    "RoomForMac couldn't start %@." : {
+
+    },
+    "RoomForMac couldn't use a file" : {
+
+    },
+    "RoomForMac couldn't use a file it needs." : {
+
+    },
+    "RoomForMac couldn't use the file at %@." : {
+
+    },
+    "RoomForMac diagnostics" : {
+
+    },
+    "RoomForMac needs to be reinstalled" : {
+
+    },
+    "RoomForMac ran into an unexpected problem." : {
+
+    },
+    "RoomForMac stopped it after waiting too long. Try again." : {
+
+    },
     "Settings" : {
+
+    },
+    "Show details" : {
+
+    },
+    "Signal %lld" : {
+
+    },
+    "Some files RoomForMac needs are missing or damaged." : {
+
+    },
+    "Something went wrong" : {
+
+    },
+    "Stopped" : {
+
+    },
+    "The engine couldn't start" : {
+
+    },
+    "The engine inside RoomForMac doesn't match this version of the app." : {
+
+    },
+    "The engine ran into a problem" : {
+
+    },
+    "The engine returned something unexpected" : {
+
+    },
+    "The engine stopped unexpectedly" : {
+
+    },
+    "The engine took too long" : {
+
+    },
+    "The engine was stopped before it finished." : {
+
+    },
+    "Title: %@" : {
+
+    },
+    "macOS %@" : {
+
+    },
+    "macOS ended it before it finished." : {
 
     }
   },
