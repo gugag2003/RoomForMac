@@ -110,7 +110,8 @@ STUB
     cat > "$STUBS/openssl" << 'STUB'
 #!/bin/bash
 # openssl(1) stand-in: logs its arguments and writes fake files. A fake
-# certificate's SHA-1 fingerprint is the SHA-1 of the file.
+# certificate's SHA-1 fingerprint is the SHA-1 of the file. $STUB_CN, when set,
+# replaces the CN a new certificate gets, as when LibreSSL re-encodes or trims it.
 set -euo pipefail
 printf '%s\n' "$*" >> "$STATE/openssl.log"
 value_of() {
@@ -138,7 +139,7 @@ case "$1" in
         config="$(value_of -config "$@")"
         printf 'FAKE KEY %s\n' "$(random_hex 8)" > "$(value_of -keyout "$@")"
         {
-            printf 'FAKE CERT CN=%s\n' "$(sed -n 's/^CN = //p' "$config")"
+            printf 'FAKE CERT CN=%s\n' "${STUB_CN:-$(sed -n 's/^CN = //p' "$config")}"
             printf 'serial=%s\n' "$(value_of -set_serial "$@")"
         } > "$(value_of -out "$@")"
         ;;
@@ -235,6 +236,33 @@ cert_hash() {
     run "$SCRIPT" --check --name 'Bad "Name"'
     [ "$status" -eq 2 ]
     [[ "$output" == *"error: --name may contain only"* ]] || return 1
+    [ ! -e "$STATE/security.log" ]
+}
+
+@test "--name refuses non-ASCII letters, even in a UTF-8 locale" {
+    # Under en_US.UTF-8, bash 3.2's [:alnum:] and [A-Za-z] accept these, and
+    # LibreSSL writes a double-encoded CN that no later --name can match.
+    local name
+    for name in "$(printf 'Gon\303\247alves Dev')" "$(printf '\303\211cole')" "$(printf 'Stra\303\237e')"; do
+        run env LC_ALL=en_US.UTF-8 "$SCRIPT" --name "$name" --dir "$SIGNING_DIR"
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"error: --name may contain only"* ]] || return 1
+    done
+    [ ! -e "$SIGNING_DIR" ]
+    [ ! -e "$STATE/openssl.log" ]
+    [ ! -e "$STATE/security.log" ]
+}
+
+@test "--name refuses a leading or trailing space" {
+    # LibreSSL trims them, so the certificate would not be CN=NAME.
+    local name
+    for name in " RoomForMac Dev" "RoomForMac Dev " " RoomForMac Dev "; do
+        run env LC_ALL=en_US.UTF-8 "$SCRIPT" --name "$name" --dir "$SIGNING_DIR"
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"error: --name may contain only"* ]] || return 1
+    done
+    [ ! -e "$SIGNING_DIR" ]
+    [ ! -e "$STATE/openssl.log" ]
     [ ! -e "$STATE/security.log" ]
 }
 
@@ -424,6 +452,25 @@ EOF
     [[ "$output" == *"$SIGNING_DIR/cert.pem is CN=RoomForMac Self-Signed, not CN=RoomForMac Dev"* ]] || return 1
     run grep -c '^import' "$STATE/security.log"
     [ "$output" = 0 ]
+}
+
+@test "a new certificate with another subject is deleted before the keychain changes" {
+    run env STUB_CN='RoomForMac Self-Signed (mangled)' "$SCRIPT" --dir "$SIGNING_DIR"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"error: openssl wrote a certificate for CN=RoomForMac Self-Signed (mangled), not CN=RoomForMac Self-Signed"* ]] || return 1
+    [ ! -e "$SIGNING_DIR/key.pem" ]
+    [ ! -e "$SIGNING_DIR/cert.pem" ]
+    [ ! -e "$SIGNING_DIR/identity.p12" ]
+    [ ! -e "$STATE/codesign.log" ]
+    [ ! -e "$STATE/identities" ]
+    [ ! -e "$REPO/Config/Local.xcconfig" ]
+    diff "$STATE/security.log" - << 'EOF'
+find-identity -p codesigning
+list-keychains -d user
+EOF
+    run "$SCRIPT" --dir "$SIGNING_DIR"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STATE/identities")" = "$(cert_hash)|RoomForMac Self-Signed" ]
 }
 
 @test "a keychain missing from the search list is refused before anything is created" {

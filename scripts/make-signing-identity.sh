@@ -111,10 +111,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# NAME ends up in openssl.cnf, an awk pattern and Local.xcconfig.
-case "$NAME" in
-    *[![:alnum:]\ ._-]*) usage_error "--name may contain only letters, digits, spaces, dots, dashes and underscores" ;;
-esac
+# NAME ends up in openssl.cnf, an awk pattern and Local.xcconfig, and must come
+# back from openssl unchanged as CN=NAME. So it is ASCII only, with no space at
+# either end (LibreSSL trims those). The C locale keeps the class ASCII: in a
+# UTF-8 locale, bash 3.2 also matches accented letters with [:alnum:] and with
+# ranges, and LibreSSL double-encodes them.
+valid_name() (
+    LC_ALL=C
+    case "$1" in
+        "" | " "* | *" " | *[!A-Za-z0-9\ ._-]*) return 1 ;;
+    esac
+)
+valid_name "$NAME" ||
+    usage_error "--name may contain only ASCII letters, digits, spaces (not at either end), dots, dashes and underscores"
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
@@ -210,10 +219,7 @@ mkdir -p "$DIR"
 chmod 700 "$DIR"
 
 if [[ -f "$DIR/key.pem" && -f "$DIR/cert.pem" ]]; then
-    SUBJECT="$(cert_subject "$DIR/cert.pem")"
-    [[ "$SUBJECT" == "CN=$NAME" ]] ||
-        refuse "$DIR/cert.pem is $SUBJECT, not CN=$NAME; pass the matching --name or another --dir"
-    say "reusing the key and certificate in $DIR"
+    CREATED=0
 else
     [[ ! -e "$DIR/key.pem" && ! -e "$DIR/cert.pem" ]] ||
         refuse "$DIR holds only one of key.pem and cert.pem; move it away first"
@@ -235,7 +241,23 @@ EOF
     "$OPENSSL" req -x509 -new -newkey rsa:2048 -nodes -sha256 -days "$DAYS" \
         -set_serial "0x$("$OPENSSL" rand -hex 16)" \
         -config "$DIR/openssl.cnf" -keyout "$DIR/key.pem" -out "$DIR/cert.pem"
+    CREATED=1
     rm -f "$DIR/identity.p12" "$DIR/identity.p12.base64" "$DIR/identity.p12.password"
+fi
+
+# Both paths, before anything is exported or reaches the keychain: a restored
+# certificate may carry another name, and openssl may have changed this one.
+SUBJECT="$(cert_subject "$DIR/cert.pem")"
+if [[ "$SUBJECT" != "CN=$NAME" ]]; then
+    if [[ "$CREATED" -eq 1 ]]; then
+        # This run made both files, so removing them leaves DIR as it was.
+        rm -f "$DIR/key.pem" "$DIR/cert.pem"
+        die "openssl wrote a certificate for $SUBJECT, not CN=$NAME; it was deleted and nothing was imported"
+    fi
+    refuse "$DIR/cert.pem is $SUBJECT, not CN=$NAME; pass the matching --name or another --dir"
+fi
+if [[ "$CREATED" -eq 0 ]]; then
+    say "reusing the key and certificate in $DIR"
 fi
 
 if [[ ! -f "$DIR/identity.p12" || ! -f "$DIR/identity.p12.password" ]]; then
