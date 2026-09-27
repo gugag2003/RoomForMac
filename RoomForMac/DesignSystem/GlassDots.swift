@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Onboarding progress: one glass dot per step, with the current step drawn as
 /// a wider capsule that morphs from dot to dot (spec §6, "glass dots in a
-/// GlassEffectContainer that morph between steps").
+/// GlassEffectContainer that morph between steps"). Under Reduce Motion every
+/// dot, resting or current, crossfades instead.
 struct GlassDots: View {
     static let dotSize: CGFloat = 8
     static let currentWidth: CGFloat = 24
@@ -28,6 +29,14 @@ struct GlassDots: View {
     /// The VoiceOver label, "Step 3 of 8" for index 2 of 8.
     static func stepLabel(current: Int, count: Int) -> LocalizedStringResource {
         "Step \(current + 1) of \(count)"
+    }
+
+    /// How a resting dot changes when `current` moves. It follows the same
+    /// policy as the current capsule's `morphingGlass`, so under Reduce Motion
+    /// every glass shape in the container crossfades instead of morphing
+    /// (spec §11.5).
+    static func restingDotTransitionKind(reduceMotion: Bool) -> GlassTransitionKind {
+        Motion.glassTransitionKind(reduceMotion: reduceMotion)
     }
 
     var body: some View {
@@ -58,6 +67,7 @@ struct GlassDots: View {
             dot
                 .glassEffect(.regular, in: .circle)
                 .glassEffectID("dot-\(index)", in: namespace)
+                .glassEffectTransition(Self.restingDotTransitionKind(reduceMotion: reduceMotion).transition)
         case .solid:
             dot.background(Palette.moss, in: .circle)
         }

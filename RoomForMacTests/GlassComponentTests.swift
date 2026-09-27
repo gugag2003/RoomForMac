@@ -49,6 +49,18 @@ struct GlassComponentTests {
         #expect(GlassDots.clampedIndex(current, count: count) == expected)
     }
 
+    /// Every glass shape in the dots, resting dots included, crossfades under
+    /// Reduce Motion and morphs otherwise, the same as the current capsule's
+    /// `morphingGlass` (spec §11.5).
+    @Test(arguments: [
+        (false, GlassTransitionKind.matchedGeometry),
+        (true, GlassTransitionKind.materialize),
+    ])
+    func restingDotsCrossfadeUnderReduceMotion(reduceMotion: Bool, expected: GlassTransitionKind) {
+        #expect(GlassDots.restingDotTransitionKind(reduceMotion: reduceMotion) == expected)
+        #expect(GlassDots.restingDotTransitionKind(reduceMotion: reduceMotion) == Motion.glassTransitionKind(reduceMotion: reduceMotion))
+    }
+
     @Test func dotsAnnounceTheStepOneBased() {
         #expect(String(localized: GlassDots.stepLabel(current: 0, count: 8)) == "Step 1 of 8")
         #expect(String(localized: GlassDots.stepLabel(current: 7, count: 8)) == "Step 8 of 8")
