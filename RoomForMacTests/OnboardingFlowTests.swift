@@ -211,7 +211,11 @@ struct OnboardingFlowTests {
     @Test func finishingTwiceAppliesOnce() async {
         let flow = makeFlow()
         var calls = 0
-        await flow.finish { _ in calls += 1 }
+        await flow.finish { _ in
+            calls += 1
+            // A double click: the second call starts while the first is still applying.
+            await flow.finish { _ in calls += 1 }
+        }
         await flow.finish { _ in calls += 1 }
         #expect(calls == 1)
     }
