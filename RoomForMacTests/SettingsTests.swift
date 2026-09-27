@@ -301,9 +301,15 @@ extension SettingsTests {
         }
 
         @Test func turningOffWithoutALoginItemOnlyRereadsTheState() async {
-            let permissions = PermissionCenter(checkers: [FakeChecker(id: .launchAtLogin, states: [.notDetermined])])
-            await GeneralSettingsView.setLaunchAtLogin(false, permissions: permissions, loginItem: nil)
+            // The checker answers something other than the center's default (.notDetermined
+            // before any answer), so only a reread can change what the center shows.
+            let checker = FakeChecker(id: .launchAtLogin, states: [.granted])
+            let permissions = PermissionCenter(checkers: [checker])
             #expect(permissions.state(.launchAtLogin) == .notDetermined)
+            await GeneralSettingsView.setLaunchAtLogin(false, permissions: permissions, loginItem: nil)
+            #expect(await checker.checkCount == 1)
+            #expect(await checker.requestCount == 0)
+            #expect(permissions.state(.launchAtLogin) == .granted)
         }
 
         @Test(arguments: [
@@ -457,9 +463,9 @@ extension SettingsTests {
             directory = try TemporaryDirectory()
         }
 
-        func checkers() -> [any PermissionChecking] {
+        func checkers(move: PermissionState = .denied) -> [any PermissionChecking] {
             [
-                FakeChecker(id: .moveToApplications, states: [.denied]),
+                FakeChecker(id: .moveToApplications, states: [move]),
                 FakeChecker(id: .fullDiskAccess, states: [.granted]),
                 FakeChecker(id: .automationFinder, states: [.denied]),
                 FakeChecker(id: .automationSystemEvents, states: [.unknown("not running")]),
@@ -491,9 +497,14 @@ extension SettingsTests {
             let model = SettingsTests.model(defaults: defaults, checkers: checkers() + [loginItem], loginItem: loginItem)
             await model.permissions.refreshAll()
             let view = GeneralSettingsView(permissions: model.permissions, loginItem: loginItem, openURL: { _ in })
-            let image = try #require(RenderCheck.image(of: view, scheme: scheme, size: SettingsView.contentSize))
-            #expect(image.width == Int(SettingsView.contentSize.width))
-            #expect(image.height == Int(SettingsView.contentSize.height))
+            // ImageRenderer draws a Form's rows blank (measured: an approval row renders the same
+            // as none), so this pins the grouped Form itself: its background covers the tab, in
+            // the scheme's own colours.
+            let render = try Self.tabPixels(of: view, scheme: scheme)
+            let drawn = render.differingPixels(from: Self.emptyTab)
+            #expect(drawn > Self.minimumFormDifference, "only \(drawn) pixels differ from an empty frame")
+            let schemes = render.differingPixels(from: try Self.tabPixels(of: view, scheme: Self.opposite(of: scheme)))
+            #expect(schemes > Self.minimumFormDifference, "only \(schemes) pixels differ between light and dark")
             #expect(fake.calls.isEmpty, "rendering must not register or open anything")
         }
 
@@ -503,10 +514,26 @@ extension SettingsTests {
             await model.permissions.refreshAll()
             #expect(PermissionsSettingsView.cards(moveState: model.permissions.states[.moveToApplications]).first == .moveToApplications)
             #expect(PermissionsSettingsView.cardState(.automationSystemEvents, permissions: model.permissions) == .notDetermined)
-            let view = PermissionsSettingsView(permissions: model.permissions, openURL: { _ in })
-            let image = try #require(RenderCheck.image(of: view, scheme: scheme, size: SettingsView.contentSize))
-            #expect(image.width == Int(SettingsView.contentSize.width))
-            #expect(image.height == Int(SettingsView.contentSize.height))
+            // The tab as shown builds and lays out without aborting the host. ImageRenderer
+            // leaves its ScrollView blank, so the cards are checked through CardList below.
+            _ = try #require(RenderCheck.image(
+                of: PermissionsSettingsView(permissions: model.permissions, openURL: { _ in }),
+                scheme: scheme,
+                size: SettingsView.contentSize
+            ))
+            let list = PermissionsSettingsView.CardList(permissions: model.permissions, openURL: { _ in })
+            let cards = try Self.tabPixels(of: list, scheme: scheme)
+            let drawn = cards.differingPixels(from: Self.emptyTab)
+            #expect(drawn > Self.minimumCardsDifference, "only \(drawn) pixels differ from an empty frame")
+            let schemes = cards.differingPixels(from: try Self.tabPixels(of: list, scheme: Self.opposite(of: scheme)))
+            #expect(schemes > Self.minimumCardsDifference, "only \(schemes) pixels differ between light and dark")
+            // An installed copy has no Move card, and the list draws what it is given.
+            let installed = PermissionCenter(checkers: checkers(move: .granted))
+            await installed.refreshAll()
+            #expect(PermissionsSettingsView.cards(moveState: installed.states[.moveToApplications]).first == .fullDiskAccess)
+            let withoutMove = try Self.tabPixels(of: PermissionsSettingsView.CardList(permissions: installed, openURL: { _ in }), scheme: scheme)
+            let moveCard = cards.differingPixels(from: withoutMove)
+            #expect(moveCard > Self.minimumCardsDifference, "the Move card changed only \(moveCard) pixels")
         }
 
         @Test(arguments: [ColorScheme.light, .dark])
@@ -517,12 +544,14 @@ extension SettingsTests {
             await model.start()
             let info = AboutInfo(bundle: .main, engine: AboutInfo.fingerprint(for: model.engine))
             #expect(info.engineLine == "Engine V1.56.0 (239c90d, 5 patches)")
-            let image = try #require(RenderCheck.image(
-                of: AboutView(info: info, openURL: { _ in }),
-                scheme: scheme,
-                size: SettingsView.contentSize
-            ))
-            #expect(image.width == Int(SettingsView.contentSize.width))
+            let view = AboutView(info: info, openURL: { _ in })
+            // As for General: ImageRenderer draws the Form's rows blank (measured: the engine
+            // line renders the same as "Engine unavailable"), so this pins the grouped Form.
+            let render = try Self.tabPixels(of: view, scheme: scheme)
+            let drawn = render.differingPixels(from: Self.emptyTab)
+            #expect(drawn > Self.minimumFormDifference, "only \(drawn) pixels differ from an empty frame")
+            let schemes = render.differingPixels(from: try Self.tabPixels(of: view, scheme: Self.opposite(of: scheme)))
+            #expect(schemes > Self.minimumFormDifference, "only \(schemes) pixels differ between light and dark")
         }
 
         @Test(arguments: LegalDocument.allCases)
@@ -533,7 +562,7 @@ extension SettingsTests {
             #expect(image.height == 600)
             // A render test must be able to fail. ImageRenderer leaves a ScrollView's content
             // blank, so this sees the sheet's header (title, Done, divider), not the text.
-            let empty = try Self.pixels(of: Color.clear, scheme: .light)
+            let empty = RenderedPixels.transparent(width: 680, height: 600)
             #expect(try RenderedPixels(image).differingPixels(from: empty) > Self.minimumSheetDifference)
         }
 
@@ -548,13 +577,43 @@ extension SettingsTests {
         }
 
         /// Fewer differing pixels than this means two sheet renders show the same thing.
-        /// Measured at 680 × 600: the header alone differs from an empty frame in about
-        /// 2 800 pixels, and the missing-document placeholder from a sheet with text in
+        /// Measured at 680 × 600: the header alone differs from a transparent frame in 2 275
+        /// to 2 978 pixels, and the missing-document placeholder from a sheet with text in
         /// over 3 200.
         private static let minimumSheetDifference = 1_000
 
         private static func pixels(of view: some View, scheme: ColorScheme) throws -> RenderedPixels {
             try RenderedPixels(try #require(RenderCheck.image(of: view, scheme: scheme, size: CGSize(width: 680, height: 600))))
+        }
+
+        /// A grouped `Form` paints its background over the whole tab in the scheme's colours.
+        /// Measured at 560 × 540, for General and About alike: all 302 400 pixels differ from
+        /// a transparent frame, and all differ between light and dark. Half the tab leaves
+        /// margin.
+        private static let minimumFormDifference = Int(SettingsView.contentSize.width * SettingsView.contentSize.height) / 2
+
+        /// Fewer differing pixels than this means two renders of the Permissions cards show the
+        /// same thing. Measured at 560 × 540: the cards differ from a transparent frame in over
+        /// 281 000 pixels, between light and dark in over 272 000, and with the Move card from
+        /// without it in over 172 000.
+        private static let minimumCardsDifference = 1_000
+
+        /// A tab's content at the tab's size. The size is checked because renders of different
+        /// sizes count as differing everywhere.
+        private static func tabPixels(of view: some View, scheme: ColorScheme) throws -> RenderedPixels {
+            let pixels = try RenderedPixels(try #require(RenderCheck.image(of: view, scheme: scheme, size: SettingsView.contentSize)))
+            #expect(pixels.width == Int(SettingsView.contentSize.width))
+            #expect(pixels.height == Int(SettingsView.contentSize.height))
+            return pixels
+        }
+
+        /// The empty reference at the tab's size (see `RenderedPixels.transparent`).
+        private static var emptyTab: RenderedPixels {
+            .transparent(width: Int(SettingsView.contentSize.width), height: Int(SettingsView.contentSize.height))
+        }
+
+        private static func opposite(of scheme: ColorScheme) -> ColorScheme {
+            scheme == .light ? .dark : .light
         }
     }
 }

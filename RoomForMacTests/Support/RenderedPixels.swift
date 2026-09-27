@@ -31,9 +31,21 @@ struct RenderedPixels: CustomStringConvertible {
             return true
         }
         try #require(drawn, "could not draw a \(width) × \(height) image into an sRGB bitmap")
+        self.init(width: width, height: height, bytes: bytes)
+    }
+
+    private init(width: Int, height: Int, bytes: [UInt8]) {
         self.width = width
         self.height = height
         self.bytes = bytes
+    }
+
+    /// A fully transparent frame: the empty reference for "draws something". Do not render
+    /// `Color.clear` for this. `ImageRenderer` draws nothing for it and hands back its reused
+    /// buffer as it is, so that render holds the last image rendered at the same size
+    /// (measured: `Color.clear` rendered right after `Color.red` comes back red).
+    static func transparent(width: Int, height: Int) -> RenderedPixels {
+        RenderedPixels(width: width, height: height, bytes: [UInt8](repeating: 0, count: width * height * 4))
     }
 
     var description: String {

@@ -99,13 +99,39 @@ struct PermissionsSettingsView: View {
 
     var body: some View {
         ScrollView {
+            CardList(permissions: permissions, openURL: openURL)
+                .padding(24)
+        }
+        .task {
+            await permissions.refreshAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task {
+                await permissions.refreshAll()
+            }
+        }
+    }
+
+    /// The tab's content: the intro line and the cards, with "move by hand" after a failed move.
+    /// It is its own view, outside the tab's `ScrollView`, so a render test can draw it:
+    /// `ImageRenderer` leaves a `ScrollView`'s content blank.
+    struct CardList: View {
+        private let permissions: PermissionCenter
+        private let openURL: @MainActor (URL) -> Void
+
+        init(permissions: PermissionCenter, openURL: @escaping @MainActor (URL) -> Void) {
+            self.permissions = permissions
+            self.openURL = openURL
+        }
+
+        var body: some View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("RoomForMac checks these again every time you come back to it.")
                     .foregroundStyle(Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(Self.cards(moveState: permissions.states[.moveToApplications]), id: \.self) { id in
-                    let state = Self.cardState(id, permissions: permissions)
-                    let content = Self.content(for: id, state: state)
+                ForEach(PermissionsSettingsView.cards(moveState: permissions.states[.moveToApplications]), id: \.self) { id in
+                    let state = PermissionsSettingsView.cardState(id, permissions: permissions)
+                    let content = PermissionsSettingsView.content(for: id, state: state)
                     PermissionCard(
                         id: id,
                         state: state,
@@ -120,42 +146,33 @@ struct PermissionsSettingsView: View {
                     }
                 }
             }
-            .padding(24)
         }
-        .task {
-            await permissions.refreshAll()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task {
-                await permissions.refreshAll()
-            }
-        }
-    }
 
-    /// Shown after a failed move: the way that always works.
-    private var moveByHand: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("Drag RoomForMac into your Applications folder, then open it from there.")
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+        /// Shown after a failed move: the way that always works.
+        private var moveByHand: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Drag RoomForMac into your Applications folder, then open it from there.")
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                }
+                .accessibilityIdentifier(AccessibilityID.settingsRevealInFinder)
             }
-            .accessibilityIdentifier(AccessibilityID.settingsRevealInFinder)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(AccessibilityID.settingsMoveByHand)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(AccessibilityID.settingsMoveByHand)
-    }
 
-    private func perform(_ action: CardAction, for id: PermissionID) {
-        switch action {
-        case .request:
-            Task {
-                await permissions.request(id)
+        private func perform(_ action: CardAction, for id: PermissionID) {
+            switch action {
+            case .request:
+                Task {
+                    await permissions.request(id)
+                }
+            case .open(let link):
+                openURL(link.url)
             }
-        case .open(let link):
-            openURL(link.url)
         }
     }
 }
