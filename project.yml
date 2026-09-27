@@ -47,6 +47,14 @@ targets:
       - path: RoomForMac/Resources/Backgrounds
         type: folder
         buildPhase: resources
+      # Legal documents for Settings → About. They stay at the repository root,
+      # where GitHub and source archives expect them.
+      - path: LICENSE
+        buildPhase: resources
+      - path: NOTICE
+        buildPhase: resources
+      - path: CREDITS.md
+        buildPhase: resources
     info:
       path: RoomForMac/Info.plist
       properties:

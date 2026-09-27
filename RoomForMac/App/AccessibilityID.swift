@@ -74,3 +74,35 @@ extension AccessibilityID {
         "onboarding.summary.\(id.rawValue)"
     }
 }
+
+// MARK: - Settings (Task 14)
+
+extension AccessibilityID {
+    /// A Settings tab's content: "settings.tab.<rawValue>".
+    static func settingsTab(_ tab: SettingsTab) -> String {
+        "settings.tab.\(tab.rawValue)"
+    }
+
+    // General
+    static let settingsLaunchAtLogin = "settings.general.launchAtLogin"
+    static let settingsApproveLoginItem = "settings.general.approveLoginItem"
+    static let settingsNotifications = "settings.general.notifications"
+    static let settingsNotificationsAction = "settings.general.notifications.action"
+    static let settingsMenuBarNote = "settings.general.menuBarNote"
+
+    // Permissions (the cards keep their permission.* identifiers)
+    static let settingsMoveByHand = "settings.permissions.moveByHand"
+    static let settingsRevealInFinder = "settings.permissions.revealInFinder"
+
+    // About
+    static let settingsVersion = "settings.about.version"
+    static let settingsEngine = "settings.about.engine"
+    static let settingsMoleLink = "settings.about.moleLink"
+    static let settingsLegalText = "settings.about.legal.text"
+    static let settingsLegalDone = "settings.about.legal.done"
+
+    /// A row of the legal documents list: "settings.about.legal.<rawValue>".
+    static func settingsLegalDocument(_ document: LegalDocument) -> String {
+        "settings.about.legal.\(document.rawValue)"
+    }
+}

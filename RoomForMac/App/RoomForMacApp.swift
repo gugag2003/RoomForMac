@@ -55,10 +55,10 @@ struct RoomForMacApp: App {
         .defaultSize(width: 1100, height: 720)
         .windowBackgroundDragBehavior(.enabled)
 
+        // General, Permissions and About. It shares the model's PermissionCenter
+        // with onboarding.
         Settings {
-            // Replaced by SettingsView in Task 14.
-            Text("Settings")
-                .frame(width: 320, height: 160)
+            SettingsView(model: model)
         }
     }
 }
