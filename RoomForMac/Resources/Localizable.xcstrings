@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Another copy of RoomForMac is already open in %@. Quit it, then try again." : {
+
+    },
     "App %@" : {
 
     },
@@ -64,6 +67,9 @@
     "RoomForMac" : {
       "shouldTranslate" : false
     },
+    "RoomForMac couldn't clear the quarantine flag on %@." : {
+
+    },
     "RoomForMac couldn't read the engine's answer." : {
 
     },
@@ -80,6 +86,12 @@
 
     },
     "RoomForMac diagnostics" : {
+
+    },
+    "RoomForMac is now in %@, but it couldn't reopen itself. Quit it, then open it from there." : {
+
+    },
+    "RoomForMac isn't allowed to add apps to %@." : {
 
     },
     "RoomForMac needs to be reinstalled" : {
