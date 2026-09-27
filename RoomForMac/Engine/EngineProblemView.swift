@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The blocking "Reinstall RoomForMac" card shown when the launch check fails.
-/// Plain SwiftUI styling for now; Task 5 swaps in `GlassCard`, `GlassButton` and `Palette.canvas`.
+/// The blocking "Reinstall RoomForMac" card shown when the launch check fails
+/// (spec §10). It fills the window; nothing else in the app is reachable.
 struct EngineProblemView: View {
     static let downloadPage = URL(string: "https://github.com/gugag2003/RoomForMac/releases")!
 
@@ -17,7 +17,7 @@ struct EngineProblemView: View {
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            Palette.canvas
                 .ignoresSafeArea()
             card
                 .frame(maxWidth: 540)
@@ -27,54 +27,54 @@ struct EngineProblemView: View {
     }
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Reinstall RoomForMac")
-                    .font(.title2.weight(.semibold))
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-            }
-            .accessibilityAddTraits(.isHeader)
-
-            Text(presentation.message)
-                .fixedSize(horizontal: false, vertical: true)
-
-            DisclosureGroup("Show details", isExpanded: $showsDetails) {
-                ScrollView {
-                    Text(presentation.details)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
+        GlassCard(cornerRadius: 24, padding: 28) {
+            VStack(alignment: .leading, spacing: 16) {
+                Label {
+                    Text("Reinstall RoomForMac")
+                        .font(.title2.weight(.semibold))
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.clay)
                 }
-                .frame(maxHeight: 180)
-            }
-            .accessibilityIdentifier(AccessibilityID.engineProblemDetails)
+                .accessibilityAddTraits(.isHeader)
 
-            HStack {
-                Button(action: copyDiagnostics) {
-                    if copied {
-                        Label("Copied", systemImage: "checkmark")
-                    } else {
-                        Label("Copy diagnostics", systemImage: "doc.on.doc")
+                Text(presentation.message)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                DisclosureGroup("Show details", isExpanded: $showsDetails) {
+                    ScrollView {
+                        Text(presentation.details)
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
                     }
+                    .frame(maxHeight: 180)
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier(AccessibilityID.engineProblemCopy)
+                .accessibilityIdentifier(AccessibilityID.engineProblemDetails)
 
-                Spacer()
+                HStack {
+                    GlassButton(.secondary) {
+                        copyDiagnostics()
+                    } label: {
+                        if copied {
+                            Label("Copied", systemImage: "checkmark")
+                        } else {
+                            Label("Copy diagnostics", systemImage: "doc.on.doc")
+                        }
+                    }
+                    .accessibilityIdentifier(AccessibilityID.engineProblemCopy)
 
-                Button("Open download page") {
-                    openURL(Self.downloadPage)
+                    Spacer()
+
+                    GlassButton("Open download page", prominence: .primary) {
+                        openURL(Self.downloadPage)
+                    }
+                    .accessibilityIdentifier(AccessibilityID.engineProblemDownload)
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(AccessibilityID.engineProblemDownload)
             }
-            .controlSize(.large)
         }
-        .padding(24)
-        .background(.fill.tertiary, in: .rect(cornerRadius: 20))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.engineProblemCard)
         .task(id: copied) {
