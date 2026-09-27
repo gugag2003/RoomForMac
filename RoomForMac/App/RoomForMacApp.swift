@@ -33,14 +33,30 @@ struct UnitTestHostApp: App {
     }
 }
 
-/// RoomForMac itself. The window and Settings contents are placeholders for now.
+/// RoomForMac itself: one main window and the Settings window.
 struct RoomForMacApp: App {
+    @State private var model: AppModel
+
+    init() {
+        _model = State(initialValue: AppModel(dependencies: .forMode(.current)))
+    }
+
     var body: some Scene {
+        // A single-instance Window, so opening it again (Plan 3's menu-bar extra)
+        // brings back this window instead of adding a second one (Ruling 8).
         Window("RoomForMac", id: "main") {
-            Text("RoomForMac")
-                .frame(minWidth: 480, minHeight: 320)
+            RootView(model: model)
+                .task {
+                    await model.start()
+                }
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1100, height: 720)
+        .windowBackgroundDragBehavior(.enabled)
+
         Settings {
+            // Replaced by SettingsView in Task 14.
             Text("Settings")
                 .frame(width: 320, height: 160)
         }

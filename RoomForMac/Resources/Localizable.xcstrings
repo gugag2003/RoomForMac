@@ -4,6 +4,12 @@
     "App %@" : {
 
     },
+    "Checking RoomForMac…" : {
+
+    },
+    "Coming in the next update." : {
+
+    },
     "Copied" : {
 
     },
@@ -79,10 +85,16 @@
     "Signal %lld" : {
 
     },
+    "Smart Clean" : {
+
+    },
     "Some files RoomForMac needs are missing or damaged." : {
 
     },
     "Something went wrong" : {
+
+    },
+    "Status" : {
 
     },
     "Step %lld of %lld" : {
@@ -120,6 +132,12 @@
 
     },
     "Title: %@" : {
+
+    },
+    "Uninstaller" : {
+
+    },
+    "Welcome to RoomForMac" : {
 
     },
     "macOS %@" : {
