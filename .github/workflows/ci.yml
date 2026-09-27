@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # main-mrvlfl is the repository's default branch on GitHub.
+    branches: [main, main-mrvlfl]
   pull_request:
 
 jobs:
@@ -14,6 +15,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # A shallow checkout leaves vendor/mole without its tags, and the
+          # engine's VERSION then records mole_tag=untagged.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -25,8 +29,8 @@ jobs:
 
       - name: Lint build scripts
         run: |
-          shellcheck scripts/*.sh
-          shfmt -d -i 4 -ci -sr scripts/*.sh
+          shellcheck scripts/*.sh scripts/lib/*.sh
+          shfmt -d -i 4 -ci -sr scripts/*.sh scripts/lib/*.sh
 
       - name: Audit build-check assertions
         run: python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats
@@ -34,7 +38,13 @@ jobs:
       - name: Build the patched engine
         run: scripts/build-engine.sh
 
+      # build_engine.bats, plus signing_identity.bats (stubbed tools, no
+      # keychain). app_bundle.bats skips here without APP; the app job runs it.
+      # RFM_ALLOW_PROMPTS=1 also runs `status-go --json`, which asks Finder for
+      # free space; developer Macs skip it so tests never raise a prompt.
       - name: Engine build checks
+        env:
+          RFM_ALLOW_PROMPTS: "1"
         run: bats scripts/tests
 
       - name: Patch tests
@@ -53,3 +63,87 @@ jobs:
         env:
           RFM_ENGINE_DIR: ${{ github.workspace }}/build/engine
         run: swift test --package-path Packages/MoleEngine
+
+  app:
+    name: RoomForMac app
+    # Xcode 27.0 with the macOS 27 SDK, like the development Mac. The macos-26
+    # image has only Xcode 26.6 and SDK 26.5 (Plan 2, Ruling 14).
+    runs-on: xcode-27
+    timeout-minutes: 60
+    # No `needs: engine`: jobs share no files, so this job builds its own engine.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: vendor/mole/go.mod
+          cache-dependency-path: vendor/mole/go.sum
+
+      - name: Install tools
+        run: brew install xcodegen bats-core
+
+      - name: Show the toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcodegen --version
+          go version
+
+      - name: Build the patched engine
+        run: scripts/ensure-engine.sh
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      # RFM_NO_ENGINE_BUILD=1: the "Prepare engine" phase fails instead of
+      # rebuilding, so every build below embeds the engine built above.
+      - name: Unit tests
+        env:
+          RFM_NO_ENGINE_BUILD: "1"
+        run: >-
+          xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit
+          -destination platform=macOS -derivedDataPath build/DerivedData test
+
+      - name: Universal Release build
+        env:
+          RFM_NO_ENGINE_BUILD: "1"
+        run: >-
+          xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
+          -configuration Release -destination "generic/platform=macOS"
+          -derivedDataPath build/DerivedData build
+
+      # RFM_ALLOW_PROMPTS=1 also checks the bundled `status-go --json`.
+      - name: Bundle checks
+        env:
+          RFM_ALLOW_PROMPTS: "1"
+        run: APP=build/DerivedData/Build/Products/Release/RoomForMac.app EXPECT_UNIVERSAL=1 bats scripts/tests/app_bundle.bats
+
+      # GitHub's macOS images allow Automation Mode without authentication.
+      # Allow it here too, should an image ever stop doing so.
+      - name: Allow Automation Mode for UI tests
+        run: |
+          status="$(automationmodetool)"
+          echo "$status"
+          if ! grep -q 'DOES NOT REQUIRE' <<< "$status"; then
+            sudo automationmodetool enable-automationmode-without-authentication
+          fi
+
+      - name: UI smoke tests
+        env:
+          RFM_NO_ENGINE_BUILD: "1"
+        run: >-
+          xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
+          -destination platform=macOS -derivedDataPath build/DerivedData
+          -only-testing:RoomForMacUITests test
+
+      - name: Keep the test results of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-test-results
+          path: build/DerivedData/Logs/Test
+          if-no-files-found: ignore
+          retention-days: 14

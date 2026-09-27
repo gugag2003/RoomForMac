@@ -7,8 +7,8 @@ What is left between today's `main` and an MVP, in the order to do it, with a pr
 ## Where things stand
 
 - **Plan 1 (engine) is built on local `main`.** It includes five Mole patches, `scripts/build-engine.sh`, and the `MoleEngine` Swift package. Verified on 2026-09-26: `bats scripts/tests` 6/6, `swift test --package-path Packages/MoleEngine` with `RFM_ENGINE_DIR=$PWD/build/engine` 55/55 (50 unit + 5 integration), and the bats assertion audit is clean.
-- **There is no app yet.** There is no `project.yml` and no `RoomForMac/` target. Plans 2–7 are not written.
-- **CI has never run.** Every Actions run ended in `startup_failure` with no jobs. The run page's annotation says: "The job was not started because recent account payments have failed or your spending limit needs to be increased." The repository is private, and private repositories are billed for macOS runner minutes. The workflow file itself is fine.
+- **Plan 2 (app shell) is built** on the branch `plan2/app-shell`. It holds the XcodeGen project with the embedded engine, the design system, onboarding, permissions and Settings. Plans 3–7 are not written.
+- **CI has never run.** Every Actions run ended in `startup_failure` with no jobs. The run page's annotation says: "The job was not started because recent account payments have failed or your spending limit needs to be increased." The repository is private, and private repositories are billed for macOS runner minutes. The workflow file itself is fine. Plan 2 added the `app` job on the `xcode-27` runner and a push trigger for `main-mrvlfl`; they have not run either, for the same reason.
 - **Git state:**
   - `main` is 3 commits ahead of `origin/main` and has not been pushed.
   - GitHub's default branch is `main-mrvlfl`, which sits at `057136d` (spec and roadmap only, 14 commits behind `main`).
@@ -41,7 +41,15 @@ Terrain is one of the four headline tools in spec §1. If it must ship in the MV
 3. After you approve, push `main`.
 4. Once CI is green, tick Task 13 Step 4.
 
-### Step 1 — Write Plan 2: app shell, design system, onboarding and permissions
+### Step 1 — Write Plan 2: app shell, design system, onboarding and permissions (done)
+
+**Done:** `docs/superpowers/plans/2026-09-26-plan-2-app-shell.md`. Its Rulings record where it departs from the brief below:
+- `scripts/ensure-engine.sh` rebuilds the engine only when its inputs change, and `scripts/embed-engine.sh` copies it into the app. `build-engine.sh` does not run on every build.
+- The Go tools live in `Contents/Helpers`, linked from `engine/bin`.
+- The app's CI job runs on the `xcode-27` runner.
+
+The brief it was written from:
+
 Use `superpowers:writing-plans`. Save it as `docs/superpowers/plans/<date>-plan-2-app-shell.md`. It must cover:
 - **The spikes come first**, because later tasks use their answers:
   - **S1:** which Liquid Glass APIs the installed SDK actually has (`glassEffect`, `GlassEffectContainer`, `glassEffectID`, `.interactive()`). This Mac has SDK 27.0, while the spec was written against 26.
@@ -59,8 +67,10 @@ Use `superpowers:writing-plans`. Save it as `docs/superpowers/plans/<date>-plan-
 - Settings → Permissions, plus minimal General and About screens. About carries the Mole credit and the engine version.
 - CI: extend `ci.yml` with the app build and the UI smoke test.
 
-### Step 2 — Execute Plan 2
+### Step 2 — Execute Plan 2 (done)
 Use `superpowers:subagent-driven-development`, one task per commit, as Plan 1 was built.
+
+**Done** on the branch `plan2/app-shell`. What is left needs the owner, and Plan 2's "Done when" lists it: the signing identity, the S2/S5/TCC checks on a signed build, Automation Mode for local UI tests, backdrop photos and CI billing.
 
 ### Step 3 — Write and execute Plan 3: Smart Clean, Uninstaller, Status, menu-bar extra
 Base it on spec §5.1, §5.2, §5.4, §5.5 and §10, plus roadmap decisions 1–3. It builds on the `MoleEngine` services as they are:
@@ -93,11 +103,11 @@ On this Mac, build and run the app, then walk the success criterion from spec §
 
 > On `main` in RoomForMac, follow Step 0 of `docs/superpowers/plans/2026-09-26-mvp-handoff.md`: merge `fix/engine-kb-overflow`, run Plan 1 Task 13 Step 2 locally, and report the results. Ask me before pushing.
 
-**Session 2: write Plan 2.**
+**Session 2: write Plan 2.** Done.
 
 > Read `docs/superpowers/plans/2026-09-26-mvp-handoff.md`, the spec and the roadmap. MVP scope is M1 [or: M2 / M2 with Terrain]. Use superpowers:writing-plans to write Plan 2 exactly as Step 1 of the handoff describes, spikes first. Work on `main`. Stop when the plan is written, so I can review it.
 
-**Session 3: execute Plan 2.**
+**Session 3: execute Plan 2.** Done.
 
 > Execute `docs/superpowers/plans/<date>-plan-2-app-shell.md` with superpowers:subagent-driven-development on `main`. Stop after each spike and tell me what it found before building on it.
 

@@ -2,14 +2,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-25-roomformac-design.md`
 
-**Status (2026-09-26):** Plan 1 is built on `main`, and its CI run is blocked by Actions billing. The recommended MVP scope, the remaining steps and prompts for the next sessions are in `docs/superpowers/plans/2026-09-26-mvp-handoff.md`.
+**Status:** Plans 1 and 2 are done, and **Plan 3 is next**: Smart Clean, Uninstaller, Status and the menu-bar extra. Plan 1 is on `main`, and Plan 2 is on the branch `plan2/app-shell`. CI still cannot run until Actions billing is fixed or the repository is made public. Plan 2's Rulings record decisions it took for the owner, among them the bundle ID, the single signing identity and the CI runner; confirm them before Plan 6 ships. The recommended MVP scope, the remaining steps and prompts for the next sessions are in `docs/superpowers/plans/2026-09-26-mvp-handoff.md`.
 
 The spec spans six largely independent subsystems. Each plan below ends with working, tested software, and each is written **after the previous one lands**, so it can use real names discovered on the way — the spikes in spec §14 answer questions that later plans depend on (exact Liquid Glass APIs, TCC attribution, the Polar API).
 
 | # | Plan | Delivers | Spec | Depends on | Spikes |
 |---|------|----------|------|------------|--------|
 | 1 | **Engine** — `2026-09-25-plan-1-engine.md` | Pinned + patched Mole, reproducible universal engine build, `MoleEngine` Swift package (runner, typed events, services), engine CI | §3.1, §4.1–4.4, §4.6, §10, §13 (engine) | — | — |
-| 2 | App shell, design system, onboarding & permissions | XcodeGen app with sidebar, backdrops, glass components, onboarding for every approval in §6, Settings → Permissions | §3.2–3.3, §5.6, §6, §11 | 1 | S1, S2, S5 (signing half) |
+| 2 | **App shell** — `2026-09-26-plan-2-app-shell.md` | XcodeGen app with sidebar, backdrops, glass components, onboarding for every approval in §6, Settings → Permissions | §3.2–3.3, §5.6, §6, §11 | 1 | S1, S2, S5 (signing half) |
 | 3 | Smart Clean, Uninstaller, Status, menu-bar extra | The cleanup flows on top of `MoleEngine` | §5.1, §5.2, §5.4, §5.5, §10 | 1, 2 | — |
 | 4 | Terrain | Bubble disk explorer | §5.3 | 1, 2 | — |
 | 5 | Monetization & analytics | `Licensing` + `Telemetry` packages, allowance ledger and gate, paywall, Supabase functions, Polar | §7, §8, §9 | 2, 3 | S4 |

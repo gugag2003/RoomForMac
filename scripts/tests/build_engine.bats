@@ -2,6 +2,9 @@
 # Engine build checks. Builds once per file into a temporary output directory,
 # then checks the two Xcode "Prepare engine" scripts against that engine. The
 # engine lock tests run a scratch copy of build-engine.sh (see fake_root).
+#
+# Tests never raise a real system prompt: `status-go --json` asks Finder for the
+# disk's free space, so it runs only with RFM_ALLOW_PROMPTS=1 (CI sets it).
 
 setup_file() {
     ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -42,6 +45,9 @@ setup_file() {
 }
 
 @test "the status binary prints a JSON snapshot" {
+    if [[ "${RFM_ALLOW_PROMPTS:-0}" != "1" ]]; then
+        skip "set RFM_ALLOW_PROMPTS=1 to run status-go --json, which asks Finder for free space and may prompt"
+    fi
     run "$ENGINE_OUT/bin/status-go" --json
     [ "$status" -eq 0 ]
     [[ "$output" == *'"cpu"'* ]]
