@@ -21,7 +21,7 @@ Every system interaction goes behind an injected protocol or closure:
 
 **Spec:** `docs/superpowers/specs/2026-09-25-roomformac-design.md` (§3.2–3.3, §5.6, §6, §10, §11; §12 signing half). Plan 1 (`docs/superpowers/plans/2026-09-25-plan-1-engine.md`) is done, and its Global Constraints and Environment notes also apply here. The research behind this plan (spikes S1, S2, S5-signing, bundling) is summarised in the **Rulings** section below.
 
-**Status:** Written and cross-checked. With all 17 tasks applied in a scratch copy, the app builds with no warnings and 367 unit tests pass in 47 suites. Execution has not started. Branch `plan2/app-shell`, based on `main` at `7a99b38`.
+**Status:** Written, cross-checked, and revised with the preflight rulings C1–C4 and R1–R8. With all 17 tasks applied in a scratch copy, the app builds with no warnings and 367 unit tests pass in 47 suites (214 after Task 9, 308 after Task 13, 349 after Task 14). Execution has not started. Branch `plan2/app-shell`, based on `main` at `7a99b38`.
 
 ## Global Constraints
 
@@ -130,7 +130,7 @@ These are the five input classes or failure modes most likely to bite a real use
 ## File Structure
 
 ```
-project.yml                                   XcodeGen definition (Task 1)
+project.yml                                   XcodeGen definition (Task 1; edited by Tasks 2, 6, 14)
 Config/Signing.xcconfig                       signing defaults + #include? "Local.xcconfig" (Task 1)
 Brewfile                                      + brew "xcodegen" (Task 1)
 CREDITS.md                                    Mole credit + photo credits section (Task 14)
@@ -145,14 +145,14 @@ scripts/
   tests/signing_identity.bats                 argument handling of make-signing-identity.sh (Task 16)
 RoomForMac/
   App/
-    RoomForMacApp.swift                       @main; scenes; runtime-mode switch (Task 1, 7)
+    RoomForMacApp.swift                       @main; scenes; runtime-mode switch (Task 1, 7, 14)
     RuntimeMode.swift                         normal / unitTestHost / uiTest(scenario) (Task 1)
-    AppDependencies.swift                     composition root: live + DEBUG scenarios (Task 7, 15)
+    AppDependencies.swift                     composition root: live + DEBUG scenarios (Task 7, 12, 15)
     AppPreferences.swift                      typed UserDefaults wrapper (Task 7)
-    AppModel.swift                            engine phase, onboarding flag, sidebar selection (Task 7)
+    AppModel.swift                            engine phase, onboarding flag, sidebar selection (Task 7, 12)
     SidebarSection.swift                      Smart Clean / Uninstaller / Status (Task 7)
-    RootView.swift                            engine problem | onboarding | split view (Task 7)
-    AccessibilityID.swift                     every accessibility identifier (Task 7)
+    RootView.swift                            engine problem | onboarding | split view (Task 7, 12)
+    AccessibilityID.swift                     every accessibility identifier (Task 3; rewritten by 7; appended by 12, 13, 14)
   DesignSystem/
     Palette.swift                             tokens, dynamic colors, WCAG contrast (Task 4)
     Typography.swift                          hero numerals, rounded digits (Task 4)
@@ -170,7 +170,7 @@ RoomForMac/
     EngineHealthCheck.swift                   §10 launch integrity check (Task 3)
     EngineProblem.swift                       problem cases + expectation values (Task 3)
     ErrorPresentation.swift                   any Error → title/message/details/diagnostics (Task 3)
-    EngineProblemView.swift                   blocking "Reinstall RoomForMac" card (Task 3)
+    EngineProblemView.swift                   blocking "Reinstall RoomForMac" card (Task 3, 5)
   Features/
     Permissions/
       PermissionID.swift  PermissionState.swift  PermissionChecking.swift       (Task 8)
@@ -182,7 +182,7 @@ RoomForMac/
       ScriptedPermissionChecker.swift         DEBUG fake for UI tests (Task 15)
     Onboarding/
       OnboardingStep.swift  OnboardingChoices.swift  OnboardingFlow.swift        (Task 11)
-      OnboardingView.swift  OnboardingScaffold.swift                             (Task 12)
+      OnboardingView.swift  OnboardingScaffold.swift                             (Task 12, 13)
       Steps/WelcomeStep.swift  FreeToExploreStep.swift  MoveToApplicationsStep.swift  FullDiskAccessStep.swift (Task 12)
       Steps/AutomationStep.swift  AdminAccessStep.swift  ExtrasStep.swift  ReadyStep.swift (Task 13)
     Settings/
@@ -198,10 +198,17 @@ RoomForMac/
     Backgrounds/README.md                     how photos are added; empty until chosen (Task 6)
 RoomForMacTests/                              Swift Testing, app-hosted (every task)
   Support/TemporaryDirectory.swift  Support/FakeEngineRunner.swift  Support/EngineLayout.swift (Task 3)
+  Support/TemporaryDefaults.swift                                               (Task 7)
+  Support/FakeChecker.swift                                                     (Task 8)
+  Support/Locked.swift                                                          (Task 9)
+  Support/AppMoveFixtures.swift                                                 (Task 10)
+  Support/FakeLoginService.swift                                                (Task 13)
 RoomForMacUITests/
-  OnboardingSmokeTests.swift  EngineProblemSmokeTests.swift                     (Task 15)
+  LaunchSmokeTests.swift                                                        (Task 1, 15)
+  UITestSupport.swift  OnboardingSmokeTests.swift  EngineProblemSmokeTests.swift (Task 15)
 .github/workflows/ci.yml                      + app job (Task 17)
-README.md                                     + building and running the app, signing (Task 17)
+docs/signing.md                               create, back up and verify the signing identity (Task 16)
+README.md                                     + building and running the app, signing (Task 16, 17)
 ```
 
 ---
@@ -4955,14 +4962,20 @@ Expected: `✔ Test run with 8 tests in 1 suite passed`, then `** TEST SUCCEEDED
 
 - [ ] **Step 5: Append the failing loader tests**
 
-Append to `RoomForMacTests/BackdropTests.swift`. The file-private helpers `PhotoBundle` and `TestImage` are shared with Step 10's tests.
+Append to `RoomForMacTests/BackdropTests.swift`. The file-private helpers `PhotoBundle` and `TestImage` are shared with Step 10's tests. `PhotoBundle` deletes its folder when it is released, so, like Task 3's `TemporaryDirectory` and Task 7's `TemporaryDefaults`, it lives as long as the test: the loader suite keeps it in a stored property, and Step 10's one photo test holds it with `withExtendedLifetime`.
 
 ```swift
 extension BackdropTests {
     @Suite("Image loader")
     struct Loader {
+        /// Held by the suite so the bundle folder outlives every use inside a test.
+        private let fixture: PhotoBundle
+
+        init() throws {
+            fixture = try PhotoBundle()
+        }
+
         @Test func aBundleWithoutPhotosHasNoImages() throws {
-            let fixture = try PhotoBundle()
             let loader = BackdropImageLoader(bundle: try fixture.bundle())
             for scene in BackdropScene.allCases {
                 #expect(loader.images(for: scene) == nil)
@@ -4970,7 +4983,6 @@ extension BackdropTests {
         }
 
         @Test func loadsAPhotoAtItsSizeWithABlurredCopy() throws {
-            let fixture = try PhotoBundle()
             try fixture.add("backdrop-status.png", TestImage.solid(width: 64, height: 64, red: 0.2, green: 0.5, blue: 0.3))
             let loader = BackdropImageLoader(bundle: try fixture.bundle())
             let images = try #require(loader.images(for: .status))
@@ -4981,7 +4993,6 @@ extension BackdropTests {
         }
 
         @Test func aSecondCallReturnsTheCachedImages() throws {
-            let fixture = try PhotoBundle()
             try fixture.add("backdrop-status.png", TestImage.solid(width: 64, height: 64, red: 0.2, green: 0.5, blue: 0.3))
             let loader = BackdropImageLoader(bundle: try fixture.bundle())
             #expect(loader.cachedEntry(for: .status) == nil)
@@ -4993,7 +5004,6 @@ extension BackdropTests {
         }
 
         @Test func prefersJPEGOverPNG() throws {
-            let fixture = try PhotoBundle()
             try fixture.add("backdrop-terrain.png", TestImage.solid(width: 64, height: 64, red: 1, green: 0, blue: 0))
             try fixture.add("backdrop-terrain.jpg", TestImage.solid(width: 32, height: 32, red: 0, green: 1, blue: 0))
             let images = try #require(BackdropImageLoader(bundle: try fixture.bundle()).images(for: .terrain))
@@ -5002,7 +5012,6 @@ extension BackdropTests {
 
         @Test(.enabled(if: TestImage.canWriteHEIC))
         func prefersHEICOverJPEG() throws {
-            let fixture = try PhotoBundle()
             try fixture.add("backdrop-terrain.jpg", TestImage.solid(width: 32, height: 32, red: 0, green: 1, blue: 0))
             try fixture.add("backdrop-terrain.heic", TestImage.solid(width: 48, height: 48, red: 0, green: 0, blue: 1))
             let images = try #require(BackdropImageLoader(bundle: try fixture.bundle()).images(for: .terrain))
@@ -5010,7 +5019,6 @@ extension BackdropTests {
         }
 
         @Test func scalesLargePhotosDownToTheMaximumSize() throws {
-            let fixture = try PhotoBundle()
             try fixture.add("backdrop-smartClean.png", TestImage.solid(width: 3000, height: 1000, red: 0.5, green: 0.5, blue: 0.5))
             let images = try #require(BackdropImageLoader(bundle: try fixture.bundle()).images(for: .smartClean))
             #expect(images.sharp.width == BackdropImageLoader.maxPixelSize)
@@ -5051,6 +5059,7 @@ extension BackdropTests {
 }
 
 /// A throwaway `.bundle` directory with a `Backgrounds` folder, removed when released.
+/// Keep it alive for the whole test: in a suite property, or with `withExtendedLifetime`.
 private final class PhotoBundle {
     let root: URL
 
@@ -5407,20 +5416,23 @@ extension BackdropTests {
 
         @Test func aLoadedPhotoShowsUnderTheWashAndReduceTransparencyHidesIt() throws {
             let fixture = try PhotoBundle()
-            try fixture.add("backdrop-status.png", TestImage.solid(width: 60, height: 40, red: 1, green: 0, blue: 0))
-            let loader = BackdropImageLoader(bundle: try fixture.bundle())
-            _ = try #require(loader.images(for: .status))
-            let canvas = try centerPixel(of: Palette.canvas)
+            // The bundle folder must outlive the last render, not just the last use of `fixture`.
+            try withExtendedLifetime(fixture) {
+                try fixture.add("backdrop-status.png", TestImage.solid(width: 60, height: 40, red: 1, green: 0, blue: 0))
+                let loader = BackdropImageLoader(bundle: try fixture.bundle())
+                _ = try #require(loader.images(for: .status))
+                let canvas = try centerPixel(of: Palette.canvas)
 
-            let washed = try centerPixel(of: BackdropView(scene: .status, focus: 1, loader: loader))
-            #expect(washed.red > washed.green + 100, "the photo is not showing")
-            #expect(washed.green > 40, "the canvas wash is missing")
+                let washed = try centerPixel(of: BackdropView(scene: .status, focus: 1, loader: loader))
+                #expect(washed.red > washed.green + 100, "the photo is not showing")
+                #expect(washed.green > 40, "the canvas wash is missing")
 
-            // `_accessibilityReduceTransparency` is the settable twin of the read-only
-            // `accessibilityReduceTransparency`, the same switch SwiftUI previews use.
-            let solid = try centerPixel(of: BackdropView(scene: .status, focus: 1, loader: loader)
-                .environment(\._accessibilityReduceTransparency, true))
-            #expect(solid == canvas)
+                // `_accessibilityReduceTransparency` is the settable twin of the read-only
+                // `accessibilityReduceTransparency`, the same switch SwiftUI previews use.
+                let solid = try centerPixel(of: BackdropView(scene: .status, focus: 1, loader: loader)
+                    .environment(\._accessibilityReduceTransparency, true))
+                #expect(solid == canvas)
+            }
         }
 
         /// Renders `view` at 60 × 40 points in the light appearance, whatever the Mac's own appearance is.
@@ -5614,7 +5626,7 @@ EOF
 
 **Files:**
 - Create: `RoomForMac/App/AppPreferences.swift`, `RoomForMac/App/AppModel.swift`, `RoomForMac/App/SidebarSection.swift`, `RoomForMac/App/RootView.swift`, `RoomForMac/App/AppDependencies.swift`, `RoomForMac/Features/SmartClean/SmartCleanPlaceholderView.swift`, `RoomForMac/Features/Uninstaller/UninstallerPlaceholderView.swift`, `RoomForMac/Features/Status/StatusPlaceholderView.swift`, `RoomForMacTests/AppPreferencesTests.swift`, `RoomForMacTests/AppModelTests.swift`
-- Create (added by this section): `RoomForMacTests/Support/TemporaryDefaults.swift`, a throwaway UserDefaults suite that Tasks 8, 11 and 13 can reuse; `RoomForMacTests/RootViewTests.swift`, for the screen precedence, the identifiers and the placeholders.
+- Create (added by this section): `RoomForMacTests/Support/TemporaryDefaults.swift`, a throwaway UserDefaults suite that Tasks 8 and 11–15 reuse (no later task writes its own); `RoomForMacTests/RootViewTests.swift`, for the screen precedence, the identifiers and the placeholders.
 - Modify: `RoomForMac/App/RoomForMacApp.swift`, `RoomForMac/App/AccessibilityID.swift`
 - Modify (added; the String Catalog grows every task): `RoomForMac/Resources/Localizable.xcstrings`
 
@@ -5778,7 +5790,7 @@ final class TemporaryDefaults {
 }
 ```
 
-Swift may release a local object right after its last use, so a `TemporaryDefaults` held only in a local variable could remove its suite in the middle of a test. Tests keep it in a stored property of the suite instead, which lives until the test ends. Task 3's `TemporaryDirectory` follows the same rule.
+Swift may release a local object right after its last use, so a `TemporaryDefaults` held only in a local variable could remove its suite in the middle of a test. Tests keep it in a stored property of the suite instead, which lives until the test ends. Task 3's `TemporaryDirectory` follows the same rule, and so does every later temporary store: a suite property, or `withExtendedLifetime` around the whole test where a suite property does not fit.
 
 `RoomForMacTests/AppPreferencesTests.swift`:
 ```swift
@@ -6852,7 +6864,7 @@ EOF
 - Modify (added; the String Catalog grows every task): `RoomForMac/Resources/Localizable.xcstrings`
 
 **Interfaces:**
-- Consumes: `AppPreferences` (Task 7) for last-known states.
+- Consumes: `AppPreferences` (Task 7) for last-known states. The tests also use `TemporaryDefaults` (Task 7, `RoomForMacTests/Support`).
 - Produces:
   ```swift
   enum PermissionID: String, Sendable, CaseIterable, Codable {
@@ -6975,7 +6987,7 @@ EOF
   - `request` updates the state; a second request in flight is ignored; a check that started before a request answered is dropped;
   - `poll` makes exactly 3 checks for the script `[.denied, .denied, .granted]`, with an injected `sleep` that records two durations of 1 s; it uses the given interval, stops at `.notApplicable`, returns when `sleep` throws, returns when its task is cancelled (both with a sleep that ignores cancellation and with the real `Task.sleep`), returns at once without a checker, and ignores the last-known fallback;
   - answers are stored as last known, `.unknown` is not stored, Automation shows the last known state while unknown, the fallback survives a relaunch, other permissions show `.unknown` as is, and `.unknown` with nothing stored stays unknown;
-  - `BlockingCall` returns the value of fast work; returns nil for work that sleeps 1 s against a 100 ms deadline, in under 0.5 s; runs the work on the given queue; lets late work finish and drops its result; resumes exactly once when work and deadline race; has the two deadline constants; and converts durations to nanoseconds.
+  - `BlockingCall` returns the value of fast work; returns nil for work that sleeps 1 s against a 100 ms deadline, in under 0.5 s; runs the work on the given queue; lets late work finish and drops its result; resumes exactly once when work and deadline race, with every call answering its own work's value or nil and every work item still running to the end; has the two deadline constants; and converts durations to nanoseconds.
 - The String Catalog gains this task's six keys, synced from the build (Step 13).
 
 Everything in this task is a pure function of its inputs, apart from two orderings: which of work and deadline finishes first in `BlockingCall`, and which of a check and a request answers first in `PermissionCenter`. The tests pin both with a lock-guarded race and with `FakeChecker.Gate`.
@@ -7028,18 +7040,31 @@ struct BlockingCallTests {
         #expect(finished.withLock { $0 } == true)
     }
 
-    /// Work and deadline finish at about the same moment, many times over. A second
-    /// resume of the continuation would trap with "SWIFT TASK CONTINUATION MISUSE".
+    /// Work and deadline finish at about the same moment, many times over. Every call must
+    /// answer with its own work's value or with nil, never another call's value, and every
+    /// work item must still run to the end, whichever side won. A second resume of the
+    /// continuation would trap with "SWIFT TASK CONTINUATION MISUSE".
     @Test func resumesExactlyOnceWhenWorkAndDeadlineRace() async {
-        var returned = 0
-        for _ in 0..<200 {
-            _ = await BlockingCall.run(deadline: .microseconds(300)) { () -> Int in
+        let finishedWork = OSAllocatedUnfairLock(initialState: 0)
+        var answers: [Int?] = []
+        for index in 0..<200 {
+            let answer = await BlockingCall.run(deadline: .microseconds(300)) { () -> Int in
                 usleep(300)
-                return 1
+                finishedWork.withLock { $0 += 1 }
+                return index
             }
-            returned += 1
+            answers.append(answer)
         }
-        #expect(returned == 200)
+        for (index, answer) in answers.enumerated() {
+            #expect(answer == nil || answer == index, "call \(index) answered \(String(describing: answer))")
+        }
+        // Work that lost the race keeps its GCD thread for about 300 µs more.
+        let clock = ContinuousClock()
+        let limit = clock.now + .seconds(5)
+        while finishedWork.withLock({ $0 }) < 200, clock.now < limit {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(finishedWork.withLock { $0 } == 200)
     }
 
     @Test func deadlinesForPassiveChecksAndPrompts() {
@@ -7064,7 +7089,7 @@ struct BlockingCallTests {
 
 Notes:
 - `__dispatch_queue_get_label(nil)` returns the label of the queue the code is running on, so `workRunsOnTheGivenQueue` proves the work does not run on the cooperative pool.
-- `resumesExactlyOnceWhenWorkAndDeadlineRace` has no expectation that could fail on its own. Its value is that a second `resume` traps the whole test process with `SWIFT TASK CONTINUATION MISUSE`. (Verified while planning: with the `isFirst` check removed from Step 3's code, this test crashes the run.)
+- `resumesExactlyOnceWhenWorkAndDeadlineRace` pins two invariants that can fail: each call answers with its own work's value or nil, never a value left over from another call, and all 200 work items run to the end even when the deadline won, so cancelling or dropping the work item fails it. A second `resume` also traps the whole test process with `SWIFT TASK CONTINUATION MISUSE`. (Verified while planning: with the `isFirst` check removed from Step 3's code, this test crashes the run.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -7372,20 +7397,6 @@ struct SystemSettingsLinkTests {
     }
 }
 
-/// A throwaway UserDefaults suite, removed when the last reference goes away.
-private final class ScratchDefaults {
-    let suiteName = "RoomForMacTests.PermissionCenter.\(UUID().uuidString)"
-    let defaults: UserDefaults
-
-    init() throws {
-        defaults = try #require(UserDefaults(suiteName: suiteName))
-    }
-
-    deinit {
-        defaults.removePersistentDomain(forName: suiteName)
-    }
-}
-
 /// Records the durations `PermissionCenter.poll` asks to sleep, and returns at once.
 private final class SleepRecorder: Sendable {
     private let recorded = OSAllocatedUnfairLock<[Duration]>(initialState: [])
@@ -7405,11 +7416,11 @@ private final class SleepRecorder: Sendable {
 @Suite("Permission center")
 struct PermissionCenterTests {
     /// Held by the suite so the defaults outlive every use inside a test.
-    private let scratch: ScratchDefaults
-    private var preferences: AppPreferences { AppPreferences(defaults: scratch.defaults) }
+    private let temporary: TemporaryDefaults
+    private var preferences: AppPreferences { temporary.preferences }
 
     init() throws {
-        scratch = try ScratchDefaults()
+        temporary = try TemporaryDefaults()
     }
 
     // MARK: Checking and requesting
@@ -7644,7 +7655,7 @@ struct PermissionCenterTests {
 
         let after = PermissionCenter(
             checkers: [FakeChecker(id: .automationSystemEvents, states: [.unknown("not running")])],
-            preferences: AppPreferences(defaults: scratch.defaults)
+            preferences: AppPreferences(defaults: temporary.defaults)
         )
         await after.refresh(.automationSystemEvents)
         #expect(after.state(.automationSystemEvents) == .granted)
@@ -7684,7 +7695,7 @@ struct PermissionCenterTests {
 Notes:
 - `PermissionCenterTests` is `@MainActor` because `PermissionCenter` is. A `Task { … }` started inside a test inherits the main actor, and `await gate.waitForArrivals(1)` hands the main actor to it until the checker has been called.
 - `pollReturnsWhenItsTaskIsCancelled` polls inside its own `Task`. Cancelling the test's own task would make Swift Testing report the test as cancelled rather than passed.
-- `ScratchDefaults` is a stored property of the suite, so each test gets a fresh `UserDefaults` suite that is removed after the test, and nothing touches `UserDefaults.standard`.
+- The suite keeps Task 7's `TemporaryDefaults` in a stored property, so each test gets a fresh `UserDefaults` suite that is removed after the test, and nothing touches `UserDefaults.standard`.
 
 - [ ] **Step 7: Run the tests to verify they fail**
 
@@ -8034,6 +8045,7 @@ EOF
 
 **Files:**
 - Create: `RoomForMac/Features/Permissions/FullDiskAccessChecker.swift`, `AutomationChecker.swift`, `AppleEventPermission.swift`, `NotificationChecker.swift`, `LoginItemChecker.swift`, `RoomForMacTests/FullDiskAccessCheckerTests.swift`, `RoomForMacTests/AutomationCheckerTests.swift`, `RoomForMacTests/NotificationAndLoginCheckerTests.swift`
+- Create (added; test support the three test files share): `RoomForMacTests/Support/Locked.swift`
 
 **Interfaces:**
 - Consumes: `PermissionID`, `PermissionState`, `PermissionChecking`, `BlockingCall`, `SystemSettingsLink` (Task 8). The tests also use `TemporaryDirectory` (Task 3, `RoomForMacTests/Support`).
@@ -8108,6 +8120,14 @@ EOF
   // The complete set of `.unknown` reasons this task produces (diagnostic data, stored by Task 8 as "unknown:<reason>"):
   //   "no probe file", "timed out", "not running", "OSStatus <n>", "status <rawValue>",
   //   "request failed: <NSError code>", "unavailable in this build", "SMAppService error <code>"
+  // Test support, RoomForMacTests/Support/Locked.swift (one copy, shared by the three test files):
+  final class Locked<Value: Sendable>: Sendable {   // a Mutex-backed value the fakes change from any thread or actor
+      init(_ value: Value)
+      var value: Value { get }
+      func set(_ newValue: Value)
+      func mutate(_ change: (inout Value) -> Void)
+      func append<Element: Sendable>(_ element: Element) where Value == [Element]
+  }
   ```
 
 **Requirements:**
@@ -8139,15 +8159,45 @@ EOF
   - Notification mapping for every status, and `request` returning granted, denied, and unknown after a thrown error.
   - Login item: mapping for every status; `request` calls `register` then, on `.requiresApproval`, `openLoginItemsSettings`; `register` throwing error code 12 is treated as success; another register error → `.unknown`; `disable` calls `unregister` and reports the state it left.
 
-Every system call sits behind a closure, so the fakes in the tests stand in for macOS completely. Two test details matter: the "hangs" tests block the fake `determine` on a `DispatchSemaphore` that the test signals in a `defer`, so the GCD thread `BlockingCall` gave up on is released when the test ends; and each fake records its calls in a `Mutex`-backed box nested in the suite's extension, because a `private` top-level helper would clash with any internal type of the same name in another test file ("invalid redeclaration").
+Every system call sits behind a closure, so the fakes in the tests stand in for macOS completely. Two test details matter: the "hangs" tests block the fake `determine` on a `DispatchSemaphore` that the test signals in a `defer`, so the GCD thread `BlockingCall` gave up on is released when the test ends; and each fake records its calls in `Locked`, the one `Mutex`-backed box in `RoomForMacTests/Support/Locked.swift` that all three test files share. The fakes themselves stay nested in each suite's extension, because a `private` top-level helper would clash with any internal type of the same name in another test file ("invalid redeclaration").
 
-- [ ] **Step 1: Write the failing Full Disk Access tests**
+- [ ] **Step 1: Write the test support and the failing Full Disk Access tests**
+
+`RoomForMacTests/Support/Locked.swift` (the fakes of all three test files in this task record their calls in it)
+```swift
+import Synchronization
+
+/// A value that test fakes change from any thread or actor, behind a `Mutex`.
+/// One copy for the checker tests, so no test file carries its own.
+final class Locked<Value: Sendable>: Sendable {
+    private let mutex: Mutex<Value>
+
+    init(_ value: Value) {
+        mutex = Mutex(value)
+    }
+
+    var value: Value {
+        mutex.withLock { $0 }
+    }
+
+    func set(_ newValue: Value) {
+        mutex.withLock { $0 = newValue }
+    }
+
+    func mutate(_ change: (inout Value) -> Void) {
+        mutex.withLock { change(&$0) }
+    }
+
+    func append<Element: Sendable>(_ element: Element) where Value == [Element] {
+        mutex.withLock { $0.append(element) }
+    }
+}
+```
 
 `RoomForMacTests/FullDiskAccessCheckerTests.swift`
 ```swift
 import Darwin
 import Foundation
-import Synchronization
 import Testing
 @testable import RoomForMac
 
@@ -8252,31 +8302,12 @@ struct FullDiskAccessCheckerTests {
             == FullDiskAccessProbe(home: NSHomeDirectory()).candidates)
     }
 }
-
-extension FullDiskAccessCheckerTests {
-    /// A value the fakes change from any thread or actor. Nested, so it cannot clash with another file's helper.
-    fileprivate final class Locked<Value: Sendable>: Sendable {
-        private let mutex: Mutex<Value>
-
-        init(_ value: Value) {
-            mutex = Mutex(value)
-        }
-
-        var value: Value {
-            mutex.withLock { $0 }
-        }
-
-        func append<Element: Sendable>(_ element: Element) where Value == [Element] {
-            mutex.withLock { $0.append(element) }
-        }
-    }
-}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/FullDiskAccessCheckerTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. The first error is `RoomForMacTests/FullDiskAccessCheckerTests.swift:33:17: error: cannot find 'FullDiskAccessProbe' in scope`, followed by `cannot find 'FullDiskAccessChecker' in scope`.
+Expected: `** TEST FAILED **`, because the test target does not compile. The first error is `RoomForMacTests/FullDiskAccessCheckerTests.swift:32:17: error: cannot find 'FullDiskAccessProbe' in scope`, followed by `cannot find 'FullDiskAccessChecker' in scope`.
 
 - [ ] **Step 3: Write the probe and the checker**
 
@@ -8370,7 +8401,6 @@ Expected: `✔ Test run with 9 tests in 1 suite passed` and `** TEST SUCCEEDED *
 ```swift
 import Dispatch
 import Foundation
-import Synchronization
 import Testing
 @testable import RoomForMac
 
@@ -8538,30 +8568,13 @@ extension AutomationCheckerTests {
             )
         }
     }
-
-    /// A value the fakes change from any thread or actor. Nested, so it cannot clash with another file's helper.
-    fileprivate final class Locked<Value: Sendable>: Sendable {
-        private let mutex: Mutex<Value>
-
-        init(_ value: Value) {
-            mutex = Mutex(value)
-        }
-
-        var value: Value {
-            mutex.withLock { $0 }
-        }
-
-        func append<Element: Sendable>(_ element: Element) where Value == [Element] {
-            mutex.withLock { $0.append(element) }
-        }
-    }
 }
 ```
 
 - [ ] **Step 6: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/AutomationCheckerTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/AutomationCheckerTests.swift:20:17: error: cannot find 'AppleEventPermission' in scope` and `RoomForMacTests/AutomationCheckerTests.swift:145:23: error: cannot find type 'AutomationChecker' in scope`.
+Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/AutomationCheckerTests.swift:19:17: error: cannot find 'AppleEventPermission' in scope` and `RoomForMacTests/AutomationCheckerTests.swift:144:23: error: cannot find type 'AutomationChecker' in scope`.
 
 - [ ] **Step 7: Write the Apple-event permission call and the Automation checker**
 
@@ -8755,7 +8768,6 @@ Expected: `✔ Test run with 11 tests in 1 suite passed` and `** TEST SUCCEEDED 
 ```swift
 import Foundation
 import ServiceManagement
-import Synchronization
 import Testing
 import UserNotifications
 @testable import RoomForMac
@@ -8922,38 +8934,13 @@ extension NotificationAndLoginCheckerTests {
             )
         }
     }
-
-    /// A value the fakes change from any thread or actor. Nested, so it cannot clash with another file's helper.
-    fileprivate final class Locked<Value: Sendable>: Sendable {
-        private let mutex: Mutex<Value>
-
-        init(_ value: Value) {
-            mutex = Mutex(value)
-        }
-
-        var value: Value {
-            mutex.withLock { $0 }
-        }
-
-        func set(_ newValue: Value) {
-            mutex.withLock { $0 = newValue }
-        }
-
-        func mutate(_ change: (inout Value) -> Void) {
-            mutex.withLock { change(&$0) }
-        }
-
-        func append<Element: Sendable>(_ element: Element) where Value == [Element] {
-            mutex.withLock { $0.append(element) }
-        }
-    }
 }
 ```
 
 - [ ] **Step 10: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/NotificationAndLoginCheckerTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/NotificationAndLoginCheckerTests.swift:21:17: error: cannot find 'NotificationChecker' in scope` and `RoomForMacTests/NotificationAndLoginCheckerTests.swift:153:27: error: cannot find type 'LoginItemChecker' in scope`.
+Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/NotificationAndLoginCheckerTests.swift:20:17: error: cannot find 'NotificationChecker' in scope` and `RoomForMacTests/NotificationAndLoginCheckerTests.swift:152:27: error: cannot find type 'LoginItemChecker' in scope`.
 
 - [ ] **Step 11: Write the notification and login item checkers**
 
@@ -9114,7 +9101,7 @@ Expected: `✔ Test run with 11 tests in 1 suite passed` and `** TEST SUCCEEDED 
 Run:
 ```bash
 xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test 2>&1 | tee "$TMPDIR/rfm-task-9.log" | tail -n 20
-grep -E '(Features/Permissions/(FullDiskAccessChecker|AutomationChecker|AppleEventPermission|NotificationChecker|LoginItemChecker)|RoomForMacTests/(FullDiskAccessChecker|AutomationChecker|NotificationAndLoginChecker)Tests)\.swift.*(warning|error):' "$TMPDIR/rfm-task-9.log"
+grep -E '(Features/Permissions/(FullDiskAccessChecker|AutomationChecker|AppleEventPermission|NotificationChecker|LoginItemChecker)|RoomForMacTests/((FullDiskAccessChecker|AutomationChecker|NotificationAndLoginChecker)Tests|Support/Locked))\.swift.*(warning|error):' "$TMPDIR/rfm-task-9.log"
 OBJROOT=$(xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -showBuildSettings 2>/dev/null | awk '$1 == "OBJROOT" { print $3; exit }')
 for name in FullDiskAccessChecker AppleEventPermission AutomationChecker NotificationChecker LoginItemChecker; do
     find "$OBJROOT" -path "*/RoomForMac.build/Objects-normal/*/$name.stringsdata" \
@@ -9145,6 +9132,7 @@ git add RoomForMac/Features/Permissions/FullDiskAccessChecker.swift \
     RoomForMac/Features/Permissions/AutomationChecker.swift \
     RoomForMac/Features/Permissions/NotificationChecker.swift \
     RoomForMac/Features/Permissions/LoginItemChecker.swift \
+    RoomForMacTests/Support/Locked.swift \
     RoomForMacTests/FullDiskAccessCheckerTests.swift \
     RoomForMacTests/AutomationCheckerTests.swift \
     RoomForMacTests/NotificationAndLoginCheckerTests.swift
@@ -9303,7 +9291,7 @@ EOF
   - Task 12 does the wiring (see **Interface issue**).
 - Safety of the tests:
   - No test calls `AppMover.live()`, `Relauncher.live()`, `AppLocationChecker.live(bypass:)`, `NSWorkspace`, `Process` or `NSApp`.
-  - Every file operation stays inside a `TemporaryDirectory`.
+  - Every file operation stays inside a `TemporaryDirectory`, which each suite keeps in a stored property so it outlives every use inside a test (Task 3's rule).
   - The checker always tries `/Applications` first, and an admin user can write there. So the checker tests inject `ConfinedFileManager`, which reads every path outside its root as not writable, and throws for any create, move or copy there.
   - The three tests that `chmod` folders are skipped when running as root.
 - Tests:
@@ -9333,7 +9321,7 @@ EOF
     - failure keeps `lastError`, which copies share, and returns `.denied`;
     - a failed relaunch returns `.denied` without quitting;
     - a later success clears `lastError`;
-    - the bypass decision for every argument form and both build types.
+    - the bypass decision for every argument form (`YES`, `yes`, `TRUE`, `true`, `1`, `NO`, and the flag with no value) and both build types.
 - The String Catalog gains this task's 4 keys (Step 13).
 
 This task has no UI. Task 12 shows the Move step, and Task 14 shows the Permissions card. What the unit tests cannot reach is the owner's manual check (research §2, item 10): download a DMG through Safari, open the app from it, and confirm that translocation is detected, "Move and relaunch" works, and the relaunched copy is no longer translocated.
@@ -10025,6 +10013,13 @@ import Testing
 
 @Suite("App location and the Move step")
 struct AppLocationTests {
+    /// Held by the suite so the folder outlives every use inside a test (Task 3's rule).
+    let temp: TemporaryDirectory
+
+    init() throws {
+        temp = try TemporaryDirectory()
+    }
+
     // MARK: - Classification
 
     @Test(arguments: [
@@ -10066,8 +10061,7 @@ struct AppLocationTests {
         )
     }
 
-    @Test func aTemporaryFolderIsNotTranslocated() throws {
-        let temp = try TemporaryDirectory()
+    @Test func aTemporaryFolderIsNotTranslocated() {
         #expect(!Translocation.isTranslocated(temp.url))
     }
 
@@ -10131,6 +10125,9 @@ struct AppLocationTests {
     @Test func debugBuildsSkipTheMoveStepUnlessForced() {
         #expect(AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac"], isDebugBuild: true))
         #expect(!AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac", "-RFMForceMoveStep", "YES"], isDebugBuild: true))
+        for value in ["yes", "true", "1", "TRUE"] {
+            #expect(!AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac", "-RFMForceMoveStep", value], isDebugBuild: true))
+        }
         #expect(AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac", "-RFMForceMoveStep", "NO"], isDebugBuild: true))
         #expect(AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac", "-RFMForceMoveStep"], isDebugBuild: true))
         #expect(!AppLocationChecker.bypassesMoveStep(arguments: ["RoomForMac"], isDebugBuild: false))
@@ -10139,22 +10136,21 @@ struct AppLocationTests {
 
     // MARK: - Checker requests (never touch the real /Applications)
 
+    /// A move set up inside `root`, the suite's temporary folder, which outlives the test.
     struct MoveScene {
-        let temp: TemporaryDirectory
         let home: URL
         let source: URL
         let files: ConfinedFileManager
         let events = MoveCallLog<String>()
         let spawned = MoveCallLog<[String]>()
 
-        init() throws {
-            temp = try TemporaryDirectory()
-            home = temp.url.appending(path: "home")
-            let downloads = temp.url.appending(path: "Downloads")
+        init(in root: URL) throws {
+            home = root.appending(path: "home")
+            let downloads = root.appending(path: "Downloads")
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
             source = try AppBundleFixture.make(in: downloads, marker: "new")
-            files = ConfinedFileManager(root: temp.url)
+            files = ConfinedFileManager(root: root)
         }
 
         var destination: URL {
@@ -10199,7 +10195,7 @@ struct AppLocationTests {
     }
 
     @Test func requestMovesTheAppAndRelaunchesTheMovedCopy() async throws {
-        let scene = try MoveScene()
+        let scene = try MoveScene(in: temp.url)
         let checker = scene.checker()
 
         #expect(await checker.request() == .granted)
@@ -10212,7 +10208,7 @@ struct AppLocationTests {
     }
 
     @Test func requestMovesTheOriginalOfATranslocatedApp() async throws {
-        let scene = try MoveScene()
+        let scene = try MoveScene(in: temp.url)
         let mount = URL(fileURLWithPath: "/private/var/folders/ab/xyz/T/AppTranslocation/1234-ABCD/d/RoomForMac.app")
         let checker = scene.checker(location: .translocated(original: scene.source), bundleURL: mount)
 
@@ -10223,7 +10219,7 @@ struct AppLocationTests {
     }
 
     @Test func requestKeepsARunningCopyAndReportsIt() async throws {
-        let scene = try MoveScene()
+        let scene = try MoveScene(in: temp.url)
         let existing = try AppBundleFixture.make(in: scene.home.appending(path: "Applications"), marker: "old")
         let checker = scene.checker(running: { true })
         let copy = checker
@@ -10242,7 +10238,7 @@ struct AppLocationTests {
     }
 
     @Test func aFailedRelaunchIsReportedAndDoesNotQuit() async throws {
-        let scene = try MoveScene()
+        let scene = try MoveScene(in: temp.url)
         let checker = scene.checker(spawnFails: true)
 
         #expect(await checker.request() == .denied)
@@ -10256,7 +10252,7 @@ struct AppLocationTests {
     }
 
     @Test func aLaterSuccessClearsTheLastError() async throws {
-        let scene = try MoveScene()
+        let scene = try MoveScene(in: temp.url)
         try AppBundleFixture.make(in: scene.home.appending(path: "Applications"), marker: "old")
         let otherCopyIsOpen = RunningSwitch(true)
         let checker = scene.checker(running: { otherCopyIsOpen.value })
@@ -10290,7 +10286,7 @@ private final class RunningSwitch: Sendable {
 - [ ] **Step 8: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/AppLocationTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/AppLocationTests.swift:11:42: error: cannot find 'AppLocation' in scope` and `cannot find type 'AppLocationChecker' in scope`.
+Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/AppLocationTests.swift:18:42: error: cannot find 'AppLocation' in scope` and `cannot find type 'AppLocationChecker' in scope`.
 
 - [ ] **Step 9: Write the location and translocation check**
 
@@ -10599,7 +10595,7 @@ EOF
 - Create: `RoomForMac/Features/Onboarding/OnboardingStep.swift`, `OnboardingChoices.swift`, `OnboardingFlow.swift`, `RoomForMacTests/OnboardingFlowTests.swift`
 
 **Interfaces:**
-- Consumes: `AppPreferences` (Task 7), `PermissionCenter`, `PermissionID`, `PermissionState` (Task 8).
+- Consumes: `AppPreferences` (Task 7), `PermissionCenter`, `PermissionID`, `PermissionState` (Task 8). The tests also use `TemporaryDefaults` (Task 7, `RoomForMacTests/Support`).
 - Produces:
   ```swift
   enum OnboardingStep: String, CaseIterable, Codable, Sendable {
@@ -10658,9 +10654,9 @@ EOF
   If the app quits while `apply` waits on the notification prompt, the next launch resumes at Ready and applies again. `finish` is the only writer of `notificationsWanted` in this plan; Plan 3 can read it before posting a notification. Only the first call does anything. A second call, during or after the first, returns at once without calling `apply`, so a double click on **Start first scan** cannot apply twice.
 - This task adds no user-facing strings, since every title comes from `PermissionID.title` (Task 8). `Localizable.xcstrings` does not change.
 - Tests (`OnboardingFlowTests`, Swift Testing, `@MainActor`):
-  - each test uses its own `UserDefaults` suite, removed when the test ends;
+  - each test uses its own `UserDefaults` suite, Task 7's `TemporaryDefaults`, kept in a stored property and removed when the test ends;
   - they use a fixed-state `PermissionChecking` fake, and never call a real checker;
-  - the helper types are nested in the suite, so their names cannot clash with the helpers of Tasks 7 and 8.
+  - the fake is nested in the suite, so its name cannot clash with the helpers of Tasks 7 and 8.
 
   The tests cover:
   - the raw values;
@@ -10689,10 +10685,14 @@ import Testing
 @MainActor
 @Suite("Onboarding flow")
 struct OnboardingFlowTests {
-    private let scratch = ScratchDefaults()
+    private let temporary: TemporaryDefaults
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+    }
 
     /// A fresh view of the same suite, the way a relaunched app would read it.
-    private var preferences: AppPreferences { AppPreferences(defaults: scratch.defaults) }
+    private var preferences: AppPreferences { temporary.preferences }
 
     private func makeFlow(needsMoveStep: Bool = false, permissions: PermissionCenter? = nil) -> OnboardingFlow {
         OnboardingFlow(
@@ -10704,7 +10704,7 @@ struct OnboardingFlowTests {
 
     /// Writes what an earlier launch left behind, under Task 7's key.
     private func storeStep(_ raw: String) {
-        scratch.defaults.set(raw, forKey: "onboarding.step")
+        temporary.defaults.set(raw, forKey: "onboarding.step")
     }
 
     // MARK: Steps
@@ -10857,7 +10857,7 @@ struct OnboardingFlowTests {
     @Test func choicesStartFromTheDefaultsAndTheStoredAnalyticsSetting() {
         #expect(makeFlow().choices == OnboardingChoices(notifications: false, launchAtLogin: false, analytics: true))
 
-        scratch.defaults.set(false, forKey: "analytics.enabled")
+        temporary.defaults.set(false, forKey: "analytics.enabled")
         #expect(makeFlow().choices == OnboardingChoices(notifications: false, launchAtLogin: false, analytics: false))
     }
 
@@ -10954,7 +10954,7 @@ struct OnboardingFlowTests {
     }
 }
 
-// Nested, so their names cannot clash with helpers in other test files.
+// Nested, so its name cannot clash with helpers in other test files.
 extension OnboardingFlowTests {
     /// A checker that always reports the same state and never prompts.
     private struct FixedPermission: PermissionChecking {
@@ -10964,34 +10964,18 @@ extension OnboardingFlowTests {
         func currentState() async -> PermissionState { state }
         func request() async -> PermissionState { state }
     }
-
-    /// A UserDefaults suite of its own, removed when the owning test instance goes away.
-    private final class ScratchDefaults {
-        let name: String
-        let defaults: UserDefaults
-
-        init() {
-            let name = "RoomForMacTests.onboarding.\(UUID().uuidString)"
-            self.name = name
-            defaults = UserDefaults(suiteName: name)!
-        }
-
-        deinit {
-            defaults.removePersistentDomain(forName: name)
-        }
-    }
 }
 ```
 
-Nothing here writes to `UserDefaults.standard`. `removePersistentDomain(forName:)` empties each suite. macOS still leaves an empty `RoomForMacTests.onboarding.<UUID>.plist` in `~/Library/Preferences`, which is harmless. Task 7's `AppPreferencesTests` leaves the same kind of file.
+Nothing here writes to `UserDefaults.standard`. Task 7's `TemporaryDefaults` empties its suite with `removePersistentDomain(forName:)` when the test ends. macOS still leaves an empty `RoomForMacTests.<UUID>.plist` in `~/Library/Preferences`, which is harmless; every suite that uses `TemporaryDefaults` leaves the same kind of file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/OnboardingFlowTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors are:
-- `RoomForMacTests/OnboardingFlowTests.swift:13:97: error: cannot find type 'OnboardingFlow' in scope`
-- `RoomForMacTests/OnboardingFlowTests.swift:145:22: error: cannot find 'OnboardingStep' in scope`
-- `RoomForMacTests/OnboardingFlowTests.swift:146:46: error: cannot find type 'OnboardingStep' in scope`
+- `RoomForMacTests/OnboardingFlowTests.swift:17:97: error: cannot find type 'OnboardingFlow' in scope`
+- `RoomForMacTests/OnboardingFlowTests.swift:149:22: error: cannot find 'OnboardingStep' in scope`
+- `RoomForMacTests/OnboardingFlowTests.swift:150:46: error: cannot find type 'OnboardingStep' in scope`
 
 - [ ] **Step 3: Write the steps and the choices**
 
@@ -11206,7 +11190,8 @@ MSG
   - the live checkers (Tasks 9–10);
   - `GlassButton`, `GlassCard`, `GlassDots`, `morphingGlass`, `AnimatedWordmark` (Task 5);
   - `BackdropView` (Task 6);
-  - `AppModel` (Task 7).
+  - `AppModel` (Task 7);
+  - the test support `TemporaryDefaults` (Task 7, `RoomForMacTests/Support`).
   - Also, by name: `PermissionID`, `PermissionState`, `PermissionChecking` (Task 8); `FullDiskAccessChecker`, `AutomationChecker.live`, `NotificationChecker.live`, `LoginItemChecker.live` (Task 9); `AppLocation.current`, `AppLocationChecker` (its `init` and `lastError`, and the two members Task 10 adds for this task: `bypassesMoveStepInThisBuild` and `live(bypass:)`), `AppMoveError` and its `LocalizedError` sentences (`localizedDescription`), `AppMover(isRunning:trashItem:)` and `Relauncher(spawn:terminate:)` (tests only), `Relauncher.live` (Task 10); `Palette`, `Typography`, `Motion` (Task 4); Task 5's internal `View.glassSurface(_:in:)` and its test support `RenderCheck.image(of:scheme:size:)` (in `GlassComponentTests.swift`); `AppModel.dependencies` and `AppModel.completeOnboarding` (Task 7).
 - Produces:
   ```swift
@@ -11220,7 +11205,8 @@ MSG
            actionTitle: LocalizedStringKey, action: @escaping @MainActor () -> Void)
   }
   struct PermissionChip: View { init(state: PermissionState) }   // "Allowed" / "Not yet" / "Denied" / "Needs approval" / "Unknown" / "Not needed"
-  // AppDependencies (Task 7) gains these stored properties, and every initializer sets them:
+  // AppDependencies (Task 7) gains these stored properties (defaults [], false, nil); live() sets all three,
+  // and Task 15's forScenario sets them for the scenarios:
   //   var permissionCheckers: [any PermissionChecking]  // live(): FDA, Automation×2, Notifications, LoginItem, AppLocation
   //   var needsMoveStep: Bool                            // live(): AppLocation.current() != .installed && !bypass
   //   var loginItem: LoginItemChecker?                   // live(): the same LoginItemChecker that is in permissionCheckers
@@ -11366,25 +11352,6 @@ private struct StaticChecker: PermissionChecking {
     func request() async -> PermissionState { afterRequest }
 }
 
-/// A UserDefaults suite of its own, removed when the value goes away. Suites
-/// keep one in a stored property, so it lives as long as the test.
-private final class ScratchDefaults {
-    let suiteName = "RoomForMacTests.onboarding.\(UUID().uuidString)"
-    let defaults: UserDefaults
-
-    init() throws {
-        defaults = try #require(UserDefaults(suiteName: suiteName))
-    }
-
-    var preferences: AppPreferences {
-        AppPreferences(defaults: defaults)
-    }
-
-    deinit {
-        defaults.removePersistentDomain(forName: suiteName)
-    }
-}
-
 @MainActor
 private func dependencies(
     _ preferences: AppPreferences,
@@ -11413,10 +11380,11 @@ private func appLocationChecker() -> AppLocationChecker {
 @Suite("Onboarding view logic")
 @MainActor
 struct OnboardingViewLogicTests {
-    private let scratch: ScratchDefaults
+    /// Task 7's throwaway suite, held so it outlives every use inside a test.
+    private let temporary: TemporaryDefaults
 
     init() throws {
-        scratch = try ScratchDefaults()
+        temporary = try TemporaryDefaults()
     }
 
     @Test(arguments: [
@@ -11502,28 +11470,29 @@ struct OnboardingViewLogicTests {
     // Never call `request()` on a real AppLocationChecker here: it would move
     // the test host app into an Applications folder.
     @Test func findsTheMoveChecker() throws {
-        let deps = dependencies(scratch.preferences, checkers: [
+        let deps = dependencies(temporary.preferences, checkers: [
             StaticChecker(id: .fullDiskAccess, current: .denied, afterRequest: .denied),
             appLocationChecker(),
         ])
         let found = try #require(deps.appLocationChecker)
         #expect(found.id == .moveToApplications)
         #expect(found.lastError == nil)
-        #expect(dependencies(scratch.preferences).appLocationChecker == nil)
+        #expect(dependencies(temporary.preferences).appLocationChecker == nil)
     }
 }
 
 @Suite("App model onboarding")
 @MainActor
 struct AppModelOnboardingTests {
-    private let scratch: ScratchDefaults
+    /// Task 7's throwaway suite, held so it outlives every use inside a test.
+    private let temporary: TemporaryDefaults
 
     init() throws {
-        scratch = try ScratchDefaults()
+        temporary = try TemporaryDefaults()
     }
 
     @Test func buildsThePermissionCenterFromTheCheckers() async {
-        let model = AppModel(dependencies: dependencies(scratch.preferences, checkers: [
+        let model = AppModel(dependencies: dependencies(temporary.preferences, checkers: [
             StaticChecker(id: .fullDiskAccess, current: .granted, afterRequest: .granted),
         ]))
         #expect(model.permissions.hasChecker(.fullDiskAccess))
@@ -11531,33 +11500,33 @@ struct AppModelOnboardingTests {
 
         await model.permissions.refresh(.fullDiskAccess)
         #expect(model.permissions.state(.fullDiskAccess) == .granted)
-        #expect(scratch.preferences.lastKnownState(for: "fullDiskAccess") == "granted")
+        #expect(temporary.preferences.lastKnownState(for: "fullDiskAccess") == "granted")
     }
 
     @Test func aNewUserGetsAFlowThatHonoursTheMoveStep() throws {
-        let withMove = AppModel(dependencies: dependencies(scratch.preferences, needsMoveStep: true))
+        let withMove = AppModel(dependencies: dependencies(temporary.preferences, needsMoveStep: true))
         let flow = try #require(withMove.onboardingFlow)
         #expect(flow.steps.contains(.moveToApplications))
         #expect(flow.step == .welcome)
 
-        let withoutMove = AppModel(dependencies: dependencies(scratch.preferences, needsMoveStep: false))
+        let withoutMove = AppModel(dependencies: dependencies(temporary.preferences, needsMoveStep: false))
         #expect(withoutMove.onboardingFlow?.steps.contains(.moveToApplications) == false)
     }
 
     @Test func theFlowResumesAtTheSavedStep() {
-        scratch.preferences.onboardingStep = OnboardingStep.fullDiskAccess.rawValue
-        let model = AppModel(dependencies: dependencies(scratch.preferences))
+        temporary.preferences.onboardingStep = OnboardingStep.fullDiskAccess.rawValue
+        let model = AppModel(dependencies: dependencies(temporary.preferences))
         #expect(model.onboardingFlow?.step == .fullDiskAccess)
     }
 
     @Test func anOnboardedUserGetsNoFlow() {
-        scratch.preferences.onboardingCompleted = true
-        let model = AppModel(dependencies: dependencies(scratch.preferences))
+        temporary.preferences.onboardingCompleted = true
+        let model = AppModel(dependencies: dependencies(temporary.preferences))
         #expect(model.onboardingFlow == nil)
     }
 
     @Test func completingOnboardingDropsTheFlow() {
-        let model = AppModel(dependencies: dependencies(scratch.preferences))
+        let model = AppModel(dependencies: dependencies(temporary.preferences))
         #expect(model.onboardingFlow != nil)
         model.completeOnboarding(startFirstScan: false)
         #expect(model.onboardingFlow == nil)
@@ -11569,10 +11538,11 @@ struct AppModelOnboardingTests {
 @MainActor
 struct OnboardingRenderTests {
     private static let size = CGSize(width: 900, height: 640)
-    private let scratch: ScratchDefaults
+    /// Task 7's throwaway suite, held so it outlives every use inside a test.
+    private let temporary: TemporaryDefaults
 
     init() throws {
-        scratch = try ScratchDefaults()
+        temporary = try TemporaryDefaults()
     }
 
     private func center(fullDiskAccess: PermissionState) async -> PermissionCenter {
@@ -11623,8 +11593,8 @@ struct OnboardingRenderTests {
     /// covered by `stepsRender`.
     @Test(arguments: [OnboardingStep.welcome, .fullDiskAccess, .ready])
     func onboardingViewRendersInsideTheScaffold(step: OnboardingStep) throws {
-        scratch.preferences.onboardingStep = step.rawValue
-        let model = AppModel(dependencies: dependencies(scratch.preferences, checkers: [
+        temporary.preferences.onboardingStep = step.rawValue
+        let model = AppModel(dependencies: dependencies(temporary.preferences, checkers: [
             StaticChecker(id: .fullDiskAccess, current: .denied, afterRequest: .granted),
         ]))
         let flow = try #require(model.onboardingFlow)
@@ -12736,6 +12706,7 @@ EOF
 
 **Files:**
 - Create: `RoomForMac/Features/Onboarding/Steps/AutomationStep.swift`, `Steps/AdminAccessStep.swift`, `Steps/ExtrasStep.swift`, `Steps/ReadyStep.swift`, `RoomForMacTests/OnboardingFinishTests.swift`
+- Create (added; test support that Task 14 reuses): `RoomForMacTests/Support/FakeLoginService.swift`
 - Modify: `RoomForMac/Features/Onboarding/OnboardingView.swift`, `RoomForMac/App/AccessibilityID.swift`
 - Modify (added): `RoomForMac/Features/Onboarding/OnboardingScaffold.swift` (one internal modifier; see the Interface issue), `RoomForMac/Resources/Localizable.xcstrings` (the new keys, synced in Step 16)
 
@@ -12748,6 +12719,7 @@ EOF
     - `AppModel.permissions`, `onboardingFlow`, `dependencies`, `isOnboarded`, `pendingFirstScan` and `selection`, and the `AppDependencies` memberwise initializer with `permissionCheckers`, `needsMoveStep` and `loginItem` (Tasks 7 and 12).
     - Task 12's internal `OnboardingScaffold.primaryEnabled(_:)` and `OnboardingPrimary`.
     - `GlassButton`, `GlassCard`, `morphingGlass`, and Task 5's internal `View.glassSurface(_:in:)`, `GlassSurfacePolicy` and `GlassHover`; the test support `RenderCheck.image(of:scheme:size:)` (Task 5).
+    - The test support `TemporaryDefaults` (Task 7, `RoomForMacTests/Support`).
     - `Palette`, `Typography`, `Motion` (Task 4).
 - Produces:
   ```swift
@@ -12812,6 +12784,16 @@ EOF
   }
   ```
   `OnboardingApply.apply` stays `nonisolated`, as declared: it awaits the main-actor `PermissionCenter`, which is `Sendable`, and calls the `Sendable` `LoginItemChecker` off the main actor. `finish` is `@MainActor`, because it reads `AppModel` and calls `OnboardingFlow`. `isInstalled` is `@MainActor` because it reads the center; `apply` awaits it, and `ReadyStep` calls it from `body`.
+- Test support added by this task, which Task 14's Settings tests reuse:
+  ```swift
+  // RoomForMacTests/Support/FakeLoginService.swift
+  final class FakeLoginService: Sendable {       // an in-memory SMAppService.mainApp; every call is logged
+      enum Call: Equatable, Sendable { case register, unregister, openSettings }
+      init(_ status: SMAppService.Status, statusAfterRegister: SMAppService.Status = .enabled)
+      var calls: [Call] { get }
+      var checker: LoginItemChecker { get }       // a real LoginItemChecker whose system calls land here
+  }
+  ```
 
 **Interface issue:** Ready cannot show both its own **Start first scan** and the scaffold's primary button. The requirement (and Ruling 5) makes Start first scan `morphingGlass`, which `GlassButton` cannot be, and Task 15 presses `readyStartScan`, not `onboarding.primary`, on Ready. Task 12's scaffold always draws its primary button, and Task 12 already puts "Start first scan" there. Task 12 lists `OnboardingScaffold.primaryEnabled(_:)` as internal and says "Task 13 extends the first three", but `OnboardingScaffold.swift` is not in this task's Files. Smallest fix, taken here: this task also modifies `OnboardingScaffold.swift` to add an internal `func primaryHidden(_ hidden: Bool) -> Self` next to `primaryEnabled(_:)` (Step 12). `OnboardingView` hides the primary on Ready. Nothing else in the scaffold changes. Task 12's `OnboardingPrimary.startFirstScan` stays and still names Ready's action, but it is never drawn now. Its `perform` branch routes to the same finish as Ready's button (Step 13).
 
@@ -12886,9 +12868,59 @@ EOF
     - the identifier strings;
     - each screen renders through `ImageRenderer` in light and dark (Ready also while finishing), with a stand-in `targetIcon` for Automation;
     - `OnboardingView` renders on each of the four steps.
-  - The helper types are nested in `OnboardingFinishTests`, so their names cannot clash with the helpers of Tasks 8, 11 and 12.
+  - `RecordingChecker` is nested in `OnboardingFinishTests`, so its name cannot clash with the helpers of Tasks 8, 11 and 12. `FakeLoginService`, the in-memory `SMAppService`, is test support in `RoomForMacTests/Support/FakeLoginService.swift`, because Task 14's Settings tests drive the login item through it too. Both suites keep Task 7's `TemporaryDefaults` in a stored property.
 
-- [ ] **Step 1: Write the failing finish tests**
+- [ ] **Step 1: Write the test support and the failing finish tests**
+
+`RoomForMacTests/Support/FakeLoginService.swift` (Task 14's Settings tests use it too)
+```swift
+import ServiceManagement
+import Synchronization
+@testable import RoomForMac
+
+/// Stands in for `SMAppService.mainApp`: register turns the status on (or
+/// to `statusAfterRegister`), unregister turns it off, and every call is logged.
+/// Tests drive a real `LoginItemChecker` through it, so none registers the test host.
+final class FakeLoginService: Sendable {
+    enum Call: Equatable, Sendable {
+        case register, unregister, openSettings
+    }
+
+    private let statusAfterRegister: SMAppService.Status
+    private let store: Mutex<(status: SMAppService.Status, calls: [Call])>
+
+    init(_ status: SMAppService.Status, statusAfterRegister: SMAppService.Status = .enabled) {
+        self.statusAfterRegister = statusAfterRegister
+        store = Mutex((status: status, calls: []))
+    }
+
+    var calls: [Call] {
+        store.withLock { $0.calls }
+    }
+
+    /// A real `LoginItemChecker` whose system calls land here.
+    var checker: LoginItemChecker {
+        LoginItemChecker(
+            status: { self.store.withLock { $0.status } },
+            register: {
+                self.store.withLock { value in
+                    value.calls.append(.register)
+                    value.status = self.statusAfterRegister
+                }
+            },
+            unregister: {
+                self.store.withLock { value in
+                    value.calls.append(.unregister)
+                    value.status = .notRegistered
+                }
+            },
+            openLoginItemsSettings: {
+                self.store.withLock { $0.calls.append(.openSettings) }
+            }
+        )
+    }
+}
+```
 
 `RoomForMacTests/OnboardingFinishTests.swift`
 ```swift
@@ -12902,10 +12934,14 @@ import Testing
 @MainActor
 @Suite("Onboarding finish")
 struct OnboardingFinishTests {
-    private let scratch = ScratchDefaults()
+    private let temporary: TemporaryDefaults
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+    }
 
     /// A fresh view of the same suite, the way a relaunched app would read it.
-    private var preferences: AppPreferences { AppPreferences(defaults: scratch.defaults) }
+    private var preferences: AppPreferences { temporary.preferences }
 
     private func makeModel(checkers: [any PermissionChecking] = [], loginItem: LoginItemChecker? = nil) -> AppModel {
         AppModel(dependencies: AppDependencies(
@@ -13095,7 +13131,7 @@ struct OnboardingFinishTests {
     }
 }
 
-// Nested, so their names cannot clash with helpers in other test files.
+// Nested, so its name cannot clash with helpers in other test files.
 extension OnboardingFinishTests {
     /// A checker with one state that a request replaces. It counts requests and never prompts.
     final class RecordingChecker: PermissionChecking {
@@ -13125,73 +13161,15 @@ extension OnboardingFinishTests {
             }
         }
     }
-
-    /// Stands in for `SMAppService.mainApp`: register turns the status on (or
-    /// to `statusAfterRegister`), unregister turns it off, and every call is logged.
-    final class FakeLoginService: Sendable {
-        enum Call: Equatable, Sendable {
-            case register, unregister, openSettings
-        }
-
-        private let statusAfterRegister: SMAppService.Status
-        private let store: Mutex<(status: SMAppService.Status, calls: [Call])>
-
-        init(_ status: SMAppService.Status, statusAfterRegister: SMAppService.Status = .enabled) {
-            self.statusAfterRegister = statusAfterRegister
-            store = Mutex((status: status, calls: []))
-        }
-
-        var calls: [Call] {
-            store.withLock { $0.calls }
-        }
-
-        /// A real `LoginItemChecker` whose system calls land here.
-        var checker: LoginItemChecker {
-            LoginItemChecker(
-                status: { self.store.withLock { $0.status } },
-                register: {
-                    self.store.withLock { value in
-                        value.calls.append(.register)
-                        value.status = self.statusAfterRegister
-                    }
-                },
-                unregister: {
-                    self.store.withLock { value in
-                        value.calls.append(.unregister)
-                        value.status = .notRegistered
-                    }
-                },
-                openLoginItemsSettings: {
-                    self.store.withLock { $0.calls.append(.openSettings) }
-                }
-            )
-        }
-    }
-
-    /// A UserDefaults suite of its own, removed when the owning test instance goes away.
-    final class ScratchDefaults {
-        let name: String
-        let defaults: UserDefaults
-
-        init() {
-            let name = "RoomForMacTests.onboardingFinish.\(UUID().uuidString)"
-            self.name = name
-            defaults = UserDefaults(suiteName: name)!
-        }
-
-        deinit {
-            defaults.removePersistentDomain(forName: name)
-        }
-    }
 }
 ```
 
-`RecordingChecker` and `FakeLoginService` keep their state in a `Mutex` (the `Synchronization` module), so they stay `Sendable` for the checker protocol and the `@Sendable` closures of `LoginItemChecker`. Nothing here writes to `UserDefaults.standard`.
+`RecordingChecker` and `FakeLoginService` keep their state in a `Mutex` (the `Synchronization` module), so they stay `Sendable` for the checker protocol and the `@Sendable` closures of `LoginItemChecker`. `FakeLoginService` sits in `RoomForMacTests/Support` because Task 14's Settings tests reuse it. The suite keeps Task 7's `TemporaryDefaults` in a stored property, and nothing here writes to `UserDefaults.standard`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/OnboardingFinishTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. There are 16 errors of one kind, the first being `RoomForMacTests/OnboardingFinishTests.swift:33:15: error: cannot find 'OnboardingApply' in scope`.
+Expected: `** TEST FAILED **`, because the test target does not compile. There are 16 errors of one kind, the first being `RoomForMacTests/OnboardingFinishTests.swift:37:15: error: cannot find 'OnboardingApply' in scope`.
 
 - [ ] **Step 3: Write `OnboardingApply`**
 
@@ -13281,7 +13259,11 @@ Append to the end of `RoomForMacTests/OnboardingFinishTests.swift`, after the cl
 @MainActor
 @Suite("Onboarding steps, part 2")
 struct OnboardingPartTwoStepTests {
-    private let scratch = OnboardingFinishTests.ScratchDefaults()
+    private let temporary: TemporaryDefaults
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+    }
 
     // MARK: Finder & System Events
 
@@ -13415,7 +13397,7 @@ struct OnboardingPartTwoStepTests {
             OnboardingFinishTests.RecordingChecker(id: .launchAtLogin, current: .notDetermined, afterRequest: .granted),
         ]
         let model = AppModel(dependencies: AppDependencies(
-            preferences: AppPreferences(defaults: scratch.defaults),
+            preferences: temporary.preferences,
             engineCheck: { .failure(.installationInvalid("not used")) },
             openURL: { _ in },
             permissionCheckers: checkers,
@@ -13435,7 +13417,7 @@ struct OnboardingPartTwoStepTests {
 - [ ] **Step 6: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/OnboardingPartTwoStepTests`
-Expected: `** TEST FAILED **`, because the test target does not compile. The first error is `RoomForMacTests/OnboardingFinishTests.swift:303:17: error: cannot find 'AutomationStep' in scope`. The others are `cannot find 'AdminAccessStep' in scope`, `cannot find 'ExtrasStep' in scope`, `cannot find 'ReadySummaryChip' in scope`, `cannot find 'ReadyStep' in scope`, `type 'AccessibilityID' has no member 'extrasNotifications'` (and the other four identifiers) and `value of type 'OnboardingView' has no member 'automationIcons'`, with follow-on type-inference errors on the same lines.
+Expected: `** TEST FAILED **`, because the test target does not compile. The first error is `RoomForMacTests/OnboardingFinishTests.swift:253:17: error: cannot find 'AutomationStep' in scope`. The others are `cannot find 'AdminAccessStep' in scope`, `cannot find 'ExtrasStep' in scope`, `cannot find 'ReadySummaryChip' in scope`, `cannot find 'ReadyStep' in scope`, `type 'AccessibilityID' has no member 'extrasNotifications'` (and the other four identifiers) and `value of type 'OnboardingView' has no member 'automationIcons'`, with follow-on type-inference errors on the same lines.
 
 - [ ] **Step 7: Add the identifiers**
 
@@ -14138,7 +14120,7 @@ Expected: `✔ Test run with 24 tests in 2 suites passed`, then `** TEST SUCCEED
 Run:
 ```bash
 xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test 2>&1 | tee "$TMPDIR/rfm-task-13.log" | tail -n 20
-grep -E '(Features/Onboarding/|App/AccessibilityID|OnboardingFinishTests\.swift).*(warning|error):' "$TMPDIR/rfm-task-13.log"
+grep -E '(Features/Onboarding/|App/AccessibilityID|OnboardingFinishTests\.swift|Support/FakeLoginService\.swift).*(warning|error):' "$TMPDIR/rfm-task-13.log"
 grep -nE 'buttonStyle\(\.glass\(|GlassButtonStyle\(|@ContentBuilder|accessibilityPrefersCrossFadeTransitions' \
     RoomForMac/Features/Onboarding/Steps/{AutomationStep,AdminAccessStep,ExtrasStep,ReadyStep}.swift \
     RoomForMac/Features/Onboarding/OnboardingView.swift RoomForMac/Features/Onboarding/OnboardingScaffold.swift
@@ -14187,7 +14169,7 @@ git add RoomForMac/Features/Onboarding/Steps/AutomationStep.swift RoomForMac/Fea
     RoomForMac/Features/Onboarding/Steps/ExtrasStep.swift RoomForMac/Features/Onboarding/Steps/ReadyStep.swift \
     RoomForMac/Features/Onboarding/OnboardingView.swift RoomForMac/Features/Onboarding/OnboardingScaffold.swift \
     RoomForMac/App/AccessibilityID.swift RoomForMac/Resources/Localizable.xcstrings \
-    RoomForMacTests/OnboardingFinishTests.swift
+    RoomForMacTests/Support/FakeLoginService.swift RoomForMacTests/OnboardingFinishTests.swift
 git status --short   # nothing under RoomForMac/Generated or RoomForMac.xcodeproj is staged
 git commit -F - <<'MSG'
 feat(onboarding): Finder & System Events, admin, extras and ready screens
@@ -14224,9 +14206,9 @@ MSG
   - `EngineFingerprint` and its memberwise `init` and `init(_ version: EngineVersion)` (Task 3);
   - `PermissionID`, `PermissionState`, `PermissionChecking`, `SystemSettingsLink`, and `PermissionCenter.states`, `state(_:)`, `hasChecker(_:)`, `refresh(_:)`, `refreshAll()`, `request(_:)` (Task 8);
   - `LoginItemChecker.init(status:register:unregister:openLoginItemsSettings:)` and `disable()` (Task 9);
-  - `PermissionChip` (Task 12), `AutomationStep.permissionIDs` and `AutomationStep.displayState(_:)` (Task 13), `AnimatedWordmark` (Task 5), `Palette`, `Typography` (Task 4);
+  - `PermissionChip` (Task 12); `AutomationStep.permissionIDs`, `displayState(_:)`, `title(for:)`, `reason(for:)`, `action(for:)` and `AutomationStep.CardAction.title` (Task 13); `AnimatedWordmark` (Task 5), `Palette`, `Typography` (Task 4);
   - `AppDependencies` with its memberwise initializer in the order `preferences, engineCheck, openURL, permissionCheckers, needsMoveStep, loginItem` (Tasks 7 and 12), and `AppModel.permissions`, `engine`, `dependencies`, `start()`;
-  - test support: `RenderCheck` (Task 5), `TemporaryDirectory`, `EngineLayout` (Task 3), `TemporaryDefaults` (Task 7), `FakeChecker` (Task 8).
+  - test support: `RenderCheck` (Task 5), `TemporaryDirectory`, `EngineLayout` (Task 3), `TemporaryDefaults` (Task 7), `FakeChecker` (Task 8), `FakeLoginService` (Task 13, `RoomForMacTests/Support`).
 - Produces:
   ```swift
   enum LegalDocument: String, CaseIterable, Identifiable, Sendable {
@@ -14281,6 +14263,8 @@ MSG
       static func cards(moveState: PermissionState?) -> [PermissionID]
       static func cardState(_ id: PermissionID, permissions: PermissionCenter) -> PermissionState   // Finder, System Events: AutomationStep.displayState; others: state(id)
       static func content(for id: PermissionID, state: PermissionState) -> CardContent
+      // Finder, System Events: AutomationStep.title(for:), reason(for:) and action(for:).title (Task 13).
+      // .launchAtLogin is never a card (General owns it); its case reuses General's wording.
   }
   extension AccessibilityID {
       static func settingsTab(_ tab: SettingsTab) -> String                  // "settings.tab.<rawValue>"
@@ -14299,7 +14283,7 @@ MSG
   // RoomForMacTests/SettingsTests.swift (test support inside the suite):
   //   SettingsTests.makeBundle(in:info:resources:) -> Bundle        a throwaway bundle with Contents/Info.plist and Resources
   //   SettingsTests.model(defaults:checkers:loginItem:engineCheck:) an onboarded AppModel over fakes (@MainActor)
-  //   SettingsTests.LoginItemFake                                   an in-memory SMAppService stand-in behind LoginItemChecker
+  //   (the login item is Task 13's FakeLoginService, from RoomForMacTests/Support)
   ```
 
 **Requirements:**
@@ -14311,10 +14295,11 @@ MSG
   - `.launchAtLogin` and `.notifications` are refreshed on appear and on `NSApplication.didBecomeActiveNotification`, because both can change in System Settings.
   - It does not write `AppPreferences.notificationsWanted`. Task 11 makes `OnboardingFlow.finish` its only writer.
 - **Permissions** (`PermissionsSettingsView`):
-  - The same `PermissionCard`s as onboarding, with the onboarding wording, for Full Disk Access, Finder, System Events and Notifications, in that order.
+  - The same `PermissionCard`s as onboarding, with the onboarding wording, for Full Disk Access, Finder, System Events and Notifications, in that order. Finder and System Events take their title, reason and button rule from `AutomationStep` (`title(for:)`, `reason(for:)`, `action(for:)`, Task 13), so onboarding and Settings share one source of copy.
+  - `.launchAtLogin` is never a card: General owns open-at-login. `content(for:state:)` still covers it so its `switch` stays exhaustive, but only with General's own wording, so no catalog key and no test exist for a card nobody sees.
   - Finder and System Events show their state through `AutomationStep.displayState`, as onboarding does (Task 13): System Events is usually not running, so its passive check answers `.unknown("not running")`, and with no last-known state stored the card reads "Not yet", not "Unknown". A stored last-known state still wins (Task 8). The other cards show `permissions.state(id)` as it is.
   - Move to Applications comes first, but only once a check has answered and the answer is not granted. `AppLocationChecker` answers `.granted` when installed and `.notApplicable` under the DEBUG bypass, so the card appears only for a copy outside the Applications folders. Before the first check it is hidden, so it never flashes.
-  - Move, Full Disk Access, Finder and System Events call `permissions.request`. The Automation button reads **Allow**, or **Open Settings** once denied; a denied Automation request opens Privacy → Automation by itself (Task 9). Notifications: **Allow** requests while `.notDetermined`, otherwise **Open Settings** opens the Notifications pane through `openURL`.
+  - Move, Full Disk Access, Finder and System Events call `permissions.request`. The Automation button reads **Allow**, or **Open Settings** once denied (`AutomationStep.action(for:)`); a denied Automation request opens Privacy → Automation by itself (Task 9). Notifications: **Allow** requests while `.notDetermined`, otherwise **Open Settings** opens the Notifications pane through `openURL`.
   - After a failed move (`.denied`), the card is followed by "Drag RoomForMac into your Applications folder, then open it from there." and **Reveal in Finder** (`settings.permissions.revealInFinder`).
   - `refreshAll()` on appear and on `didBecomeActive`.
 - **About** (`AboutView`, a grouped `Form`):
@@ -14339,7 +14324,7 @@ MSG
   - `AboutInfo.engineLine` for a known fingerprint ("Engine V1.56.0 (239c90d, 5 patches)"), for 1 and 0 patches, and for nil. The version and build come from the bundle, with "—" when missing. `fingerprint(for:)` follows the engine phase.
   - General: the login-item presentation for every state; on registers, on with approval opens Login Items, off unregisters; the notification action for every state, and each action.
   - Permissions: the card list for every move state, including before any check; the Automation and Notifications titles and actions; the card wording; an unanswered Automation check with nothing stored reads `.notDetermined`, a stored state wins, and other cards keep their state.
-  - Settings tabs render through `ImageRenderer`: each tab's content view (General, Permissions, About with a ready engine) at 560 × 540 in light and dark, and the document sheet for all four documents and a missing one. `SettingsView` is built from a model, but its `TabView` is not rendered offscreen. In scratch, `ImageRenderer` aborted the test host with `SwiftUICore/Logging.swift:232: Fatal error: no current update to enqueue action to` whenever a `TabView` hosted views with `.task` or state. A plain `TabView { Text }` rendered. `ImageRenderer` also draws `Form` and `ScrollView` contents blank. So these tests prove the views build and lay out without crashing, not how they look; Step 18 is the visual check.
+  - Settings tabs render through `ImageRenderer`: each tab's content view (General, Permissions, About with a ready engine) at 560 × 540 in light and dark, and the document sheet for all four documents and a missing one. `SettingsView` itself is not tested: its `TabView` cannot be rendered offscreen, and building it without rendering would check nothing. In scratch, `ImageRenderer` aborted the test host with `SwiftUICore/Logging.swift:232: Fatal error: no current update to enqueue action to` whenever a `TabView` hosted views with `.task` or state. A plain `TabView { Text }` rendered. `ImageRenderer` also draws `Form` and `ScrollView` contents blank. So these tests prove the views build and lay out without crashing, not how they look; Step 18 is the visual check.
 
 - [ ] **Step 1: Write the failing legal-document tests**
 
@@ -14349,7 +14334,6 @@ import Foundation
 import MoleEngine
 import ServiceManagement
 import SwiftUI
-import Synchronization
 import Testing
 @testable import RoomForMac
 
@@ -14729,40 +14713,9 @@ extension SettingsTests {
 // MARK: - General
 
 extension SettingsTests {
-    /// A login item that lives in memory: its status, and every call made to it.
-    final class LoginItemFake: Sendable {
-        private let store: Mutex<(status: SMAppService.Status, calls: [String])>
-        private let statusAfterRegister: SMAppService.Status
-
-        init(status: SMAppService.Status, afterRegister: SMAppService.Status = .enabled) {
-            store = Mutex((status: status, calls: []))
-            statusAfterRegister = afterRegister
-        }
-
-        var calls: [String] {
-            store.withLock { $0.calls }
-        }
-
-        var checker: LoginItemChecker {
-            LoginItemChecker(
-                status: { self.store.withLock { $0.status } },
-                register: {
-                    self.store.withLock {
-                        $0.calls.append("register")
-                        $0.status = self.statusAfterRegister
-                    }
-                },
-                unregister: {
-                    self.store.withLock {
-                        $0.calls.append("unregister")
-                        $0.status = .notRegistered
-                    }
-                },
-                openLoginItemsSettings: { self.store.withLock { $0.calls.append("openLoginItems") } }
-            )
-        }
-    }
-
+    /// General's login switch and notification button. The login item is Task 13's
+    /// `FakeLoginService` (RoomForMacTests/Support): a real `LoginItemChecker` over an
+    /// in-memory `SMAppService`.
     @MainActor
     @Suite("General settings")
     struct General {
@@ -14786,31 +14739,31 @@ extension SettingsTests {
         }
 
         @Test func turningOnRegistersTheApp() async {
-            let fake = LoginItemFake(status: .notRegistered)
+            let fake = FakeLoginService(.notRegistered)
             let loginItem = fake.checker
             let permissions = PermissionCenter(checkers: [loginItem])
             await GeneralSettingsView.setLaunchAtLogin(true, permissions: permissions, loginItem: loginItem)
-            #expect(fake.calls == ["register"])
+            #expect(fake.calls == [.register])
             #expect(permissions.state(.launchAtLogin) == .granted)
         }
 
         @Test func turningOnThatNeedsApprovalOpensLoginItems() async {
-            let fake = LoginItemFake(status: .notRegistered, afterRegister: .requiresApproval)
+            let fake = FakeLoginService(.notRegistered, statusAfterRegister: .requiresApproval)
             let loginItem = fake.checker
             let permissions = PermissionCenter(checkers: [loginItem])
             await GeneralSettingsView.setLaunchAtLogin(true, permissions: permissions, loginItem: loginItem)
-            #expect(fake.calls == ["register", "openLoginItems"])
+            #expect(fake.calls == [.register, .openSettings])
             #expect(GeneralSettingsView.loginItemPresentation(for: permissions.state(.launchAtLogin)) == .needsApproval)
         }
 
         @Test func turningOffUnregistersTheApp() async {
-            let fake = LoginItemFake(status: .enabled)
+            let fake = FakeLoginService(.enabled)
             let loginItem = fake.checker
             let permissions = PermissionCenter(checkers: [loginItem])
             await permissions.refresh(.launchAtLogin)
             #expect(permissions.state(.launchAtLogin) == .granted)
             await GeneralSettingsView.setLaunchAtLogin(false, permissions: permissions, loginItem: loginItem)
-            #expect(fake.calls == ["unregister"])
+            #expect(fake.calls == [.unregister])
             #expect(permissions.state(.launchAtLogin) == .notDetermined)
         }
 
@@ -14860,6 +14813,13 @@ extension SettingsTests {
     @Suite("Permissions settings")
     struct Permissions {
         static let withoutMove: [PermissionID] = [.fullDiskAccess, .automationFinder, .automationSystemEvents, .notifications]
+
+        /// Held by the suite so the defaults outlive every use inside a test (Task 7's rule).
+        let defaults: TemporaryDefaults
+
+        init() throws {
+            defaults = try TemporaryDefaults()
+        }
 
         @Test func cardsFollowTheMoveState() {
             #expect(PermissionsSettingsView.cards(moveState: nil) == Self.withoutMove)
@@ -14930,13 +14890,7 @@ extension SettingsTests {
             }
         }
 
-        @Test func openAtLoginNeedingApprovalOpensLoginItems() {
-            #expect(PermissionsSettingsView.content(for: .launchAtLogin, state: .notDetermined).action == .request)
-            #expect(PermissionsSettingsView.content(for: .launchAtLogin, state: .requiresApproval).action == .open(.loginItems))
-        }
-
-        @Test func anUnansweredAutomationCheckReadsNotYet() async throws {
-            let defaults = try TemporaryDefaults()
+        @Test func anUnansweredAutomationCheckReadsNotYet() async {
             defaults.preferences.setLastKnownState("denied", for: PermissionID.automationFinder.rawValue)
             let permissions = PermissionCenter(checkers: [
                 FakeChecker(id: .automationFinder, states: [.unknown("not running")]),
@@ -14997,15 +14951,9 @@ extension SettingsTests {
             #expect(AccessibilityID.settingsEngine == "settings.about.engine")
         }
 
-        @Test func theSettingsWindowIsBuiltFromTheModel() {
-            let model = SettingsTests.model(defaults: defaults, checkers: checkers())
-            _ = SettingsView(model: model)
-            #expect(SettingsView.contentSize == CGSize(width: 560, height: 540))
-        }
-
         @Test(arguments: [ColorScheme.light, .dark])
         func generalRenders(scheme: ColorScheme) async throws {
-            let fake = LoginItemFake(status: .requiresApproval)
+            let fake = FakeLoginService(.requiresApproval)
             let loginItem = fake.checker
             let model = SettingsTests.model(defaults: defaults, checkers: checkers() + [loginItem], loginItem: loginItem)
             await model.permissions.refreshAll()
@@ -15564,18 +15512,13 @@ struct PermissionsSettingsView: View {
                 actionTitle: "Open Settings",
                 action: .request
             )
-        case .automationFinder:
+        case .automationFinder, .automationSystemEvents:
+            // Onboarding's Automation card, word for word: one source for the title,
+            // the reason and the Allow / Open Settings rule (Task 13).
             CardContent(
-                title: "Finder",
-                reason: "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails.",
-                actionTitle: state == .denied ? "Open Settings" : "Allow",
-                action: .request
-            )
-        case .automationSystemEvents:
-            CardContent(
-                title: "System Events",
-                reason: "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall.",
-                actionTitle: state == .denied ? "Open Settings" : "Allow",
+                title: AutomationStep.title(for: id),
+                reason: AutomationStep.reason(for: id),
+                actionTitle: AutomationStep.action(for: state).title,
                 action: .request
             )
         case .notifications:
@@ -15586,11 +15529,14 @@ struct PermissionsSettingsView: View {
                 action: state == .notDetermined ? .request : .open(.notifications)
             )
         case .launchAtLogin:
+            // Never a card: cards(moveState:) leaves it out, because General owns
+            // open-at-login with its switch. This case only keeps the switch
+            // exhaustive, in General's own words, so it adds no catalog key.
             CardContent(
-                title: "Open at login",
+                title: "Open RoomForMac at login",
                 reason: "RoomForMac starts quietly when you log in.",
-                actionTitle: state == .requiresApproval ? "Open Settings" : "Turn On",
-                action: state == .requiresApproval ? .open(.loginItems) : .request
+                actionTitle: "Approve in System Settings",
+                action: .open(.loginItems)
             )
         }
     }
@@ -15661,8 +15607,8 @@ struct PermissionsSettingsView: View {
 
 - The card list reads `permissions.states[.moveToApplications]`, the raw latest answer, not `state(_:)`, which reports `.notDetermined` before any check and would flash the Move card on every launch from `/Applications`.
 - `cardState(_:permissions:)` gives Finder and System Events the chips onboarding shows (Allowed / Not yet / Denied). Without it, System Events would read "Unknown" in Settings on most launches while onboarding read "Not yet". The `moveByHand` condition reads the same value, which for Move is `state(_:)` unchanged.
-- `content(for:state:)` covers `.launchAtLogin` too, so the `switch` stays exhaustive; General shows that switch instead of a card.
-- The reasons are the onboarding ones (Tasks 12 and 13), so the String Catalog shares their keys.
+- `cards(moveState:)` never lists `.launchAtLogin`: General shows that switch instead of a card. `content(for:state:)` still covers it, so the `switch` stays exhaustive, but only with General's wording (its label, its line and its approve button), so no key and no test exist for a card nobody sees.
+- Finder and System Events come from `AutomationStep.title(for:)`, `reason(for:)` and `action(for:).title` (Task 13), so a wording change there reaches both screens. The other reasons are the onboarding ones (Task 12), so the String Catalog shares their keys.
 
 - [ ] **Step 13: Write `SettingsView` and wire the Settings scene**
 
@@ -15767,10 +15713,10 @@ and replace it with:
 - [ ] **Step 14: Run the Settings tests**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/SettingsTests`
-Expected: 42 tests pass and one fails, because the String Catalog has no plural for the engine line yet:
+Expected: 40 tests pass and one fails, because the String Catalog has no plural for the engine line yet:
 ```
 ✘ Test engineLinePluralizesThePatchCount() recorded an issue at SettingsTests.swift:…: Expectation failed: AboutInfo(bundle: .main, engine: fingerprint).engineLine == "Engine V1.56.0 (239c90d, 1 patch)"
-✘ Test run with 43 tests in 6 suites failed after … seconds with 1 issue.
+✘ Test run with 41 tests in 6 suites failed after … seconds with 1 issue.
 ** TEST FAILED **
 ```
 No test crashes the host. A `Fatal error: no current update to enqueue action to` means a `TabView` was rendered offscreen (see Requirements, Tests).
@@ -15785,7 +15731,7 @@ xcrun xcstringstool sync RoomForMac/Resources/Localizable.xcstrings --skip-marki
 git diff --stat RoomForMac/Resources/Localizable.xcstrings
 ```
 Expected: `xcstringstool` prints nothing and exits 0. The diff adds this task's new keys, and removes nothing:
-`A menu bar extra with quick gauges arrives with Status in the next update.`, `About`, `Approve in System Settings`, `Credits`, `Done`, `Engine`, `Engine %@ (%@, %lld patches)`, `Engine License (Mole)`, `Engine unavailable`, `General`, `Lets RoomForMac tell you when a cleanup finishes.`, `Licenses and notices`, `Notice`, `Permissions`, `Photography`, `Reinstall RoomForMac to restore it.`, `RoomForMac License`, `RoomForMac checks these again every time you come back to it.`, `RoomForMac is built on the open-source Mole engine by tw93 (GPL-3.0).`, `RoomForMac starts quietly when you log in.`, `This document is missing`, `Turn On`, `Version %@ (%@)`, `macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again.`, `macOS wants you to approve this in Login Items.`
+`A menu bar extra with quick gauges arrives with Status in the next update.`, `About`, `Approve in System Settings`, `Credits`, `Done`, `Engine`, `Engine %@ (%@, %lld patches)`, `Engine License (Mole)`, `Engine unavailable`, `General`, `Lets RoomForMac tell you when a cleanup finishes.`, `Licenses and notices`, `Notice`, `Permissions`, `Photography`, `Reinstall RoomForMac to restore it.`, `RoomForMac License`, `RoomForMac checks these again every time you come back to it.`, `RoomForMac is built on the open-source Mole engine by tw93 (GPL-3.0).`, `RoomForMac starts quietly when you log in.`, `This document is missing`, `Version %@ (%@)`, `macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again.`, `macOS wants you to approve this in Login Items.`
 
 The keys this task shares with Tasks 8, 12 and 13 (`Allow`, `Applications folder`, `Checks which apps are running…`, `Drag RoomForMac into your Applications folder…`, `Finder`, `Full Disk Access`, `Lets RoomForMac see caches…`, `Move and relaunch`, `Notifications`, `Open RoomForMac at login` (Task 13's Extras toggle), `Open Settings`, `Open at login`, `Reveal in Finder`, `RoomForMac works best from your Applications folder…`, `Shows your disk's exact free space…`, `System Events`) are already in the catalog and do not change. If one of them is new in the diff, the earlier task used different wording, and one of the two must change.
 
@@ -15842,7 +15788,7 @@ Expected: `compile` prints nothing and exits 0 (a JSON slip gives `error: The da
 - [ ] **Step 16: Run the Settings tests to verify they pass**
 
 Run: `xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination platform=macOS test -only-testing:RoomForMacTests/SettingsTests`
-Expected: `✔ Test run with 43 tests in 6 suites passed` and `** TEST SUCCEEDED **`. The suites are "Settings", "Legal documents" (9 tests), "About info" (9), "General settings" (9), "Permissions settings" (8) and "Settings views" (8). The parameterized tests report their cases: 4 documents, 6 login-item states, 6 notification states, 3 move states, 2 Automation targets, 2 colour schemes for each tab, and 4 document sheets.
+Expected: `✔ Test run with 41 tests in 6 suites passed` and `** TEST SUCCEEDED **`. The suites are "Settings", "Legal documents" (9 tests), "About info" (9), "General settings" (9), "Permissions settings" (7) and "Settings views" (7). The parameterized tests report their cases: 4 documents, 6 login-item states, 6 notification states, 3 move states, 2 Automation targets, 2 colour schemes for each tab, and 4 document sheets.
 
 - [ ] **Step 17: Run the whole unit scheme, the API guard and a Release build**
 
