@@ -68,14 +68,26 @@ struct AppDependencies {
     /// The UserDefaults suite UI-test scenarios use instead of the app's own domain.
     static let scenarioSuiteName = "RoomForMac.UITest"
 
-    /// A scripted launch for UI tests. Preferences start empty in their own suite,
-    /// so every run starts clean and `UserDefaults.standard` is never touched.
-    /// Links are not opened. Task 15 adds scripted permission checkers.
+    /// A scripted launch for UI tests. The scenario suite is emptied first, so every
+    /// launch starts clean, and `UserDefaults.standard` is never touched.
     static func forScenario(_ scenario: UITestScenario) -> AppDependencies {
         guard let defaults = UserDefaults(suiteName: scenarioSuiteName) else {
             preconditionFailure("UserDefaults refused the suite \(scenarioSuiteName)")
         }
         defaults.removePersistentDomain(forName: scenarioSuiteName)
+        return forScenario(scenario, defaults: defaults)
+    }
+
+    /// The scenario over `defaults`, which the caller has emptied: `forScenario(_:)` passes
+    /// the scenario suite, and unit tests a throwaway one.
+    ///
+    /// - `.onboarding` and `.onboarded` find the bundled engine without its helper self-test;
+    ///   `.engineBroken` reports a version mismatch.
+    /// - Only `.onboarded` starts with onboarding complete.
+    /// - Every scenario gets scripted approvals, so neither onboarding nor Settings ever
+    ///   reaches TCC, Apple events, notifications or login items. There is no Move step and
+    ///   no login item to disable, and links are not opened.
+    static func forScenario(_ scenario: UITestScenario, defaults: UserDefaults) -> AppDependencies {
         let preferences = AppPreferences(defaults: defaults)
         preferences.onboardingCompleted = scenario == .onboarded
 
@@ -89,7 +101,28 @@ struct AppDependencies {
             let problem = EngineProblem.versionMismatch(expected: .expected, found: found)
             engineCheck = { .failure(problem) }
         }
-        return AppDependencies(preferences: preferences, engineCheck: engineCheck, openURL: { _ in })
+        return AppDependencies(
+            preferences: preferences,
+            engineCheck: engineCheck,
+            openURL: { _ in },
+            permissionCheckers: scriptedPermissionCheckers(),
+            needsMoveStep: false,
+            loginItem: nil
+        )
+    }
+
+    /// New scripted checkers for every approval, in `live()`'s order. Each request grants at
+    /// once, so a UI test can press every "Allow" and see "Allowed". The Move checker answers
+    /// `.notApplicable`, as the bypassed `AppLocationChecker` of a DEBUG `live()` does.
+    static func scriptedPermissionCheckers() -> [any PermissionChecking] {
+        [
+            ScriptedPermissionChecker(id: .moveToApplications, initial: .notApplicable, afterRequest: .notApplicable),
+            ScriptedPermissionChecker(id: .fullDiskAccess, initial: .denied, afterRequest: .granted),
+            ScriptedPermissionChecker(id: .automationFinder, initial: .notDetermined, afterRequest: .granted),
+            ScriptedPermissionChecker(id: .automationSystemEvents, initial: .notDetermined, afterRequest: .granted),
+            ScriptedPermissionChecker(id: .notifications, initial: .notDetermined, afterRequest: .granted),
+            ScriptedPermissionChecker(id: .launchAtLogin, initial: .notDetermined, afterRequest: .granted),
+        ]
     }
 
     /// Locates the bundled engine without running its helpers, so UI tests do not
