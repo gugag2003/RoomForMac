@@ -7,6 +7,9 @@ enum AppMoveError: Error, Sendable, Equatable {
     case destinationIsRunning(URL)
     /// No candidate folder could take the app; carries the last one tried.
     case notWritable(URL)
+    /// The copy to move is gone: the user moved it by hand, or it moved itself and could not
+    /// reopen. Nothing was touched, so the copy already in a folder stays.
+    case sourceMissing(URL)
     /// A complete, user-readable sentence, usually a system error's `localizedDescription`.
     case failed(String)
 }
@@ -20,6 +23,9 @@ extension AppMoveError: LocalizedError {
         case .notWritable(let directory):
             let folder = Self.displayPath(directory)
             return String(localized: "RoomForMac isn't allowed to add apps to \(folder).")
+        case .sourceMissing(let source):
+            let folder = Self.displayPath(source.deletingLastPathComponent())
+            return String(localized: "RoomForMac is no longer in \(folder). Quit it, then open it from where it is now.")
         case .failed(let sentence):
             return sentence
         }
@@ -86,13 +92,22 @@ struct AppMover: Sendable {
     }
 
     /// Tries each folder in order and returns the new bundle URL.
+    /// - A missing source fails before anything is touched: the copy already in a folder may be
+    ///   the only one left (the user dragged it there, or the running copy was moved).
     /// - A folder that is missing is created (one level, like `~/Applications`); one that cannot be
     ///   created or written is skipped.
-    /// - An existing copy at the destination is refused when it is open, and trashed otherwise.
-    /// - The source is moved, or copied when it cannot be removed.
+    /// - An existing copy at the destination is refused when it is open.
+    /// - The source is moved, or copied when it cannot be removed, to a hidden name next to the
+    ///   destination. Only once that worked does an older copy go to the Trash and the new one
+    ///   take its name, a rename in the same folder. A failure on the way puts the source back (or
+    ///   removes the copy), so the older copy stays; a rename that fails after the Trash leaves
+    ///   the older copy in the Trash, from where the user can put it back.
     /// - Quarantine is stripped from the result, best effort: the app is already in place by then.
     func move(appAt source: URL, toFirstWritableOf directories: [URL]) throws -> URL {
         let files = fileManager()
+        guard files.fileExists(atPath: source.path) else {
+            throw AppMoveError.sourceMissing(source)
+        }
         for directory in directories {
             guard Self.prepare(directory, fileManager: files) else {
                 continue
@@ -104,27 +119,36 @@ struct AppMover: Sendable {
                 try Self.stripQuarantine(at: destination)
                 return destination
             }
-            if (try? files.attributesOfItem(atPath: destination.path)) != nil {
-                if isRunning(destination) {
-                    throw AppMoveError.destinationIsRunning(destination)
-                }
-                do {
-                    try trashItem(destination)
-                } catch {
-                    throw AppMoveError.failed(error.localizedDescription)
-                }
+            let replacesOlderCopy = (try? files.attributesOfItem(atPath: destination.path)) != nil
+            if replacesOlderCopy, isRunning(destination) {
+                throw AppMoveError.destinationIsRunning(destination)
             }
             // Copy when the original cannot be removed: a disk image, a translocation mount, a folder
             // this user cannot write. An unknown answer counts as read-only, so nothing is lost.
             let keepSource = (volumeIsReadOnly(source) ?? true)
                 || !files.isWritableFile(atPath: source.deletingLastPathComponent().path)
+            let staged = directory.appending(path: ".\(source.lastPathComponent).\(UUID().uuidString).partial")
             do {
                 if keepSource {
-                    try files.copyItem(at: source, to: destination)
+                    try files.copyItem(at: source, to: staged)
                 } else {
-                    try files.moveItem(at: source, to: destination)
+                    try files.moveItem(at: source, to: staged)
                 }
             } catch {
+                try? files.removeItem(at: staged)
+                throw AppMoveError.failed(error.localizedDescription)
+            }
+            do {
+                if replacesOlderCopy {
+                    try trashItem(destination)
+                }
+                try files.moveItem(at: staged, to: destination)
+            } catch {
+                if keepSource {
+                    try? files.removeItem(at: staged)
+                } else {
+                    try? files.moveItem(at: staged, to: source)
+                }
                 throw AppMoveError.failed(error.localizedDescription)
             }
             try? Self.stripQuarantine(at: destination)

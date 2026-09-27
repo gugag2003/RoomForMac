@@ -269,6 +269,9 @@
     "RoomForMac is built on the open-source Mole engine by tw93 (GPL-3.0)." : {
 
     },
+    "RoomForMac is no longer in %@. Quit it, then open it from where it is now." : {
+
+    },
     "RoomForMac is now in %@, but it couldn't reopen itself. Quit it, then open it from there." : {
 
     },

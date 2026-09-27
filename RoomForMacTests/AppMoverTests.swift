@@ -27,10 +27,12 @@ struct AppMoverTests {
         running: Set<String> = [],
         readOnlySource: Bool? = false,
         trashed: Locked<[URL]> = Locked([]),
-        asked: Locked<[URL]> = Locked([])
+        asked: Locked<[URL]> = Locked([]),
+        files: FileManagerThatFails? = nil
     ) -> AppMover {
         let trash = self.trash
         return AppMover(
+            fileManager: { files ?? FileManager.default },
             isRunning: { url in
                 asked.append(url)
                 return running.contains(url.path)
@@ -197,6 +199,101 @@ struct AppMoverTests {
         #expect(asked.value.isEmpty)
     }
 
+    // MARK: - Failures leave every copy where it was
+
+    /// Everything in `folder`, hidden items included, so a staged copy left behind shows up.
+    static func contents(of folder: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+    }
+
+    @Test func aMissingSourceTouchesNoCopy() throws {
+        // The user dragged the app into Applications by hand (or it moved itself and could not
+        // reopen), then pressed Move again: the launch-time source is gone, and the copy in the
+        // folder is the only one left.
+        let source = downloads.appending(path: "RoomForMac.app")
+        let existing = try AppBundleFixture.make(in: first, marker: "old")
+        let trashed = Locked<[URL]>([])
+        let asked = Locked<[URL]>([])
+
+        #expect(throws: AppMoveError.sourceMissing(source)) {
+            try mover(trashed: trashed, asked: asked).move(appAt: source, toFirstWritableOf: [first, second])
+        }
+        #expect(trashed.value.isEmpty)
+        #expect(asked.value.isEmpty)
+        #expect(try AppBundleFixture.marker(of: existing) == "old")
+        #expect(try Self.contents(of: first) == ["RoomForMac.app"])
+        #expect(try Self.contents(of: second).isEmpty)
+    }
+
+    @Test func aMissingSourceReadsAsASentence() {
+        let downloaded = URL(fileURLWithPath: NSHomeDirectory()).appending(path: "Downloads/RoomForMac.app")
+        #expect(
+            AppMoveError.sourceMissing(downloaded).errorDescription
+                == "RoomForMac is no longer in ~/Downloads. Quit it, then open it from where it is now."
+        )
+    }
+
+    @Test func aFailedCopyLeavesTheOlderCopyInPlace() throws {
+        let source = try AppBundleFixture.make(in: downloads, marker: "new")
+        let existing = try AppBundleFixture.make(in: first, marker: "old")
+        let trashed = Locked<[URL]>([])
+
+        #expect(throws: AppMoveError.self) {
+            try mover(readOnlySource: true, trashed: trashed, files: FileManagerThatFails(.copy))
+                .move(appAt: source, toFirstWritableOf: [first])
+        }
+        #expect(trashed.value.isEmpty)
+        #expect(try AppBundleFixture.marker(of: existing) == "old")
+        #expect(try AppBundleFixture.marker(of: source) == "new")
+        #expect(try Self.contents(of: first) == ["RoomForMac.app"], "the partial copy is removed")
+    }
+
+    @Test func aFailedMoveLeavesTheOlderCopyInPlace() throws {
+        let source = try AppBundleFixture.make(in: downloads, marker: "new")
+        let existing = try AppBundleFixture.make(in: first, marker: "old")
+        let trashed = Locked<[URL]>([])
+
+        #expect(throws: AppMoveError.self) {
+            try mover(readOnlySource: false, trashed: trashed, files: FileManagerThatFails(.move))
+                .move(appAt: source, toFirstWritableOf: [first])
+        }
+        #expect(trashed.value.isEmpty)
+        #expect(try AppBundleFixture.marker(of: existing) == "old")
+        #expect(try AppBundleFixture.marker(of: source) == "new")
+        #expect(try Self.contents(of: first) == ["RoomForMac.app"])
+    }
+
+    @Test(arguments: [false, true])
+    func aFailedTrashPutsTheNewCopyBack(fromReadOnlyVolume: Bool) throws {
+        // The new copy is staged before the older one goes to the Trash; when the Trash refuses,
+        // a moved source goes back where it was and a copied one is removed.
+        let source = try AppBundleFixture.make(in: downloads, marker: "new")
+        let existing = try AppBundleFixture.make(in: first, marker: "old")
+        let mover = AppMover(
+            isRunning: { _ in false },
+            trashItem: { _ in throw CocoaError(.fileWriteNoPermission) },
+            volumeIsReadOnly: { _ in fromReadOnlyVolume }
+        )
+
+        #expect(throws: AppMoveError.self) {
+            try mover.move(appAt: source, toFirstWritableOf: [first])
+        }
+        #expect(try AppBundleFixture.marker(of: existing) == "old")
+        #expect(try AppBundleFixture.marker(of: source) == "new")
+        #expect(try Self.contents(of: first) == ["RoomForMac.app"])
+        #expect(try Self.contents(of: downloads) == ["RoomForMac.app"])
+    }
+
+    @Test func replacingLeavesNothingElseInTheFolder() throws {
+        let source = try AppBundleFixture.make(in: downloads, marker: "new")
+        try AppBundleFixture.make(in: first, marker: "old")
+
+        let moved = try mover().move(appAt: source, toFirstWritableOf: [first])
+
+        #expect(try AppBundleFixture.marker(of: moved) == "new")
+        #expect(try Self.contents(of: first) == ["RoomForMac.app"])
+    }
+
     // MARK: - Helpers
 
     @Test func candidatesAreSystemThenUserApplications() {
@@ -278,5 +375,34 @@ struct AppMoverTests {
             try relauncher.relaunch(at: URL(fileURLWithPath: "/Applications/RoomForMac.app"))
         }
         #expect(events.value == ["spawn"])
+    }
+}
+
+/// Fails every copy, or every move, the way a full disk would. A failed copy leaves what it
+/// wrote behind, as a copy that runs out of space part-way does; a failed move changes nothing.
+final class FileManagerThatFails: FileManager, @unchecked Sendable {
+    enum Operation {
+        case copy, move
+    }
+
+    private let operation: Operation
+
+    init(_ operation: Operation) {
+        self.operation = operation
+        super.init()
+    }
+
+    override func copyItem(at srcURL: URL, to dstURL: URL) throws {
+        try super.copyItem(at: srcURL, to: dstURL)
+        if operation == .copy {
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+    }
+
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        if operation == .move {
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+        try super.moveItem(at: srcURL, to: dstURL)
     }
 }
