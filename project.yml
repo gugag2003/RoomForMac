@@ -40,9 +40,13 @@ targets:
       - path: RoomForMac
         excludes:
           - Generated
+          - Resources/Backgrounds
       # Written by the "Prepare engine" phase before compiling; git-ignored.
       - path: RoomForMac/Generated/EngineExpectation.swift
         optional: true
+      - path: RoomForMac/Resources/Backgrounds
+        type: folder
+        buildPhase: resources
     info:
       path: RoomForMac/Info.plist
       properties:
