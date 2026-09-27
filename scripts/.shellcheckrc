@@ -1,0 +1,4 @@
+# The engine scripts source scripts/lib/*.sh: follow those files, found next
+# to the checked script, so the variables they set count as assigned.
+external-sources=true
+source-path=SCRIPTDIR

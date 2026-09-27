@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Engine build checks. Builds once per file into a temporary output directory,
-# then checks the two Xcode "Prepare engine" scripts against that engine.
+# then checks the two Xcode "Prepare engine" scripts against that engine. The
+# engine lock tests run a scratch copy of build-engine.sh (see fake_root).
 
 setup_file() {
     ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -54,7 +55,8 @@ setup_file() {
 
 @test "VERSION records the builder hash" {
     local builder
-    builder="$(shasum -a 256 "$ROOT/scripts/build-engine.sh" | cut -d' ' -f1)"
+    # build-engine.sh followed by the inputs library it sources: both shape the build.
+    builder="$(cat "$ROOT/scripts/build-engine.sh" "$ROOT/scripts/lib/engine-inputs.sh" | shasum -a 256 | cut -d' ' -f1)"
     run grep -A 1 '^patch_count=' "$ENGINE_OUT/VERSION"
     [ "$status" -eq 0 ]
     [ "${lines[1]}" = "builder_sha256=$builder" ]
@@ -91,6 +93,57 @@ setup_file() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"is missing or stale"* ]] || return 1
     [ ! -e "$BATS_TEST_TMPDIR/none" ]
+}
+
+@test "ensure-engine never builds the engine during an Xcode index build" {
+    mkdir "$BATS_TEST_TMPDIR/stale"
+    sed 's/^builder_sha256=.*/builder_sha256=0000/' "$ENGINE_OUT/VERSION" > "$BATS_TEST_TMPDIR/stale/VERSION"
+    run env RFM_ENGINE_DIR="$BATS_TEST_TMPDIR/stale" ACTION=indexbuild "$ROOT/scripts/ensure-engine.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = "Index build: not building the engine" ]
+    [ "$(ls -A "$BATS_TEST_TMPDIR/stale")" = "VERSION" ]
+    grep -qx 'builder_sha256=0000' "$BATS_TEST_TMPDIR/stale/VERSION"
+}
+
+# A scratch checkout holding only build-engine.sh, its library and a vendor/mole
+# that git cannot read, so a build stops right after it takes the lock. These
+# tests never touch the real build/.engine.lock or build/engine-src.
+fake_root() {
+    local fake="$BATS_TEST_TMPDIR/root"
+    mkdir -p "$fake/scripts/lib" "$fake/vendor/mole" "$fake/build"
+    cp "$ROOT/scripts/build-engine.sh" "$fake/scripts/"
+    cp "$ROOT/scripts/lib/engine-inputs.sh" "$fake/scripts/lib/"
+    printf 'gitdir: %s\n' "$BATS_TEST_TMPDIR/no-such-repo" > "$fake/vendor/mole/.git"
+    echo "$fake"
+}
+
+@test "a second engine build waits for the lock, then gives up and leaves it" {
+    local fake lock start
+    fake="$(fake_root)"
+    lock="$fake/build/.engine.lock"
+    mkdir "$lock"
+    start=$SECONDS
+    run env RFM_ENGINE_LOCK_TIMEOUT=2 "$fake/scripts/build-engine.sh"
+    [ "$status" -eq 1 ]
+    [ $((SECONDS - start)) -ge 2 ]
+    [ "${lines[0]}" = "Waiting for another engine build to finish ($lock)" ]
+    [ "${lines[1]}" = "error: another engine build still holds $lock after 2s; if no engine build is running, remove it: rm -rf $lock" ]
+    [ -d "$lock" ]
+}
+
+@test "a waiting engine build takes the lock once it is free and removes it on exit" {
+    local fake lock
+    fake="$(fake_root)"
+    lock="$fake/build/.engine.lock"
+    mkdir "$lock"
+    (sleep 1 && rmdir "$lock") 3>&- &
+    run env RFM_ENGINE_LOCK_TIMEOUT=30 "$fake/scripts/build-engine.sh"
+    wait
+    # Past the lock, the build stops at the unreadable vendor/mole.
+    [ "$status" -eq 128 ]
+    [ "${lines[0]}" = "Waiting for another engine build to finish ($lock)" ]
+    [[ "$output" == *"not a git repository"* ]] || return 1
+    [ ! -e "$lock" ]
 }
 
 @test "engine-expectation writes the engine's VERSION as Swift" {

@@ -6,6 +6,11 @@
 #       bats scripts/tests/app_bundle.bats
 #
 # Without APP every test is skipped, so `bats scripts/tests` still passes.
+#
+# Tests never raise a real system prompt, so the bundled status tool only runs
+# with -h here: `status-go --json` asks Finder for the disk's free space, which
+# can show an Automation prompt for the terminal. Set RFM_ALLOW_PROMPTS=1 (CI
+# does) to also check its JSON snapshot.
 
 setup_file() {
     if [[ -z "${APP:-}" ]]; then
@@ -102,7 +107,16 @@ signer() {
     cmp "$ROOT/vendor/mole/LICENSE" "$ENGINE/LICENSE"
 }
 
+@test "the bundled status tool starts and prints its usage" {
+    run "$ENGINE/bin/status-go" -h
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "Usage: mo status [OPTIONS]" ]
+}
+
 @test "the bundled status tool prints a JSON snapshot" {
+    if [[ "${RFM_ALLOW_PROMPTS:-0}" != "1" ]]; then
+        skip "set RFM_ALLOW_PROMPTS=1 to run status-go --json, which asks Finder for free space and may prompt"
+    fi
     run "$ENGINE/bin/status-go" --json
     [ "$status" -eq 0 ]
     [[ "$output" == *'"cpu"'* ]]
