@@ -108,9 +108,17 @@ struct AutomationCheckerTests {
         let gate = DispatchSemaphore(value: 0)
         defer { gate.signal() }
         let fake = FakeAppleEvents(status: -1743, blockUntil: gate)
-        let checker = fake.checker(.finder, promptDeadline: .milliseconds(100))
+        // Far apart, so the time taken shows which deadline bounded the request: it may prompt,
+        // so it gets the prompt deadline, never the passive one. The fake answers after 5 s.
+        let checker = fake.checker(.finder, passiveDeadline: .seconds(30), promptDeadline: .milliseconds(100))
 
-        #expect(await checker.request() == .unknown("timed out"))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let state = await checker.request()
+        let elapsed = start.duration(to: clock.now)
+
+        #expect(state == .unknown("timed out"))
+        #expect(elapsed < .seconds(2), "the request took \(elapsed); its deadline is 100 ms")
         #expect(fake.determined.value == [DetermineCall(bundleIdentifier: "com.apple.finder", ask: true)])
         #expect(fake.opened.value.isEmpty)
     }
