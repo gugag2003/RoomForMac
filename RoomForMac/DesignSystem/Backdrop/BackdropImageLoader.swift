@@ -42,6 +42,7 @@ final class BackdropImageLoader: @unchecked Sendable {
     private let subdirectory: String
     private let lock = NSLock()
     private var entries: [BackdropScene: Entry] = [:]   // guarded by `lock`
+    private var photoURLsByScene: [BackdropScene: [URL]] = [:]   // guarded by `lock`
 
     init(bundle: Bundle = .main, blurRadius: Double = 40, subdirectory: String = "Backgrounds") {
         self.bundle = bundle
@@ -70,6 +71,12 @@ final class BackdropImageLoader: @unchecked Sendable {
     /// What is already known about `scene`, without touching the disk: nil until it has been loaded.
     func cachedEntry(for scene: BackdropScene) -> Entry? {
         lock.withLock { entries[scene] }
+    }
+
+    /// Whether the bundle has a photo file for `scene`. It only looks the file up, once per scene, and
+    /// never decodes it, so `BackdropView` can ask on the main thread which first frame to draw.
+    func hasPhotoResource(for scene: BackdropScene) -> Bool {
+        !photoURLs(for: scene).isEmpty
     }
 
     /// A Gaussian blur that keeps the image's size and opaque edges.
@@ -106,16 +113,28 @@ final class BackdropImageLoader: @unchecked Sendable {
     }
 
     private func load(_ scene: BackdropScene) -> Entry {
-        for fileExtension in Self.fileExtensions {
-            guard
-                let url = bundle.url(forResource: scene.resourceName, withExtension: fileExtension, subdirectory: subdirectory),
-                let sharp = Self.decode(url),
-                let blurred = Self.blur(sharp, radius: blurRadius)
-            else {
+        for url in photoURLs(for: scene) {
+            guard let sharp = Self.decode(url), let blurred = Self.blur(sharp, radius: blurRadius) else {
                 continue
             }
             return .photo(BackdropImages(sharp: sharp, blurred: blurred))
         }
         return .noPhoto
+    }
+
+    /// The scene's photo files in `fileExtensions` order, looked up on the first call and cached.
+    private func photoURLs(for scene: BackdropScene) -> [URL] {
+        if let cached = lock.withLock({ photoURLsByScene[scene] }) {
+            return cached
+        }
+        // Like the decoding, the lookup runs outside the lock.
+        let found = Self.fileExtensions.compactMap { fileExtension in
+            bundle.url(forResource: scene.resourceName, withExtension: fileExtension, subdirectory: subdirectory)
+        }
+        return lock.withLock {
+            let urls = photoURLsByScene[scene] ?? found
+            photoURLsByScene[scene] = urls
+            return urls
+        }
     }
 }

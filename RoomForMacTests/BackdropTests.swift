@@ -86,8 +86,17 @@ extension BackdropTests {
         @Test func aBundleWithoutPhotosHasNoImages() throws {
             let loader = BackdropImageLoader(bundle: try fixture.bundle())
             for scene in BackdropScene.allCases {
+                #expect(!loader.hasPhotoResource(for: scene))
                 #expect(loader.images(for: scene) == nil)
             }
+        }
+
+        @Test func findsAPhotoResourceWithoutDecodingIt() throws {
+            try fixture.add("backdrop-status.png", TestImage.solid(width: 64, height: 64, red: 0.2, green: 0.5, blue: 0.3))
+            let loader = BackdropImageLoader(bundle: try fixture.bundle())
+            #expect(loader.hasPhotoResource(for: .status))
+            #expect(!loader.hasPhotoResource(for: .onboarding))
+            #expect(loader.cachedEntry(for: .status) == nil, "the lookup decoded the photo")
         }
 
         @Test func loadsAPhotoAtItsSizeWithABlurredCopy() throws {
@@ -196,7 +205,7 @@ private final class PhotoBundle {
 
 /// Small generated images and a pixel reader.
 private enum TestImage {
-    struct Pixel: Equatable {
+    struct Pixel: Hashable {
         var red: UInt8
         var green: UInt8
         var blue: UInt8
@@ -265,12 +274,42 @@ extension BackdropTests {
     @MainActor
     @Suite("Backdrop view")
     struct Rendering {
-        @Test(arguments: BackdropScene.allCases, [ColorScheme.light, .dark])
-        func rendersEveryScene(_ scene: BackdropScene, in colorScheme: ColorScheme) {
-            let renderer = ImageRenderer(content: BackdropView(scene: scene)
-                .frame(width: 300, height: 200)
-                .environment(\.colorScheme, colorScheme))
-            #expect(renderer.cgImage != nil)
+        /// No photos ship in this plan, so this is what every surface shows: its own gradient, from the
+        /// very first frame. `ImageRenderer` draws synchronously, before the `.task` load can finish,
+        /// so anything `init` leaves to that load renders here as bare canvas.
+        @Test(arguments: BackdropScene.allCases)
+        func rendersEveryScene(_ scene: BackdropScene) throws {
+            let fixture = try PhotoBundle()
+            try withExtendedLifetime(fixture) {
+                var renders: [[TestImage.Pixel]] = []
+                for scheme in [ColorScheme.light, .dark] {
+                    let pixels = try firstFrame(of: scene, in: scheme, bundle: try fixture.bundle())
+                    let canvas = try samples(of: Palette.canvas, in: scheme)
+                    #expect(pixels[1].alpha == 255, "\(scheme): the centre is not opaque")
+                    #expect(pixels[1] != canvas[1], "\(scheme): the centre shows bare canvas, not the gradient")
+                    renders.append(pixels)
+                }
+                #expect(renders[0] != renders[1], "light and dark render the same")
+            }
+        }
+
+        @Test(arguments: [ColorScheme.light, .dark])
+        func everySceneRendersItsOwnGradient(in scheme: ColorScheme) throws {
+            let fixture = try PhotoBundle()
+            try withExtendedLifetime(fixture) {
+                let renders = try BackdropScene.allCases.map { scene in
+                    try firstFrame(of: scene, in: scheme, bundle: try fixture.bundle())
+                }
+                #expect(Set(renders).count == BackdropScene.allCases.count, "two scenes render alike: \(renders)")
+            }
+        }
+
+        /// A gradient-only backdrop (every backdrop until photos ship) must not redraw at 30 fps.
+        @Test func theDriftRunsOnlyForAPhotoWithMotionAllowed() {
+            #expect(!BackdropView.driftPaused(reduceMotion: false, hasPhoto: true))
+            #expect(BackdropView.driftPaused(reduceMotion: true, hasPhoto: true))
+            #expect(BackdropView.driftPaused(reduceMotion: false, hasPhoto: false))
+            #expect(BackdropView.driftPaused(reduceMotion: true, hasPhoto: false))
         }
 
         @Test func focusIsClampedToZeroThroughOne() {
@@ -325,6 +364,21 @@ extension BackdropTests {
             renderer.scale = 1
             let image = try #require(renderer.cgImage)
             return TestImage.pixel(image, x: image.width / 2, y: image.height / 2)
+        }
+
+        /// The sampled first frame of `scene`'s backdrop. Each call uses a new loader over `bundle`: the
+        /// `.task` of an earlier render may already have cached the scene in a shared one.
+        private func firstFrame(of scene: BackdropScene, in scheme: ColorScheme, bundle: Bundle) throws -> [TestImage.Pixel] {
+            try samples(of: BackdropView(scene: scene, focus: 0, loader: BackdropImageLoader(bundle: bundle)), in: scheme)
+        }
+
+        /// Three pixels of `view` rendered at 60 × 40 points: 10%, 50% and 90% of the way along the
+        /// gradient's diagonal, from the top-leading corner.
+        private func samples(of view: some View, in scheme: ColorScheme) throws -> [TestImage.Pixel] {
+            let image = try #require(RenderCheck.image(of: view, scheme: scheme, size: CGSize(width: 60, height: 40)))
+            return [0.1, 0.5, 0.9].map { fraction in
+                TestImage.pixel(image, x: Int(Double(image.width) * fraction), y: Int(Double(image.height) * fraction))
+            }
         }
     }
 }
