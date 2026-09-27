@@ -37,10 +37,12 @@ targets:
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      # RoomForMac/Generated/ holds build-phase output; it is never picked up from this folder.
       - path: RoomForMac
         excludes:
           - Generated
+      # Written by the "Prepare engine" phase before compiling; git-ignored.
+      - path: RoomForMac/Generated/EngineExpectation.swift
+        optional: true
     info:
       path: RoomForMac/Info.plist
       properties:
@@ -70,6 +72,28 @@ targets:
         PRODUCT_NAME: RoomForMac
         ARCHS: $(ARCHS_STANDARD)
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Build scripts only: where build/engine lives. The app never reads it.
+        RFM_ENGINE_DIR: $(SRCROOT)/build/engine
+    preBuildScripts:
+      # Rebuilds build/engine only when its inputs changed (~0.1 s otherwise),
+      # then records the engine this build expects as Swift.
+      - name: Prepare engine
+        script: '"${SRCROOT}/scripts/ensure-engine.sh" && "${SRCROOT}/scripts/engine-expectation.sh"'
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/RoomForMac/Generated/EngineExpectation.swift
+    postBuildScripts:
+      # Copies build/engine into the app, moves the Go tools to Contents/Helpers
+      # and signs them. Runs before Xcode signs the app.
+      - name: Embed engine
+        script: '"${SRCROOT}/scripts/embed-engine.sh"'
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine/VERSION
     scheme:
       testTargets:
         - RoomForMacTests
