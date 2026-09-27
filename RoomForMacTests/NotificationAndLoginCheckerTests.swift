@@ -69,10 +69,24 @@ struct NotificationAndLoginCheckerTests {
         #expect(fake.calls.value == ["register", "openLoginItemsSettings"])
     }
 
-    @Test func alreadyRegisteredCountsAsSuccess() async {
+    /// Code 12 (`kSMErrorAlreadyRegistered`) is success whatever its domain, so the status read afterwards is the
+    /// answer even when it still says `.notRegistered`. This is the only case where the rule changes the result:
+    /// any other error there reads `.unknown("SMAppService error <code>")`.
+    @Test(arguments: ["SMAppServiceErrorDomain", NSOSStatusErrorDomain])
+    func alreadyRegisteredCountsAsSuccess(domain: String) async {
+        let fake = FakeLoginItem(
+            status: .notRegistered,
+            registerError: NSError(domain: domain, code: 12)
+        )
+        let state = await fake.checker().request()
+        #expect(state == .notDetermined)
+        #expect(fake.calls.value == ["register"])
+    }
+
+    @Test func aRegisterErrorThatLeavesTheItemEnabledReadsGranted() async {
         let fake = FakeLoginItem(
             status: .enabled,
-            registerError: NSError(domain: "SMAppServiceErrorDomain", code: 12)
+            registerError: NSError(domain: "SMAppServiceErrorDomain", code: 2)
         )
         #expect(await fake.checker().request() == .granted)
         #expect(fake.calls.value == ["register"])

@@ -51,6 +51,8 @@ struct LoginItemChecker: PermissionChecking {
 
     /// Registers the app. When macOS wants the user to approve it, opens Login Items in System Settings.
     /// A failed registration that leaves the app unregistered reads as unknown, never as "Not yet".
+    /// Error code 12 (`alreadyRegisteredCode`) is not a failure, whatever its domain: the status read afterwards
+    /// is the answer, even `.notRegistered`.
     func request() async -> PermissionState {
         var failure: Int?
         do {
