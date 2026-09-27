@@ -13,6 +13,7 @@ struct OnboardingScaffold<Content: View>: View {
     private let primaryAction: @MainActor () -> Void
     private let content: Content
     private var isPrimaryEnabled = true
+    private var isPrimaryHidden = false
 
     init(
         flow: OnboardingFlow,
@@ -31,6 +32,14 @@ struct OnboardingScaffold<Content: View>: View {
     func primaryEnabled(_ enabled: Bool) -> Self {
         var copy = self
         copy.isPrimaryEnabled = enabled
+        return copy
+    }
+
+    /// Leaves the primary button out, as on Ready, whose own Start first scan
+    /// button is morphing glass (Ruling 5). Back and the dots stay.
+    func primaryHidden(_ hidden: Bool) -> Self {
+        var copy = self
+        copy.isPrimaryHidden = hidden
         return copy
     }
 
@@ -73,10 +82,12 @@ struct OnboardingScaffold<Content: View>: View {
                     .foregroundStyle(Palette.textSecondary)
                     .accessibilityIdentifier(AccessibilityID.onboardingSkip)
                 }
-                GlassButton(primaryTitle, action: primaryAction)
-                    .disabled(!isPrimaryEnabled)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier(AccessibilityID.onboardingPrimary)
+                if !isPrimaryHidden {
+                    GlassButton(primaryTitle, action: primaryAction)
+                        .disabled(!isPrimaryEnabled)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier(AccessibilityID.onboardingPrimary)
+                }
             }
         }
         .frame(height: 52)

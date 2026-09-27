@@ -12,10 +12,22 @@ struct OnboardingView: View {
     @State private var wordmarkProgress = 0.0
     @State private var welcomeIntroPlayed = false
     @State private var isMoving = false
+    @State private var isFinishing = false
+    /// Where the Automation step gets Finder's and System Events' icons.
+    /// `automationIcons(_:)` replaces it, so the unit tests never call `NSWorkspace`.
+    private var automationTargetIcon: @MainActor (URL) -> NSImage = AutomationStep.workspaceIcon
 
     init(model: AppModel, flow: OnboardingFlow) {
         self.model = model
         self.flow = flow
+    }
+
+    /// Replaces where the Automation step gets Finder's and System Events'
+    /// icons. The unit tests pass a stand-in.
+    func automationIcons(_ icon: @escaping @MainActor (URL) -> NSImage) -> Self {
+        var copy = self
+        copy.automationTargetIcon = icon
+        return copy
     }
 
     private var permissions: PermissionCenter {
@@ -39,6 +51,8 @@ struct OnboardingView: View {
                     .accessibilityIdentifier(AccessibilityID.onboardingStep(flow.step))
             }
             .primaryEnabled(primary.isEnabled && !isMoving)
+            .primaryHidden(flow.step == .ready)
+            .disabled(isFinishing)
         }
         .animation(OnboardingMotion.stepAnimation(reduceMotion: reduceMotion), value: flow.step)
         .task {
@@ -63,9 +77,20 @@ struct OnboardingView: View {
             )
         case .fullDiskAccess:
             FullDiskAccessStep(permissions: permissions)
-        case .automation, .adminAccess, .extras, .ready:
-            // Task 13 replaces these four with their screens.
-            PendingStepContent()
+        case .automation:
+            AutomationStep(permissions: permissions, targetIcon: automationTargetIcon)
+        case .adminAccess:
+            AdminAccessStep()
+        case .extras:
+            ExtrasStep(flow: flow)
+        case .ready:
+            ReadyStep(
+                flow: flow,
+                permissions: permissions,
+                isFinishing: isFinishing,
+                startFirstScan: { finish(startFirstScan: true) },
+                notNow: { finish(startFirstScan: false) }
+            )
         }
     }
 
@@ -87,10 +112,22 @@ struct OnboardingView: View {
         case .waitForFullDiskAccess:
             break
         case .startFirstScan:
-            Task {
-                await flow.finish { _ in }
-                model.completeOnboarding(startFirstScan: true)
-            }
+            finish(startFirstScan: true)
+        }
+    }
+
+    /// Ready's two buttons. The first press wins: everything is disabled, and
+    /// the Start button morphs into progress, until the choices are applied and
+    /// `AppModel` hands the window to the main view.
+    private func finish(startFirstScan: Bool) {
+        guard !isFinishing else {
+            return
+        }
+        withAnimation(Motion.animation(Motion.hover, reduceMotion: reduceMotion)) {
+            isFinishing = true
+        }
+        Task {
+            await OnboardingApply.finish(flow: flow, model: model, startFirstScan: startFirstScan)
         }
     }
 
@@ -206,11 +243,71 @@ enum OnboardingMotion {
     }
 }
 
-/// The content of the steps Task 13 builds (Finder & System Events, Admin
-/// access, Extras, Ready). Until then they show only the scaffold.
-private struct PendingStepContent: View {
-    var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
+/// Applies the Extras choices when onboarding ends. The Extras screen only
+/// records them; this is the one place that asks macOS, from Ready.
+enum OnboardingApply {
+    /// Applies Extras choices: requests notifications if chosen; registers or unregisters the login item.
+    ///
+    /// - Notifications on: `permissions.request(.notifications)`, which shows the
+    ///   system prompt the first time. Off: nothing, since an app cannot revoke
+    ///   its own notification permission; `notificationsWanted` (written by
+    ///   `OnboardingFlow.finish`) keeps Plan 3 from posting.
+    /// - Open at login on: once the app is in an Applications folder,
+    ///   `permissions.request(.launchAtLogin)`, which registers the app and
+    ///   opens Login Items when macOS wants approval. From anywhere else
+    ///   (a skipped Move step) nothing is registered: the login item would
+    ///   point at a copy in Downloads or a translocated path that is gone after
+    ///   a relaunch (research §1.4). Ready's note has said so.
+    /// - Open at login off: when the login item itself reports that it is
+    ///   registered (on, or waiting for approval), `loginItem.disable()`, then a
+    ///   refresh so `PermissionCenter` shows the result. The login item is asked
+    ///   directly, because the center may not have checked it yet this launch.
+    static func apply(_ choices: OnboardingChoices, permissions: PermissionCenter, loginItem: LoginItemChecker?) async {
+        if choices.notifications {
+            await permissions.request(.notifications)
+        }
+        if choices.launchAtLogin {
+            // Checked here, not trusted from earlier: an installed copy never
+            // showed the Move step, and Ready's refreshAll() may still be running.
+            await permissions.refresh(.moveToApplications)
+            if await isInstalled(permissions) {
+                await permissions.request(.launchAtLogin)
+            }
+            return
+        }
+        guard let loginItem else {
+            return
+        }
+        if isRegistered(await loginItem.currentState()) {
+            _ = await loginItem.disable()
+            await permissions.refresh(.launchAtLogin)
+        }
+    }
+
+    /// A login item that is on, or registered and waiting for approval in
+    /// System Settings. Either would open RoomForMac at login once approved.
+    static func isRegistered(_ state: PermissionState) -> Bool {
+        state == .granted || state == .requiresApproval
+    }
+
+    /// Whether this copy of the app is where a login item may point: in an
+    /// Applications folder (`.granted`), or a DEBUG build whose Move checker is
+    /// bypassed (`.notApplicable`). Without a Move checker, as in most unit
+    /// tests, there is nothing to wait for.
+    @MainActor
+    static func isInstalled(_ permissions: PermissionCenter) -> Bool {
+        !permissions.hasChecker(.moveToApplications) || permissions.state(.moveToApplications).isGranted
+    }
+
+    /// What Ready's two buttons do: `flow.finish` applies the choices once and
+    /// records completion, then the main window takes over from onboarding.
+    @MainActor
+    static func finish(flow: OnboardingFlow, model: AppModel, startFirstScan: Bool) async {
+        let permissions = model.permissions
+        let loginItem = model.dependencies.loginItem
+        await flow.finish { choices in
+            await apply(choices, permissions: permissions, loginItem: loginItem)
+        }
+        model.completeOnboarding(startFirstScan: startFirstScan)
     }
 }

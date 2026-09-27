@@ -4,6 +4,15 @@
     "1 GB of free cleanup, once" : {
 
     },
+    "A random install ID made on this Mac, so events from one install can be counted together. It is not linked to you." : {
+
+    },
+    "Admin access" : {
+
+    },
+    "Allow" : {
+
+    },
     "Allowed" : {
 
     },
@@ -25,6 +34,9 @@
     "Checking RoomForMac…" : {
 
     },
+    "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall." : {
+
+    },
     "Coming in the next update." : {
 
     },
@@ -35,6 +47,9 @@
 
     },
     "Copy diagnostics" : {
+
+    },
+    "Counts and sizes in ranges. Never file names, paths or app names." : {
 
     },
     "Denied" : {
@@ -55,7 +70,13 @@
     "Expected: %@" : {
 
     },
+    "Extras" : {
+
+    },
     "Finder" : {
+
+    },
+    "Finder & System Events" : {
 
     },
     "Found: %@" : {
@@ -68,6 +89,9 @@
 
     },
     "Get started" : {
+
+    },
+    "Here's where your approvals stand. You can change them any time in Settings." : {
 
     },
     "It stopped with error code %lld." : {
@@ -94,10 +118,19 @@
     "Not needed" : {
 
     },
+    "Not now" : {
+
+    },
     "Not yet" : {
 
     },
     "Notifications" : {
+
+    },
+    "Notify me when a cleanup finishes" : {
+
+    },
+    "Open RoomForMac at login" : {
 
     },
     "Open Settings" : {
@@ -112,6 +145,9 @@
     "Part of RoomForMac's engine couldn't run. macOS may have blocked it, or the app is damaged." : {
 
     },
+    "Pick what you like. Nothing changes until you finish setup." : {
+
+    },
     "Reinstall RoomForMac" : {
 
     },
@@ -120,6 +156,12 @@
     },
     "RoomForMac" : {
       "shouldTranslate" : false
+    },
+    "RoomForMac adds itself to your login items when you continue. If macOS asks, approve it in System Settings." : {
+
+    },
+    "RoomForMac can open at login once it is in your Applications folder." : {
+
     },
     "RoomForMac couldn't clear the quarantine flag on %@." : {
 
@@ -151,6 +193,9 @@
     "RoomForMac is now in %@, but it couldn't reopen itself. Quit it, then open it from there." : {
 
     },
+    "RoomForMac is ready" : {
+
+    },
     "RoomForMac isn't allowed to add apps to %@." : {
 
     },
@@ -158,6 +203,9 @@
 
     },
     "RoomForMac needs to be reinstalled" : {
+
+    },
+    "RoomForMac only asks for your password when you pick system-level items, and macOS draws that prompt, never us. Nothing is requested now." : {
 
     },
     "RoomForMac ran into an unexpected problem." : {
@@ -169,13 +217,22 @@
     "RoomForMac works best from your Applications folder. One click moves it there and opens it again." : {
 
     },
+    "RoomForMac's engine asks these two parts of macOS for help. Allow them now, so macOS doesn't stop your first cleanup to ask." : {
+
+    },
     "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
 
     },
     "Settings" : {
 
     },
+    "Share anonymous usage data" : {
+
+    },
     "Show details" : {
+
+    },
+    "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails." : {
 
     },
     "Signal %lld" : {
@@ -218,6 +275,18 @@
     "System Events" : {
 
     },
+    "System-level items arrive in a later update." : {
+
+    },
+    "That a cleanup finished or failed: how much it freed and how many items, in ranges, or the kind of error." : {
+
+    },
+    "That a scan finished: which tool ran, and how much it found and how long it took, in ranges." : {
+
+    },
+    "That setup finished, and which approvals you gave, as yes or no." : {
+
+    },
     "The engine couldn't start" : {
 
     },
@@ -257,7 +326,19 @@
     "Upgrade once for unlimited cleanup — every future version included." : {
 
     },
+    "What we collect" : {
+
+    },
+    "When the free 1 GB runs out, whether the upgrade screen or checkout opened, and whether a purchase went through." : {
+
+    },
+    "Whether a license was activated, and if not, the kind of problem." : {
+
+    },
     "Why?" : {
+
+    },
+    "With each of these: the app version, the macOS version, the kind of processor and whether RoomForMac is licensed." : {
 
     },
     "Without Full Disk Access:" : {
@@ -270,6 +351,9 @@
 
     },
     "macOS asks separately before RoomForMac looks in Downloads or at other apps' data." : {
+
+    },
+    "macOS asks whether RoomForMac may send notifications when you continue." : {
 
     },
     "macOS ended it before it finished." : {

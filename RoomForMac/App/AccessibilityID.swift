@@ -56,3 +56,21 @@ extension AccessibilityID {
         "permission.chip.\(id.rawValue)"
     }
 }
+
+// MARK: - Onboarding, part 2 (Task 13)
+
+extension AccessibilityID {
+    static let extrasNotifications = "onboarding.extras.notifications"
+    static let extrasLaunchAtLogin = "onboarding.extras.launchAtLogin"
+    static let extrasAnalytics = "onboarding.extras.analytics"
+    /// The "What we collect" disclosure under the analytics switch.
+    static let extrasWhatWeCollect = "onboarding.extras.whatWeCollect"
+    static let readyStartScan = "onboarding.ready.startScan"
+    /// "Not now" on Ready: finish onboarding without a first scan.
+    static let readyNotNow = "onboarding.ready.notNow"
+
+    /// A permission chip on Ready: "onboarding.summary.<rawValue>".
+    static func summaryChip(_ id: PermissionID) -> String {
+        "onboarding.summary.\(id.rawValue)"
+    }
+}
