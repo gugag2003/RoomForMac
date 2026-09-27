@@ -4,6 +4,9 @@
     "App %@" : {
 
     },
+    "Applications folder" : {
+
+    },
     "Checking RoomForMac…" : {
 
     },
@@ -28,13 +31,25 @@
     "Expected: %@" : {
 
     },
+    "Finder" : {
+
+    },
     "Found: %@" : {
+
+    },
+    "Full Disk Access" : {
 
     },
     "It stopped with error code %lld." : {
 
     },
     "Message: %@" : {
+
+    },
+    "Notifications" : {
+
+    },
+    "Open at login" : {
 
     },
     "Open download page" : {
@@ -108,6 +123,9 @@
       }
     },
     "Stopped" : {
+
+    },
+    "System Events" : {
 
     },
     "The engine couldn't start" : {
