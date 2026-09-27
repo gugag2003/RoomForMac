@@ -26,8 +26,8 @@ struct AppMoverTests {
     func mover(
         running: Set<String> = [],
         readOnlySource: Bool? = false,
-        trashed: MoveCallLog<URL> = MoveCallLog(),
-        asked: MoveCallLog<URL> = MoveCallLog()
+        trashed: Locked<[URL]> = Locked([]),
+        asked: Locked<[URL]> = Locked([])
     ) -> AppMover {
         let trash = self.trash
         return AppMover(
@@ -49,8 +49,8 @@ struct AppMoverTests {
 
     @Test func movesIntoTheFirstFolder() throws {
         let source = try AppBundleFixture.make(in: downloads, marker: "new")
-        let trashed = MoveCallLog<URL>()
-        let asked = MoveCallLog<URL>()
+        let trashed = Locked<[URL]>([])
+        let asked = Locked<[URL]>([])
         // The public initializer, so the real read-only check runs: the temporary folder is writable.
         let mover = AppMover(
             isRunning: { url in
@@ -65,22 +65,22 @@ struct AppMoverTests {
         #expect(moved == first.appending(path: "RoomForMac.app"))
         #expect(try AppBundleFixture.marker(of: moved) == "new")
         #expect(!FileManager.default.fileExists(atPath: source.path))
-        #expect(trashed.entries.isEmpty)
-        #expect(asked.entries.isEmpty)
+        #expect(trashed.value.isEmpty)
+        #expect(asked.value.isEmpty)
     }
 
     @Test func replacesAnOlderCopyThatIsNotRunning() throws {
         let source = try AppBundleFixture.make(in: downloads, marker: "new")
         let existing = try AppBundleFixture.make(in: first, marker: "old")
-        let trashed = MoveCallLog<URL>()
-        let asked = MoveCallLog<URL>()
+        let trashed = Locked<[URL]>([])
+        let asked = Locked<[URL]>([])
 
         let moved = try mover(trashed: trashed, asked: asked).move(appAt: source, toFirstWritableOf: [first, second])
 
         #expect(moved == existing)
         #expect(try AppBundleFixture.marker(of: moved) == "new")
-        #expect(asked.entries == [existing])
-        #expect(trashed.entries == [existing])
+        #expect(asked.value == [existing])
+        #expect(trashed.value == [existing])
         let inTrash = try FileManager.default.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil)
         #expect(inTrash.count == 1)
         #expect(try AppBundleFixture.marker(of: #require(inTrash.first)) == "old")
@@ -89,14 +89,14 @@ struct AppMoverTests {
     @Test func refusesToReplaceARunningCopy() throws {
         let source = try AppBundleFixture.make(in: downloads, marker: "new")
         let existing = try AppBundleFixture.make(in: first, marker: "old")
-        let trashed = MoveCallLog<URL>()
+        let trashed = Locked<[URL]>([])
 
         #expect(throws: AppMoveError.destinationIsRunning(existing)) {
             try mover(running: [existing.path], trashed: trashed).move(appAt: source, toFirstWritableOf: [first, second])
         }
         #expect(try AppBundleFixture.marker(of: existing) == "old")
         #expect(try AppBundleFixture.marker(of: source) == "new")
-        #expect(trashed.entries.isEmpty)
+        #expect(trashed.value.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: second.appending(path: "RoomForMac.app").path))
     }
 
@@ -185,16 +185,16 @@ struct AppMoverTests {
         // A translocated app whose original is already in the folder.
         let inPlace = try AppBundleFixture.make(in: first, marker: "same")
         try AppBundleFixture.setQuarantine(on: inPlace)
-        let trashed = MoveCallLog<URL>()
-        let asked = MoveCallLog<URL>()
+        let trashed = Locked<[URL]>([])
+        let asked = Locked<[URL]>([])
 
         let result = try mover(trashed: trashed, asked: asked).move(appAt: inPlace, toFirstWritableOf: [first, second])
 
         #expect(result == inPlace)
         #expect(try AppBundleFixture.marker(of: inPlace) == "same")
         #expect(!AppBundleFixture.hasQuarantine(inPlace))
-        #expect(trashed.entries.isEmpty)
-        #expect(asked.entries.isEmpty)
+        #expect(trashed.value.isEmpty)
+        #expect(asked.value.isEmpty)
     }
 
     // MARK: - Helpers
@@ -246,8 +246,8 @@ struct AppMoverTests {
     }
 
     @Test @MainActor func relaunchSpawnsThenQuits() throws {
-        let events = MoveCallLog<String>()
-        let spawned = MoveCallLog<[String]>()
+        let events = Locked<[String]>([])
+        let spawned = Locked<[[String]]>([])
         let relauncher = Relauncher(
             spawn: { executable, arguments in
                 events.append("spawn \(executable)")
@@ -259,13 +259,13 @@ struct AppMoverTests {
 
         try relauncher.relaunch(at: app)
 
-        #expect(events.entries == ["spawn /bin/sh", "terminate"])
+        #expect(events.value == ["spawn /bin/sh", "terminate"])
         let expected = Relauncher.command(waitingFor: ProcessInfo.processInfo.processIdentifier, thenOpen: app)
-        #expect(spawned.entries == [expected.arguments])
+        #expect(spawned.value == [expected.arguments])
     }
 
     @Test @MainActor func aFailedSpawnDoesNotQuit() {
-        let events = MoveCallLog<String>()
+        let events = Locked<[String]>([])
         let relauncher = Relauncher(
             spawn: { _, _ in
                 events.append("spawn")
@@ -277,6 +277,6 @@ struct AppMoverTests {
         #expect(throws: CocoaError.self) {
             try relauncher.relaunch(at: URL(fileURLWithPath: "/Applications/RoomForMac.app"))
         }
-        #expect(events.entries == ["spawn"])
+        #expect(events.value == ["spawn"])
     }
 }

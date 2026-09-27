@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import Synchronization
 
 /// A minimal app bundle on disk, for move tests.
 enum AppBundleFixture {
@@ -40,19 +39,6 @@ enum AppBundleFixture {
 
     static func setPermissions(_ mode: Int, on url: URL) throws {
         try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
-    }
-}
-
-/// A thread-safe record of the calls a fake received.
-final class MoveCallLog<Element: Sendable>: Sendable {
-    private let storage = Mutex<[Element]>([])
-
-    func append(_ element: Element) {
-        storage.withLock { $0.append(element) }
-    }
-
-    var entries: [Element] {
-        storage.withLock { $0 }
     }
 }
 

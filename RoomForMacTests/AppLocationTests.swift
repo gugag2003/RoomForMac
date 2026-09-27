@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 import Testing
 @testable import RoomForMac
 
@@ -133,8 +132,8 @@ struct AppLocationTests {
         let home: URL
         let source: URL
         let files: ConfinedFileManager
-        let events = MoveCallLog<String>()
-        let spawned = MoveCallLog<[String]>()
+        let events = Locked<[String]>([])
+        let spawned = Locked<[[String]]>([])
 
         init(in root: URL) throws {
             home = root.appending(path: "home")
@@ -194,8 +193,8 @@ struct AppLocationTests {
 
         #expect(try AppBundleFixture.marker(of: scene.destination) == "new")
         #expect(!FileManager.default.fileExists(atPath: scene.source.path))
-        #expect(scene.events.entries == ["spawn", "terminate"])
-        #expect(scene.spawned.entries.first?.last == scene.destination.path)
+        #expect(scene.events.value == ["spawn", "terminate"])
+        #expect(scene.spawned.value.first?.last == scene.destination.path)
         #expect(checker.lastError == nil)
     }
 
@@ -207,7 +206,7 @@ struct AppLocationTests {
         #expect(await checker.request() == .granted)
 
         #expect(try AppBundleFixture.marker(of: scene.destination) == "new")
-        #expect(scene.spawned.entries.first?.last == scene.destination.path)
+        #expect(scene.spawned.value.first?.last == scene.destination.path)
     }
 
     @Test func requestKeepsARunningCopyAndReportsIt() async throws {
@@ -226,7 +225,7 @@ struct AppLocationTests {
         #expect(copy.lastError == checker.lastError, "copies of a checker share its last error")
         #expect(try AppBundleFixture.marker(of: existing) == "old")
         #expect(try AppBundleFixture.marker(of: scene.source) == "new")
-        #expect(scene.events.entries.isEmpty)
+        #expect(scene.events.value.isEmpty)
     }
 
     @Test func aFailedRelaunchIsReportedAndDoesNotQuit() async throws {
@@ -235,7 +234,7 @@ struct AppLocationTests {
 
         #expect(await checker.request() == .denied)
 
-        #expect(scene.events.entries == ["spawn"])
+        #expect(scene.events.value == ["spawn"])
         guard case .failed(let sentence)? = checker.lastError else {
             Issue.record("expected failed, got \(String(describing: checker.lastError))")
             return
@@ -246,30 +245,16 @@ struct AppLocationTests {
     @Test func aLaterSuccessClearsTheLastError() async throws {
         let scene = try MoveScene(in: temp.url)
         try AppBundleFixture.make(in: scene.home.appending(path: "Applications"), marker: "old")
-        let otherCopyIsOpen = RunningSwitch(true)
+        let otherCopyIsOpen = Locked(true)
         let checker = scene.checker(running: { otherCopyIsOpen.value })
 
         #expect(await checker.request() == .denied)
         #expect(checker.lastError != nil)
 
-        otherCopyIsOpen.value = false   // the user quit the other copy
+        otherCopyIsOpen.set(false)   // the user quit the other copy
         #expect(await checker.request() == .granted)
         #expect(checker.lastError == nil)
         #expect(try AppBundleFixture.marker(of: scene.destination) == "new")
-        #expect(scene.events.entries == ["trash RoomForMac.app", "spawn", "terminate"])
-    }
-}
-
-/// Whether the other copy counts as open; flipped between two requests.
-private final class RunningSwitch: Sendable {
-    private let state: Mutex<Bool>
-
-    init(_ value: Bool) {
-        state = Mutex(value)
-    }
-
-    var value: Bool {
-        get { state.withLock { $0 } }
-        set { state.withLock { $0 = newValue } }
+        #expect(scene.events.value == ["trash RoomForMac.app", "spawn", "terminate"])
     }
 }
