@@ -10,12 +10,46 @@ struct AppDependencies {
     var engineCheck: @Sendable () async -> Result<EngineInstallation, EngineProblem>
     var openURL: @MainActor (URL) -> Void
 
+    /// Every approval onboarding and Settings check. The defaults (none, no Move
+    /// step, no login item) let tests that do not need permissions leave them out.
+    var permissionCheckers: [any PermissionChecking] = []
+    /// Whether onboarding shows the Move to Applications step.
+    var needsMoveStep = false
+    /// The login item checker that is also in `permissionCheckers`. Extras and
+    /// Settings need its `disable()`, which `PermissionCenter` does not offer.
+    var loginItem: LoginItemChecker? = nil
+
     static func live(defaults: UserDefaults = .standard) -> AppDependencies {
-        AppDependencies(
+        let openSettings: @MainActor @Sendable (URL) -> Void = { url in
+            _ = NSWorkspace.shared.open(url)
+        }
+        // Ruling 12, decided by Task 10: a DEBUG build skips the Move step unless it
+        // was launched with `-RFMForceMoveStep YES`. Read once, so the checker and
+        // `needsMoveStep` always agree.
+        let bypass = AppLocationChecker.bypassesMoveStepInThisBuild
+        let loginItem = LoginItemChecker.live()
+        let checkers: [any PermissionChecking] = [
+            AppLocationChecker.live(bypass: bypass),
+            FullDiskAccessChecker(openSettings: openSettings),
+            AutomationChecker.live(.finder, openSettings: openSettings),
+            AutomationChecker.live(.systemEvents, openSettings: openSettings),
+            NotificationChecker.live(),
+            loginItem,
+        ]
+        return AppDependencies(
             preferences: AppPreferences(defaults: defaults),
             engineCheck: { await EngineHealthCheck().run() },
-            openURL: { url in _ = NSWorkspace.shared.open(url) }
+            openURL: { url in _ = NSWorkspace.shared.open(url) },
+            permissionCheckers: checkers,
+            needsMoveStep: !bypass && AppLocation.current() != .installed,
+            loginItem: loginItem
         )
+    }
+
+    /// The Move to Applications checker, for the reason a move failed. It shares
+    /// its `lastError` box with the copy inside `PermissionCenter`.
+    var appLocationChecker: AppLocationChecker? {
+        permissionCheckers.lazy.compactMap { $0 as? AppLocationChecker }.first
     }
 
     /// The dependencies for how this process was started. `.unitTestHost` never

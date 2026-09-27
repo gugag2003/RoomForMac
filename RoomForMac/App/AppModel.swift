@@ -26,11 +26,24 @@ final class AppModel {
     /// starts the scan and clears it.
     var pendingFirstScan = false
 
+    /// Every approval the app tracks. Onboarding and Settings → Permissions share it.
+    let permissions: PermissionCenter
+
+    /// The onboarding in progress, resumed from preferences. Nil once onboarding is complete.
+    private(set) var onboardingFlow: OnboardingFlow?
+
     @ObservationIgnored private var hasStarted = false
 
     init(dependencies: AppDependencies) {
         self.dependencies = dependencies
-        isOnboarded = dependencies.preferences.onboardingCompleted
+        let preferences = dependencies.preferences
+        let permissions = PermissionCenter(checkers: dependencies.permissionCheckers, preferences: preferences)
+        let isOnboarded = preferences.onboardingCompleted
+        self.permissions = permissions
+        self.isOnboarded = isOnboarded
+        onboardingFlow = isOnboarded
+            ? nil
+            : OnboardingFlow(preferences: preferences, permissions: permissions, needsMoveStep: dependencies.needsMoveStep)
     }
 
     /// Runs the engine check once. Later calls, including one made while the
@@ -54,6 +67,7 @@ final class AppModel {
         preferences.onboardingCompleted = true
         preferences.onboardingStep = nil
         isOnboarded = true
+        onboardingFlow = nil
         selection = .smartClean
         pendingFirstScan = startFirstScan
     }

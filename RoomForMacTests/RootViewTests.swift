@@ -37,7 +37,6 @@ struct RootViewTests {
         #expect(SidebarSection.allCases.map(AccessibilityID.placeholder)
             == ["placeholder.smartClean", "placeholder.uninstaller", "placeholder.status"])
         #expect(AccessibilityID.checkingEngine == "engine.checking")
-        #expect(AccessibilityID.onboardingPlaceholder == "onboarding.placeholder")
         #expect(AccessibilityID.engineProblemCard == "engineProblem.card")
         #expect(AccessibilityID.engineProblemDetails == "engineProblem.details")
         #expect(AccessibilityID.engineProblemCopy == "engineProblem.copy")

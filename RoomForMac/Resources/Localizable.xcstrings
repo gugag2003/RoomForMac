@@ -1,13 +1,25 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "1 GB of free cleanup, once" : {
+
+    },
+    "Allowed" : {
+
+    },
     "Another copy of RoomForMac is already open in %@. Quit it, then try again." : {
 
     },
     "App %@" : {
 
     },
+    "Applications" : {
+
+    },
     "Applications folder" : {
+
+    },
+    "Back" : {
 
     },
     "Checking RoomForMac…" : {
@@ -16,13 +28,22 @@
     "Coming in the next update." : {
 
     },
+    "Continue" : {
+
+    },
     "Copied" : {
 
     },
     "Copy diagnostics" : {
 
     },
+    "Denied" : {
+
+    },
     "Details:" : {
+
+    },
+    "Drag RoomForMac into your Applications folder, then open it from there." : {
 
     },
     "Exit code %lld" : {
@@ -43,13 +64,43 @@
     "Full Disk Access" : {
 
     },
+    "Full Disk Access is on" : {
+
+    },
+    "Get started" : {
+
+    },
     "It stopped with error code %lld." : {
+
+    },
+    "Lets RoomForMac see caches, logs and leftovers in every folder, so scans are complete." : {
 
     },
     "Message: %@" : {
 
     },
+    "Move RoomForMac to Applications" : {
+
+    },
+    "Move and relaunch" : {
+
+    },
+    "Needs approval" : {
+
+    },
+    "No account, no card." : {
+
+    },
+    "Not needed" : {
+
+    },
+    "Not yet" : {
+
+    },
     "Notifications" : {
+
+    },
+    "Open Settings" : {
 
     },
     "Open at login" : {
@@ -64,13 +115,22 @@
     "Reinstall RoomForMac" : {
 
     },
+    "Reveal in Finder" : {
+
+    },
     "RoomForMac" : {
       "shouldTranslate" : false
     },
     "RoomForMac couldn't clear the quarantine flag on %@." : {
 
     },
+    "RoomForMac couldn't move itself." : {
+
+    },
     "RoomForMac couldn't read the engine's answer." : {
+
+    },
+    "RoomForMac couldn't relaunch itself. Quit it and open it again." : {
 
     },
     "RoomForMac couldn't start %@." : {
@@ -94,6 +154,9 @@
     "RoomForMac isn't allowed to add apps to %@." : {
 
     },
+    "RoomForMac moving into the Applications folder" : {
+
+    },
     "RoomForMac needs to be reinstalled" : {
 
     },
@@ -101,6 +164,12 @@
 
     },
     "RoomForMac stopped it after waiting too long. Try again." : {
+
+    },
+    "RoomForMac works best from your Applications folder. One click moves it there and opens it again." : {
+
+    },
+    "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
 
     },
     "Settings" : {
@@ -112,13 +181,22 @@
     "Signal %lld" : {
 
     },
+    "Skip" : {
+
+    },
     "Smart Clean" : {
+
+    },
+    "Some apps can't be moved to the Trash when you uninstall them." : {
 
     },
     "Some files RoomForMac needs are missing or damaged." : {
 
     },
     "Something went wrong" : {
+
+    },
+    "Start first scan" : {
 
     },
     "Status" : {
@@ -164,13 +242,34 @@
     "Title: %@" : {
 
     },
+    "Turned it on? Relaunch RoomForMac" : {
+
+    },
     "Uninstaller" : {
 
     },
-    "Welcome to RoomForMac" : {
+    "Unknown" : {
+
+    },
+    "Unlimited scans and previews" : {
+
+    },
+    "Upgrade once for unlimited cleanup — every future version included." : {
+
+    },
+    "Why?" : {
+
+    },
+    "Without Full Disk Access:" : {
+
+    },
+    "Your Trash shows as empty, even when it isn't." : {
 
     },
     "macOS %@" : {
+
+    },
+    "macOS asks separately before RoomForMac looks in Downloads or at other apps' data." : {
 
     },
     "macOS ended it before it finished." : {

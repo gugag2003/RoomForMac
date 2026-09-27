@@ -36,7 +36,9 @@ struct RootView: View {
             case .engineProblem(let problem):
                 EngineProblemView(problem: problem)
             case .onboarding:
-                OnboardingPlaceholderView()
+                if let flow = model.onboardingFlow {
+                    OnboardingView(model: model, flow: flow)
+                }
             case .main:
                 MainSplitView(model: model)
             }
@@ -54,23 +56,6 @@ private struct CheckingEngineView: View {
             .controlSize(.large)
             .accessibilityIdentifier(AccessibilityID.checkingEngine)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// Stands in for onboarding until Task 12 replaces it with `OnboardingView`.
-private struct OnboardingPlaceholderView: View {
-    var body: some View {
-        GlassCard {
-            Text("Welcome to RoomForMac")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Palette.text)
-                .accessibilityIdentifier(AccessibilityID.onboardingPlaceholder)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            BackdropView(scene: .onboarding)
-                .ignoresSafeArea()
-        }
     }
 }
 
