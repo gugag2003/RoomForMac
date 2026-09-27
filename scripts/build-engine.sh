@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the patched Mole engine that RoomForMac bundles.
 #
-# Output:  $ENGINE_OUT (default build/engine): mole, bin/, lib/, host-bin/, VERSION
+# Output:  $ENGINE_OUT (default build/engine): mole, bin/, lib/, host-bin/, LICENSE, VERSION
 # Source:  build/engine-src: pinned Mole with patches/mole applied (kept for tests)
 
 set -euo pipefail
@@ -71,11 +71,18 @@ exit 1
 SHIM
 chmod +x "$OUT/host-bin/sudo"
 
+# GPL-3.0: the engine ships with Mole's license text.
+cp "$VENDOR/LICENSE" "$OUT/LICENSE"
+
+# VERSION is written last, so an interrupted build never looks complete to
+# scripts/ensure-engine.sh. builder_sha256 lets it notice edits to this script.
+builder_sha="$(shasum -a 256 "$ROOT/scripts/build-engine.sh" | cut -d' ' -f1)"
 cat > "$OUT/VERSION" << VERSION
 mole_tag=$tag
 mole_commit=$commit
 patches_sha256=$patches_sha
 patch_count=${#patches[@]}
+builder_sha256=$builder_sha
 VERSION
 
 printf 'Engine ready: %s (%s, %d patches)\n' "$OUT" "$tag" "${#patches[@]}"
