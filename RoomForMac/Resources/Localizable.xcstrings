@@ -1,0 +1,12 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "RoomForMac" : {
+      "shouldTranslate" : false
+    },
+    "Settings" : {
+
+    }
+  },
+  "version" : "1.0"
+}
