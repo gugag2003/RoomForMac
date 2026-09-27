@@ -9,14 +9,27 @@ struct PermissionSummaryItem: Identifiable, Equatable, Sendable {
 }
 
 /// The onboarding state machine. It owns which screen is showing and what the
-/// user chose, and persists the screen on every change, so the relaunch after
+/// user chose, and persists both on every change, so the relaunch after
 /// "Move and relaunch", the relaunch after granting Full Disk Access, or a quit
-/// half-way through all resume where the user left off.
+/// half-way through all resume where the user left off, with the same choices.
 @MainActor @Observable
 final class OnboardingFlow {
     private(set) var step: OnboardingStep
     let steps: [OnboardingStep]
-    var choices: OnboardingChoices
+
+    /// What the user picked on Extras. Every change is saved at once (`onboarding.choices`),
+    /// so an analytics opt-out survives a quit on Ready, where there is no switch for it. The
+    /// preferences the app reads (`analyticsEnabled`, `notificationsWanted`) still change only
+    /// in `finish`.
+    var choices: OnboardingChoices {
+        get { currentChoices }
+        set {
+            currentChoices = newValue
+            preferences.onboardingChoices = newValue
+        }
+    }
+
+    private var currentChoices: OnboardingChoices
 
     @ObservationIgnored private var preferences: AppPreferences
     @ObservationIgnored private let permissions: PermissionCenter
@@ -26,7 +39,7 @@ final class OnboardingFlow {
         let steps = OnboardingStep.allCases.filter { needsMoveStep || $0 != .moveToApplications }
         self.steps = steps
         self.step = Self.resumeStep(stored: preferences.onboardingStep, in: steps)
-        self.choices = OnboardingChoices(analytics: preferences.analyticsEnabled)
+        self.currentChoices = preferences.onboardingChoices ?? OnboardingChoices(analytics: preferences.analyticsEnabled)
         self.preferences = preferences
         self.permissions = permissions
     }
@@ -76,10 +89,11 @@ final class OnboardingFlow {
         }
     }
 
-    /// Applies the choices first, then records completion. If the app quits
-    /// while `apply` waits on a system prompt, the next launch resumes at Ready
-    /// and asks again. Only the first call does anything, so a double click on
-    /// "Start first scan" cannot apply twice.
+    /// Applies the choices first, then records them and completion, and clears
+    /// the saved step and choices. If the app quits while `apply` waits on a
+    /// system prompt, the next launch resumes at Ready with the same choices
+    /// (saved as they changed) and applies them again. Only the first call does
+    /// anything, so a double click on "Start first scan" cannot apply twice.
     func finish(apply: (OnboardingChoices) async -> Void) async {
         guard !hasStartedFinishing else { return }
         hasStartedFinishing = true
@@ -89,6 +103,7 @@ final class OnboardingFlow {
         preferences.notificationsWanted = chosen.notifications
         preferences.onboardingCompleted = true
         preferences.onboardingStep = nil
+        preferences.onboardingChoices = nil
     }
 
     /// The step to open on: the stored one when it is part of `steps`; for a

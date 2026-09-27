@@ -181,6 +181,61 @@ struct OnboardingFlowTests {
         #expect(makeFlow().choices == OnboardingChoices(notifications: false, launchAtLogin: false, analytics: false))
     }
 
+    @Test func aRelaunchRestoresTheExtrasChoices() {
+        let flow = makeFlow()
+        for _ in flow.steps where flow.step != .extras {
+            flow.next()
+        }
+        #expect(flow.step == .extras)
+        flow.choices.notifications = true
+        flow.choices.launchAtLogin = true
+        flow.choices.analytics = false
+
+        // The app quits on Extras or Ready; the next launch builds a new flow over the same defaults.
+        let relaunched = makeFlow()
+        #expect(relaunched.step == .extras)
+        #expect(relaunched.choices == OnboardingChoices(notifications: true, launchAtLogin: true, analytics: false))
+    }
+
+    @Test func anAnalyticsOptOutSurvivesARelaunchAtReady() async {
+        // Spec §8 consent: turned off on Extras, then a quit at Ready. Ready has no analytics
+        // switch, so finishing after the relaunch must not turn it back on.
+        let flow = makeFlow()
+        for _ in flow.steps.dropFirst() {
+            flow.next()
+        }
+        flow.choices.analytics = false
+
+        let relaunched = makeFlow()
+        #expect(relaunched.step == .ready)
+        var applied: [OnboardingChoices] = []
+        await relaunched.finish { applied.append($0) }
+
+        #expect(applied.map(\.analytics) == [false])
+        #expect(preferences.analyticsEnabled == false)
+    }
+
+    @Test func savedChoicesFillAMissingValueAsAFreshFlowWould() {
+        temporary.defaults.set(false, forKey: "analytics.enabled")
+        temporary.defaults.set(["notifications": true], forKey: "onboarding.choices")
+        #expect(makeFlow().choices == OnboardingChoices(notifications: true, launchAtLogin: false, analytics: false))
+    }
+
+    @Test func unreadableSavedChoicesAreIgnored() {
+        temporary.defaults.set("banana", forKey: "onboarding.choices")
+        #expect(makeFlow().choices == OnboardingChoices())
+    }
+
+    @Test func finishClearsTheSavedChoices() async {
+        let flow = makeFlow()
+        flow.choices.notifications = true
+        #expect(temporary.defaults.object(forKey: "onboarding.choices") != nil, "a change is saved at once")
+
+        await flow.finish { _ in }
+
+        #expect(temporary.defaults.object(forKey: "onboarding.choices") == nil)
+    }
+
     @Test func finishAppliesTheChoicesOnceThenPersists() async {
         let flow = makeFlow()
         for _ in flow.steps.dropFirst() {

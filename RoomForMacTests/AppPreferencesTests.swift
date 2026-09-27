@@ -49,6 +49,27 @@ struct AppPreferencesTests {
         #expect(defaults.string(forKey: "permissions.lastKnown.automationFinder") == "denied")
     }
 
+    @Test func onboardingChoicesRoundTripUnderAStableKey() {
+        let writer = temporary.preferences
+        #expect(writer.onboardingChoices == nil)
+        writer.onboardingChoices = OnboardingChoices(notifications: true, launchAtLogin: false, analytics: false)
+
+        let reader = AppPreferences(defaults: temporary.defaults)
+        #expect(reader.onboardingChoices == OnboardingChoices(notifications: true, launchAtLogin: false, analytics: false))
+        let stored = temporary.defaults.dictionary(forKey: "onboarding.choices")
+        #expect(stored?["notifications"] as? Bool == true)
+        #expect(stored?["launchAtLogin"] as? Bool == false)
+        #expect(stored?["analytics"] as? Bool == false)
+    }
+
+    @Test func clearingTheChoicesRemovesTheKey() {
+        let preferences = temporary.preferences
+        preferences.onboardingChoices = OnboardingChoices()
+        preferences.onboardingChoices = nil
+        #expect(preferences.onboardingChoices == nil)
+        #expect(temporary.defaults.object(forKey: "onboarding.choices") == nil)
+    }
+
     @Test func clearingTheStepRemovesTheKey() {
         let preferences = temporary.preferences
         preferences.onboardingStep = "extras"

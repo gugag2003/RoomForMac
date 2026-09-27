@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Screen 7: three optional extras. The toggles only record the choices in
-/// `flow.choices`; nothing is asked of macOS until the user leaves Ready, where
-/// `OnboardingApply` applies them.
+/// `flow.choices`, which saves them for a relaunch; nothing is asked of macOS
+/// until the user leaves Ready, where `OnboardingApply` applies them.
 struct ExtrasStep: View {
     /// What anonymous usage data contains, in plain words: the events of spec §8
     /// and the properties sent with every one of them.

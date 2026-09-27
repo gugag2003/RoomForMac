@@ -11,6 +11,7 @@ struct AppPreferences: @unchecked Sendable {
     enum Key {
         static let onboardingCompleted = "onboarding.completed"
         static let onboardingStep = "onboarding.step"
+        static let onboardingChoices = "onboarding.choices"
         static let analyticsEnabled = "analytics.enabled"
         static let notificationsWanted = "notifications.wanted"
         static let lastKnownStatePrefix = "permissions.lastKnown."
@@ -34,6 +35,32 @@ struct AppPreferences: @unchecked Sendable {
         nonmutating set { store(newValue, forKey: Key.onboardingStep) }
     }
 
+    /// The Extras choices of an onboarding in progress, saved as they change so a relaunch
+    /// restores them; nil when none are saved. `OnboardingFlow.finish` clears them once it has
+    /// written `analyticsEnabled` and `notificationsWanted`. Stored as a dictionary of Bools;
+    /// a missing value reads as a fresh flow would start it.
+    var onboardingChoices: OnboardingChoices? {
+        get {
+            guard let saved = defaults.dictionary(forKey: Key.onboardingChoices) else { return nil }
+            return OnboardingChoices(
+                notifications: saved[ChoiceKey.notifications] as? Bool ?? false,
+                launchAtLogin: saved[ChoiceKey.launchAtLogin] as? Bool ?? false,
+                analytics: saved[ChoiceKey.analytics] as? Bool ?? analyticsEnabled
+            )
+        }
+        nonmutating set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Key.onboardingChoices)
+                return
+            }
+            defaults.set([
+                ChoiceKey.notifications: newValue.notifications,
+                ChoiceKey.launchAtLogin: newValue.launchAtLogin,
+                ChoiceKey.analytics: newValue.analytics,
+            ], forKey: Key.onboardingChoices)
+        }
+    }
+
     /// Anonymous usage data, on unless the user turned it off.
     var analyticsEnabled: Bool {
         get { bool(forKey: Key.analyticsEnabled, default: true) }
@@ -55,6 +82,13 @@ struct AppPreferences: @unchecked Sendable {
     /// Stores the state for a permission; nil removes it.
     func setLastKnownState(_ state: String?, for permission: String) {
         store(state, forKey: Key.lastKnownStatePrefix + permission)
+    }
+
+    /// The names inside the `onboarding.choices` dictionary. Stored like the keys: never rename one.
+    private enum ChoiceKey {
+        static let notifications = "notifications"
+        static let launchAtLogin = "launchAtLogin"
+        static let analytics = "analytics"
     }
 
     /// Missing keys give `fallback`. Present values go through `bool(forKey:)`, which
