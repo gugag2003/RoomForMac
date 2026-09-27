@@ -44,21 +44,65 @@ struct RootViewTests {
         #expect(AccessibilityID.engineProblemDownload == "engineProblem.download")
     }
 
+    /// Each placeholder draws its own section's card, not an empty frame, and no two
+    /// sections look alike, so a wrong title or symbol shows here.
     @MainActor
     @Test(arguments: [ColorScheme.light, .dark])
     func placeholdersRender(colorScheme: ColorScheme) throws {
-        let views: [AnyView] = [
-            AnyView(SmartCleanPlaceholderView()),
-            AnyView(UninstallerPlaceholderView()),
-            AnyView(StatusPlaceholderView()),
-        ]
-        for view in views {
-            let renderer = ImageRenderer(content: view
-                .frame(width: 600, height: 400)
-                .environment(\.colorScheme, colorScheme))
-            let image = try #require(renderer.cgImage)
-            #expect(image.width == 600)
-            #expect(image.height == 400)
+        let sections = SidebarSection.allCases
+        let empty = try Self.render(Color.clear, in: colorScheme)
+        let references = try sections.map { try Self.render(SectionPlaceholderView(section: $0), in: colorScheme) }
+        var renders: [(section: SidebarSection, pixels: RenderedPixels)] = []
+        for (section, view) in Self.placeholders() {
+            let render = try Self.render(view, in: colorScheme)
+            let blank = render.differingPixels(from: empty)
+            #expect(blank >= Self.minimumDifference, "\(section): only \(blank) pixels differ from an empty frame")
+            let distances = references.map { render.differingPixels(from: $0) }
+            let closest = try #require(zip(sections, distances).min { $0.1 < $1.1 }).0
+            #expect(closest == section, "\(section)'s view draws the \(closest) card (pixels differing: \(distances))")
+            renders.append((section, render))
         }
+        for first in renders.indices {
+            for second in renders.indices where second > first {
+                let (one, other) = (renders[first], renders[second])
+                let difference = one.pixels.differingPixels(from: other.pixels)
+                #expect(difference >= Self.minimumDifference, "\(one.section) and \(other.section): only \(difference) pixels differ")
+            }
+        }
+    }
+
+    @MainActor
+    @Test func placeholdersFollowTheColorScheme() throws {
+        for (section, view) in Self.placeholders() {
+            let light = try Self.render(view, in: .light)
+            let dark = try Self.render(view, in: .dark)
+            let difference = light.differingPixels(from: dark)
+            #expect(difference >= Self.minimumDifference, "\(section): only \(difference) pixels differ between light and dark")
+        }
+    }
+
+    /// Fewer differing pixels than this means two renders show the same thing. Two
+    /// renders of one placeholder differ in about a hundred pixels at most; another
+    /// section's card differs in several thousand, and the other appearance or an
+    /// empty frame in tens of thousands.
+    private static let minimumDifference = 1_000
+
+    /// The three placeholders, each through its own view type.
+    @MainActor
+    private static func placeholders() -> [(SidebarSection, AnyView)] {
+        [
+            (.smartClean, AnyView(SmartCleanPlaceholderView())),
+            (.uninstaller, AnyView(UninstallerPlaceholderView())),
+            (.status, AnyView(StatusPlaceholderView())),
+        ]
+    }
+
+    /// Renders `view` in a 600 × 400 frame at scale 1.
+    @MainActor
+    private static func render(_ view: some View, in scheme: ColorScheme) throws -> RenderedPixels {
+        let image = try #require(RenderCheck.image(of: view, scheme: scheme, size: CGSize(width: 600, height: 400)))
+        #expect(image.width == 600)
+        #expect(image.height == 400)
+        return try RenderedPixels(image)
     }
 }

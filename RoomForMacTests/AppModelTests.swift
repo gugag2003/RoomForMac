@@ -156,13 +156,20 @@ struct SidebarSectionTests {
 }
 
 /// These tests share the scenario suite `RoomForMac.UITest`, so they run one at a time
-/// and remove it when they finish.
+/// and remove it, plist included, when they finish.
 @MainActor
 @Suite("App dependencies", .serialized)
 struct AppDependenciesTests {
+    /// Empties the suite and deletes `~/Library/Preferences/RoomForMac.UITest.plist`.
+    /// cfprefsd can still write the emptied suite back seconds later (see
+    /// `TemporaryDefaults`), but only ever this one fixed file, which UI tests use too.
     private func removeScenarioSuite() {
-        UserDefaults(suiteName: AppDependencies.scenarioSuiteName)?
-            .removePersistentDomain(forName: AppDependencies.scenarioSuiteName)
+        let name = AppDependencies.scenarioSuiteName
+        guard let defaults = UserDefaults(suiteName: name) else { return }
+        defaults.removePersistentDomain(forName: name)
+        defaults.synchronize()
+        let plist = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Preferences/\(name).plist")
+        try? FileManager.default.removeItem(at: plist)
     }
 
     @Test func aUITestModeGetsItsScenario() {
