@@ -290,10 +290,10 @@
     "RoomForMac only asks for your password when you pick system-level items, and macOS draws that prompt, never us. Nothing is requested now." : {
 
     },
-    "RoomForMac ran into an unexpected problem." : {
+    "RoomForMac opens when you log in." : {
 
     },
-    "RoomForMac starts quietly when you log in." : {
+    "RoomForMac ran into an unexpected problem." : {
 
     },
     "RoomForMac stopped it after waiting too long. Try again." : {

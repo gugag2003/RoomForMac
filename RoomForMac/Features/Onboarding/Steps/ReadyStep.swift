@@ -47,7 +47,7 @@ struct ReadyStep: View {
             if isInstalled {
                 notes.append("RoomForMac adds itself to your login items when you continue. If macOS asks, approve it in System Settings.")
             } else {
-                notes.append("RoomForMac can open at login once it is in your Applications folder.")
+                notes.append(OnboardingApply.loginItemNeedsApplicationsFolder)
             }
         }
         return notes

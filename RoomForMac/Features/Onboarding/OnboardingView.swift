@@ -267,12 +267,7 @@ enum OnboardingApply {
             await permissions.request(.notifications)
         }
         if choices.launchAtLogin {
-            // Checked here, not trusted from earlier: an installed copy never
-            // showed the Move step, and Ready's refreshAll() may still be running.
-            await permissions.refresh(.moveToApplications)
-            if await isInstalled(permissions) {
-                await permissions.request(.launchAtLogin)
-            }
+            await requestLoginItemIfInstalled(permissions)
             return
         }
         guard let loginItem else {
@@ -297,6 +292,24 @@ enum OnboardingApply {
     @MainActor
     static func isInstalled(_ permissions: PermissionCenter) -> Bool {
         !permissions.hasChecker(.moveToApplications) || permissions.state(.moveToApplications).isGranted
+    }
+
+    /// What Ready and Settings → General say while `isInstalled` is false and
+    /// open at login is off: the one wording for Ruling 20.
+    static let loginItemNeedsApplicationsFolder: LocalizedStringResource =
+        "RoomForMac can open at login once it is in your Applications folder."
+
+    /// The one way RoomForMac turns open at login on, from onboarding and from
+    /// Settings → General (Ruling 20, research §1.4): the location is read
+    /// again first, never trusted from earlier (an installed copy never showed
+    /// the Move step, and a refresh may still be running), and the login item
+    /// is registered only when `isInstalled`. It never moves the app.
+    @MainActor
+    static func requestLoginItemIfInstalled(_ permissions: PermissionCenter) async {
+        await permissions.refresh(.moveToApplications)
+        if isInstalled(permissions) {
+            await permissions.request(.launchAtLogin)
+        }
     }
 
     /// What Ready's two buttons do: `flow.finish` applies the choices once and

@@ -289,6 +289,102 @@ extension SettingsTests {
             #expect(GeneralSettingsView.loginItemPresentation(for: permissions.state(.launchAtLogin)) == .needsApproval)
         }
 
+        @Test(arguments: [PermissionState.notDetermined, .denied])
+        func turningOnOutsideApplicationsRegistersNothing(_ move: PermissionState) async {
+            // Ruling 20, as in onboarding: a login item would point at a copy in Downloads or a
+            // translocated path that is gone after a relaunch.
+            let fake = FakeLoginService(.notRegistered)
+            let loginItem = fake.checker
+            let location = FakeChecker(id: .moveToApplications, states: [move])
+            let permissions = PermissionCenter(checkers: [location, loginItem])
+            await GeneralSettingsView.setLaunchAtLogin(true, permissions: permissions, loginItem: loginItem)
+            #expect(fake.calls.isEmpty)
+            #expect(await location.checkCount == 1, "the location is read again first")
+            #expect(await location.requestCount == 0, "turning the switch on never moves the app")
+            #expect(permissions.state(.launchAtLogin) == .notDetermined)
+        }
+
+        @Test func turningOnReadsTheLocationAgainBeforeRegistering() async {
+            // An earlier check found the app installed; it has been moved out since.
+            let fake = FakeLoginService(.notRegistered)
+            let loginItem = fake.checker
+            let location = FakeChecker(id: .moveToApplications, states: [.granted, .notDetermined])
+            let permissions = PermissionCenter(checkers: [location, loginItem])
+            await permissions.refresh(.moveToApplications)
+            #expect(permissions.state(.moveToApplications) == .granted)
+            await GeneralSettingsView.setLaunchAtLogin(true, permissions: permissions, loginItem: loginItem)
+            #expect(fake.calls.isEmpty)
+        }
+
+        @Test(arguments: [PermissionState.granted, .notApplicable])
+        func turningOnFromApplicationsRegisters(_ move: PermissionState) async {
+            let fake = FakeLoginService(.notRegistered)
+            let loginItem = fake.checker
+            let permissions = PermissionCenter(checkers: [FakeChecker(id: .moveToApplications, states: [move]), loginItem])
+            await GeneralSettingsView.setLaunchAtLogin(true, permissions: permissions, loginItem: loginItem)
+            #expect(fake.calls == [.register])
+            #expect(permissions.state(.launchAtLogin) == .granted)
+        }
+
+        @Test(arguments: [
+            (PermissionState.notDetermined, GeneralSettingsView.LoginItemPresentation.needsApplicationsFolder),
+            (.denied, .needsApplicationsFolder),
+            (.notApplicable, .needsApplicationsFolder),
+            (.unknown("unavailable in this build"), .needsApplicationsFolder),
+            // A login item registered earlier still shows, so it can be turned off.
+            (.granted, .on),
+            (.requiresApproval, .needsApproval),
+        ])
+        func outsideApplicationsTheSwitchWaitsForTheMove(
+            state: PermissionState,
+            expected: GeneralSettingsView.LoginItemPresentation
+        ) {
+            #expect(GeneralSettingsView.loginItemPresentation(for: state, isInstalled: false) == expected)
+            #expect(GeneralSettingsView.loginItemPresentation(for: state, isInstalled: true)
+                == GeneralSettingsView.loginItemPresentation(for: state))
+        }
+
+        @Test func theSwitchIsLockedOnlyWhileItWaitsForTheMove() {
+            #expect(!GeneralSettingsView.LoginItemPresentation.needsApplicationsFolder.isOn)
+            #expect(!GeneralSettingsView.LoginItemPresentation.needsApplicationsFolder.canChange)
+            for presentation in [GeneralSettingsView.LoginItemPresentation.off, .on, .needsApproval, .unavailable] {
+                #expect(presentation.canChange)
+            }
+        }
+
+        @Test func theSwitchFollowsTheLocationOnboardingUses() async {
+            let permissions = PermissionCenter(checkers: [
+                FakeChecker(id: .moveToApplications, states: [.notDetermined]),
+                FakeLoginService(.notRegistered).checker,
+            ])
+            await permissions.refreshAll()
+            #expect(GeneralSettingsView.loginItemPresentation(permissions: permissions) == .needsApplicationsFolder)
+            // No Move checker (a unit-test host): nothing to wait for, as in onboarding.
+            let unchecked = PermissionCenter(checkers: [FakeLoginService(.notRegistered).checker])
+            await unchecked.refreshAll()
+            #expect(GeneralSettingsView.loginItemPresentation(permissions: unchecked) == .off)
+        }
+
+        @Test func outsideApplicationsTheSwitchSaysWhatReadySays() {
+            #expect(String(localized: OnboardingApply.loginItemNeedsApplicationsFolder)
+                == "RoomForMac can open at login once it is in your Applications folder.")
+            let ready = ReadyStep.notes(
+                choices: OnboardingChoices(launchAtLogin: true),
+                notifications: .notDetermined,
+                launchAtLogin: .notDetermined,
+                isInstalled: false
+            )
+            #expect(ready.map { String(localized: $0) } == [String(localized: OnboardingApply.loginItemNeedsApplicationsFolder)])
+        }
+
+        @Test func theLoginSubtitlePromisesOnlyWhatTheAppDoes() {
+            // Nothing makes a login launch quiet before Plan 3's menu-bar extra, so the
+            // subtitle promises only that RoomForMac opens. Permissions keeps General's words.
+            #expect(GeneralSettingsView.loginItemSubtitle == "RoomForMac opens when you log in.")
+            let card = PermissionsSettingsView.content(for: .launchAtLogin, state: .notDetermined)
+            #expect(card.reason == "RoomForMac opens when you log in.")
+        }
+
         @Test func turningOffUnregistersTheApp() async {
             let fake = FakeLoginService(.enabled)
             let loginItem = fake.checker

@@ -90,7 +90,7 @@ struct PermissionsSettingsView: View {
             // exhaustive, in General's own words, so it adds no catalog key.
             CardContent(
                 title: "Open RoomForMac at login",
-                reason: "RoomForMac starts quietly when you log in.",
+                reason: GeneralSettingsView.loginItemSubtitle,
                 actionTitle: "Approve in System Settings",
                 action: .open(.loginItems)
             )

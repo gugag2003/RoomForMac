@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Settings → General: open at login, notifications, and a note about the menu-bar extra.
-/// Both states are re-read when the tab appears and whenever RoomForMac becomes active again,
-/// since either can change in System Settings.
+/// Both states, and where the app is, are re-read when the tab appears and whenever RoomForMac
+/// becomes active again, since each can change outside the app.
 struct GeneralSettingsView: View {
     /// How the "Open RoomForMac at login" row reads for a login-item state.
     enum LoginItemPresentation: Equatable, Sendable {
@@ -13,12 +13,24 @@ struct GeneralSettingsView: View {
         case needsApproval
         /// macOS gave no usable answer (ad-hoc builds report "not found").
         case unavailable
+        /// Off, and this copy is outside an Applications folder, where it gets no
+        /// login item (Ruling 20): the switch is locked and says so in Ready's words.
+        case needsApplicationsFolder
 
         /// The switch shows on while the item is registered, approved or not.
         var isOn: Bool {
             self == .on || self == .needsApproval
         }
+
+        /// Whether the switch can be flipped. Turning off is always possible.
+        var canChange: Bool {
+            self != .needsApplicationsFolder
+        }
     }
+
+    /// The switch's subtitle. Settings → Permissions reuses it for its (never shown) login case.
+    /// Plan 3's menu-bar extra makes a login launch quiet and can say so then.
+    static let loginItemSubtitle: LocalizedStringKey = "RoomForMac opens when you log in."
 
     /// What the notifications button does.
     enum NotificationAction: Equatable, Sendable {
@@ -39,20 +51,32 @@ struct GeneralSettingsView: View {
         self.openURL = openURL
     }
 
-    static func loginItemPresentation(for state: PermissionState) -> LoginItemPresentation {
+    /// A registered login item always shows, so it can be turned off. Otherwise a copy that is
+    /// not installed (`OnboardingApply.isInstalled`, the rule onboarding uses) waits for the move.
+    static func loginItemPresentation(for state: PermissionState, isInstalled: Bool = true) -> LoginItemPresentation {
         switch state {
         case .granted: .on
         case .requiresApproval: .needsApproval
+        case _ where !isInstalled: .needsApplicationsFolder
         case .unknown: .unavailable
         case .denied, .notDetermined, .notApplicable: .off
         }
     }
 
-    /// On registers the app through the center, which opens Login Items when macOS wants approval.
-    /// Off unregisters it and reads the state back.
+    /// The row as the center's states have it.
+    static func loginItemPresentation(permissions: PermissionCenter) -> LoginItemPresentation {
+        loginItemPresentation(
+            for: permissions.state(.launchAtLogin),
+            isInstalled: OnboardingApply.isInstalled(permissions)
+        )
+    }
+
+    /// On goes through `OnboardingApply.requestLoginItemIfInstalled`, as onboarding does: it
+    /// registers only an installed copy, and the center opens Login Items when macOS wants
+    /// approval. Off unregisters it and reads the state back.
     static func setLaunchAtLogin(_ enabled: Bool, permissions: PermissionCenter, loginItem: LoginItemChecker?) async {
         if enabled {
-            await permissions.request(.launchAtLogin)
+            await OnboardingApply.requestLoginItemIfInstalled(permissions)
         } else {
             _ = await loginItem?.disable()
             await permissions.refresh(.launchAtLogin)
@@ -77,15 +101,15 @@ struct GeneralSettingsView: View {
     }
 
     var body: some View {
-        let login = Self.loginItemPresentation(for: permissions.state(.launchAtLogin))
+        let login = Self.loginItemPresentation(permissions: permissions)
         let notifications = permissions.state(.notifications)
         Form {
             Section {
                 Toggle(isOn: Binding(get: { login.isOn }, set: { setLaunchAtLogin($0) })) {
                     Text("Open RoomForMac at login")
-                    Text("RoomForMac starts quietly when you log in.")
+                    Text(Self.loginItemSubtitle)
                 }
-                .disabled(!permissions.hasChecker(.launchAtLogin) || isChangingLoginItem)
+                .disabled(!permissions.hasChecker(.launchAtLogin) || isChangingLoginItem || !login.canChange)
                 .accessibilityIdentifier(AccessibilityID.settingsLaunchAtLogin)
 
                 switch login {
@@ -101,6 +125,10 @@ struct GeneralSettingsView: View {
                     }
                 case .unavailable:
                     Text("macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again.")
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .needsApplicationsFolder:
+                    Text(OnboardingApply.loginItemNeedsApplicationsFolder)
                         .foregroundStyle(Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 case .on, .off:
@@ -168,6 +196,7 @@ struct GeneralSettingsView: View {
     }
 
     private func refresh() async {
+        await permissions.refresh(.moveToApplications)
         await permissions.refresh(.launchAtLogin)
         await permissions.refresh(.notifications)
     }
