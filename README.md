@@ -27,6 +27,10 @@ scripts/mole-patches.sh export # rewrite patches/mole/*.patch
 
 The host protocol is documented in `docs/engine-protocol.md`.
 
+## Signing
+
+Until you create the signing identity, builds are signed ad-hoc, and macOS forgets Full Disk Access and Automation grants after every rebuild. Create it once with `scripts/make-signing-identity.sh`, and click **Always Allow** when macOS asks. `docs/signing.md` explains the identity, how to back it up and how to check a signed build.
+
 ## License
 
 GPL-3.0 — see `LICENSE` and `NOTICE`. RoomForMac is an independent project, not affiliated with or endorsed by Mole.
