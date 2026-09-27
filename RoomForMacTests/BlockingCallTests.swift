@@ -3,7 +3,7 @@ import os
 import Testing
 @testable import RoomForMac
 
-@Suite("Blocking call")
+@Suite("Blocking call", .timeLimit(.minutes(1)))
 struct BlockingCallTests {
     @Test func returnsTheResultOfFastWork() async {
         let value = await BlockingCall.run(deadline: .seconds(2)) { 42 }
@@ -27,6 +27,24 @@ struct BlockingCallTests {
             String(cString: __dispatch_queue_get_label(nil))
         }
         #expect(label == "com.roomformac.tests.blocking-call")
+    }
+
+    /// Hung calls can hold every thread `queue` has: here a serial queue whose only
+    /// thread is stuck. The deadline must still fire, so its timer cannot wait on `queue`.
+    /// The stuck item gives up after 2 s at most, so a timer queued behind it fails the
+    /// test instead of hanging it.
+    @Test func theDeadlineFiresWhileTheWorkQueueIsStuck() async {
+        let queue = DispatchQueue(label: "com.roomformac.tests.blocking-call.serial")
+        let release = DispatchSemaphore(value: 0)
+        queue.async {
+            _ = release.wait(timeout: .now() + 2)
+        }
+        defer { release.signal() }
+        let clock = ContinuousClock()
+        let start = clock.now
+        let value = await BlockingCall.run(deadline: .milliseconds(100), queue: queue) { 1 }
+        #expect(value == nil)
+        #expect(clock.now - start < .milliseconds(1_000))
     }
 
     @Test func workThatMissesTheDeadlineStillFinishesAndIsDropped() async {

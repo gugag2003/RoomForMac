@@ -62,12 +62,12 @@ signer() {
     [ "$output" = $'analyze-go\nstatus-go' ]
 }
 
-@test "each helper is signed as com.roomformac.app.engine.<tool>" {
+@test "each helper is signed as com.roomformac.RoomForMac.engine.<tool>" {
     local tool
     for tool in analyze-go status-go; do
         run codesign --display --verbose=2 "$HELPERS/$tool"
         [ "$status" -eq 0 ]
-        grep -qx "Identifier=com.roomformac.app.engine.$tool" <<< "$output"
+        grep -qx "Identifier=com.roomformac.RoomForMac.engine.$tool" <<< "$output"
     done
 }
 

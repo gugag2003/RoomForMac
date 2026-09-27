@@ -12,12 +12,20 @@ enum BlockingCall {
     /// For requests that may show a system prompt and wait for the user's answer.
     static let promptDeadline: Duration = .seconds(120)
 
+    /// Where every deadline timer fires. It is serial and runs no work of its own, so a timer
+    /// only ever waits for another timer's short handler. GCD gives a serial queue a thread
+    /// even when hung work holds every thread of the global concurrent queues.
+    private static let deadlineQueue = DispatchQueue(
+        label: "com.roomformac.RoomForMac.blocking-call.deadline",
+        qos: .userInitiated
+    )
+
     /// Runs `work` on `queue` and returns its result, or nil when `deadline` passes first.
     ///
     /// A blocking call cannot be interrupted. After the deadline, `work` keeps its GCD thread
-    /// until it returns, and its result is dropped. The deadline timer runs on `queue` as well,
-    /// so `queue` must be concurrent, as the default is: a serial queue would hold the timer
-    /// behind `work`.
+    /// until it returns, and its result is dropped. The deadline timer runs on a private serial
+    /// queue, never on `queue`, so it fires even when `queue` is serial and busy, or when hung
+    /// calls hold every thread of the global pool.
     static func run<T: Sendable>(
         deadline: Duration,
         queue: DispatchQueue = .global(qos: .userInitiated),
@@ -37,7 +45,7 @@ enum BlockingCall {
             queue.async {
                 finish(work())
             }
-            queue.asyncAfter(deadline: .now() + .nanoseconds(nanoseconds(deadline))) {
+            deadlineQueue.asyncAfter(deadline: .now() + .nanoseconds(nanoseconds(deadline))) {
                 finish(nil)
             }
         }

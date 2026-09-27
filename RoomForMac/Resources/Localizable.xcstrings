@@ -109,6 +109,9 @@
     "Move and relaunch" : {
 
     },
+    "Moves apps to the Trash if the usual way fails." : {
+
+    },
     "Needs approval" : {
 
     },
@@ -230,9 +233,6 @@
 
     },
     "Show details" : {
-
-    },
-    "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails." : {
 
     },
     "Signal %lld" : {

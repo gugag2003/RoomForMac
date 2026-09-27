@@ -278,7 +278,7 @@ struct OnboardingPartTwoStepTests {
         #expect(AutomationStep.title(for: .automationFinder) == "Finder")
         #expect(AutomationStep.title(for: .automationSystemEvents) == "System Events")
         #expect(AutomationStep.reason(for: .automationFinder)
-            == "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails.")
+            == "Moves apps to the Trash if the usual way fails.")
         #expect(AutomationStep.reason(for: .automationSystemEvents)
             == "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall.")
     }
@@ -375,9 +375,12 @@ struct OnboardingPartTwoStepTests {
     @Test(arguments: [OnboardingStep.automation, .adminAccess, .extras, .ready])
     func onboardingViewShowsTheStep(_ step: OnboardingStep) throws {
         let (model, flow) = try makeOnboarding()
-        while flow.step != step {
+        // At most one `next()` per step, so a `next()` that stops advancing fails here
+        // instead of looping forever.
+        for _ in OnboardingStep.allCases where flow.step != step {
             flow.next()
         }
+        try #require(flow.step == step)
         let size = CGSize(width: 1100, height: 720)
         let view = OnboardingView(model: model, flow: flow).automationIcons { _ in NSImage() }
         let screen = try Self.render(view, "\(step)", scheme: .light, size: size)

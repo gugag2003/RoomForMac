@@ -55,14 +55,14 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        NSAppleEventsUsageDescription: RoomForMac asks Finder for your disk's free space and, if needed, to move apps to the Trash. It asks System Events which apps are running before a cleanup and to remove the login items of apps you uninstall.
+        NSAppleEventsUsageDescription: RoomForMac asks Finder to move apps to the Trash if the usual way fails. It asks System Events which apps are running before a cleanup and to remove the login items of apps you uninstall.
         NSDownloadsFolderUsageDescription: RoomForMac looks for unfinished downloads it can clean up.
         NSDesktopFolderUsageDescription: RoomForMac measures what fills your Desktop.
         NSDocumentsFolderUsageDescription: RoomForMac measures what fills your Documents folder.
         NSRemovableVolumesUsageDescription: RoomForMac measures what fills your external drives.
         NSNetworkVolumesUsageDescription: RoomForMac measures what fills network drives you choose.
         CFBundleURLTypes:
-          - CFBundleURLName: com.roomformac.app
+          - CFBundleURLName: com.roomformac.RoomForMac
             CFBundleURLSchemes: [roomformac]
     entitlements:
       path: RoomForMac/RoomForMac.entitlements
@@ -72,7 +72,7 @@ targets:
         product: MoleEngine
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.RoomForMac
         PRODUCT_NAME: RoomForMac
         ARCHS: $(ARCHS_STANDARD)
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -114,7 +114,7 @@ targets:
       - target: RoomForMac
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.RoomForMac.tests
         GENERATE_INFOPLIST_FILE: YES
 
   RoomForMacUITests:
@@ -127,7 +127,7 @@ targets:
       - target: RoomForMac
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.app.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.RoomForMac.uitests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

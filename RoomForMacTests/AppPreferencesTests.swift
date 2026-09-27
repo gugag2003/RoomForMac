@@ -71,7 +71,7 @@ struct AppPreferencesTests {
     }
 
     @Test func analyticsFollowsAValueWrittenFromTheCommandLine() {
-        // `defaults write com.roomformac.app analytics.enabled 0` stores a string, not a Bool.
+        // `defaults write com.roomformac.RoomForMac analytics.enabled 0` stores a string, not a Bool.
         temporary.defaults.set("0", forKey: "analytics.enabled")
         #expect(temporary.preferences.analyticsEnabled == false)
         temporary.defaults.removeObject(forKey: "analytics.enabled")

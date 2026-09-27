@@ -29,8 +29,8 @@ Every system interaction goes behind an injected protocol or closure:
 - **Project generation:** the project is generated from `project.yml` by XcodeGen 2.46. Git ignores `RoomForMac.xcodeproj/`, `RoomForMac/Info.plist`, `RoomForMac/RoomForMac.entitlements`, `RoomForMac/Generated/` and `Config/Local.xcconfig`.
 - **Dependencies:** none from third parties. The app links only `MoleEngine`, through `packages: MoleEngine: path: Packages/MoleEngine`. The unit-test target does **not** link the package again.
 - **Identity:**
-  - Bundle ID `com.roomformac.app`; UserDefaults domain is the bundle ID.
-  - Helper tool identifiers are `com.roomformac.app.engine.<tool>`.
+  - Bundle ID `com.roomformac.RoomForMac` (Ruling 1); UserDefaults domain is the bundle ID. The test bundles are `com.roomformac.RoomForMac.tests` and `.uitests`, and `CFBundleURLName` is the bundle ID.
+  - Helper tool identifiers are `com.roomformac.RoomForMac.engine.<tool>`.
   - URL scheme `roomformac`.
   - Product and display name `RoomForMac`.
   - `LSApplicationCategoryType` is `public.app-category.utilities`.
@@ -40,7 +40,7 @@ Every system interaction goes behind an injected protocol or closure:
   - Scripts, `lib`, `host-bin`, `VERSION` and Mole's `LICENSE` go in `RoomForMac.app/Contents/Resources/engine/`.
   - `analyze-go` and `status-go` go in `Contents/Helpers/`, with relative symlinks `engine/bin/<tool>` → `../../../Helpers/<tool>`.
   - The app never uses a system-installed `mo` and has **no runtime override** of the engine location. `RFM_ENGINE_DIR` is a build setting only.
-- **Info.plist `NSAppleEventsUsageDescription`, verbatim:** `RoomForMac asks Finder for your disk's free space and, if needed, to move apps to the Trash. It asks System Events which apps are running before a cleanup and to remove the login items of apps you uninstall.`
+- **Info.plist `NSAppleEventsUsageDescription`, verbatim:** `RoomForMac asks Finder to move apps to the Trash if the usual way fails. It asks System Events which apps are running before a cleanup and to remove the login items of apps you uninstall.` (Ruling 10.)
 - **Color tokens (spec §11.1), exact:**
 
   | Token | Light | Dark |
@@ -83,7 +83,7 @@ Every system interaction goes behind an injected protocol or closure:
 
 Each ruling lists what it costs if wrong. The spec is the authority, and these rulings deviate from it only where research showed the spec cannot be met as written.
 
-1. **Bundle ID `com.roomformac.app`.** The spec names none. *If wrong:* changing it after the first public release resets every user's TCC grants and preferences. Confirm it before Plan 6 ships.
+1. **Bundle ID `com.roomformac.RoomForMac`.** The spec names none. Tasks 1–13 were written with `com.roomformac.app`; the controller revised it after Task 13, before Task 14 (the text of Tasks 1–13 keeps the old ID), because an ID ending in `.app` makes UTI classify folders named after it as application bundles (for example Sparkle's cache and `~/Library/Caches/<id>`; Sparkle PR #2882, reproduced locally). The helpers are `com.roomformac.RoomForMac.engine.<tool>`, the test bundles `com.roomformac.RoomForMac.tests` and `.uitests`, and `CFBundleURLName` is the bundle ID. *If wrong:* changing it after the first public release resets every user's TCC grants and preferences. Confirm it before Plan 6 ships.
 2. **Go binaries live in `Contents/Helpers`, with symlinks in `engine/bin`** (spec §4.2 says `Resources/engine/`). Apple's bundle-placement guidance puts helper tools in `Helpers`, and misplaced code can break notarization later. This was verified end to end with the real engine: strict `codesign --verify --deep` passes, and `EngineInstallation` needs no change. *If wrong:* a one-script change.
 3. **The engine is built by stamp check, not on every build.** `scripts/ensure-engine.sh` rebuilds `build/engine` only when `vendor/mole`'s commit, `patches/mole/*` or `scripts/build-engine.sh` changed, which it records as a new `builder_sha256` key in `VERSION`. `scripts/embed-engine.sh` then copies it. The handoff's idea of running `build-engine.sh` into the app would rebuild Go for about a minute on every build. *If wrong:* a stale engine, but the launch check compares `VERSION` with the generated expectation.
 4. **One signing identity, `RoomForMac Self-Signed`, used for local and release builds** (spec §3.3, §12: "one stable self-signed certificate"). `scripts/make-signing-identity.sh` creates it and the owner runs it. Until then builds are ad-hoc, and FDA and Automation grants reset on every rebuild. *If wrong:* the owner would need a second identity for releases; grants made on dev builds would then not carry over.
@@ -98,7 +98,7 @@ Each ruling lists what it costs if wrong. The spec is the authority, and these r
 9. **Sidebar in this plan:** Smart Clean, Uninstaller, Status, each with a placeholder detail view. Terrain (Plan 4) is outside M2 and gets no placeholder.
 10. **Onboarding reasons follow the engine's real Apple-event use** (research, V7).
     - **System Events:** it lists running apps on every Smart Clean scan and run, and removes login items during uninstall.
-    - **Finder:** it reports the exact free space in Status, and is a fallback for moving apps to the Trash.
+    - **Finder:** only the engine's rare fallback for moving apps to the Trash. Plan 3's Status will run `status-go` with an `osascript` stub, so it never asks Finder for free space, which would send a Finder Apple event every 2 minutes and tie a prompt to Status (research C6); it will read the free space itself with `volumeAvailableCapacityForImportantUsage`. The Finder card's reason is "Moves apps to the Trash if the usual way fails." This was revised after Task 13, before Task 14; the text of Tasks 1–13 quotes the earlier copy.
 
     Spec §6 gave other reasons. Plan 3 must not start `StatusService` or a scan before onboarding is complete; `AppModel.isOnboarded` exposes this.
 11. **Full Disk Access is detected with a list of probe files**, not "the user's `TCC.db`". The user `TCC.db` does not exist on macOS 27. `open()` returning EPERM or EACCES means denied, success means granted, and ENOENT means no evidence.
@@ -14855,7 +14855,7 @@ extension SettingsTests {
             #expect(fullDiskAccess.actionTitle == "Open Settings")
             let finder = PermissionsSettingsView.content(for: .automationFinder, state: .notDetermined)
             #expect(finder.title == "Finder")
-            #expect(finder.reason == "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails.")
+            #expect(finder.reason == "Moves apps to the Trash if the usual way fails.")
             let systemEvents = PermissionsSettingsView.content(for: .automationSystemEvents, state: .notDetermined)
             #expect(systemEvents.title == "System Events")
             #expect(systemEvents.reason == "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall.")
@@ -15733,7 +15733,7 @@ git diff --stat RoomForMac/Resources/Localizable.xcstrings
 Expected: `xcstringstool` prints nothing and exits 0. The diff adds this task's new keys, and removes nothing:
 `A menu bar extra with quick gauges arrives with Status in the next update.`, `About`, `Approve in System Settings`, `Credits`, `Done`, `Engine`, `Engine %@ (%@, %lld patches)`, `Engine License (Mole)`, `Engine unavailable`, `General`, `Lets RoomForMac tell you when a cleanup finishes.`, `Licenses and notices`, `Notice`, `Permissions`, `Photography`, `Reinstall RoomForMac to restore it.`, `RoomForMac License`, `RoomForMac checks these again every time you come back to it.`, `RoomForMac is built on the open-source Mole engine by tw93 (GPL-3.0).`, `RoomForMac starts quietly when you log in.`, `This document is missing`, `Version %@ (%@)`, `macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again.`, `macOS wants you to approve this in Login Items.`
 
-The keys this task shares with Tasks 8, 12 and 13 (`Allow`, `Applications folder`, `Checks which apps are running…`, `Drag RoomForMac into your Applications folder…`, `Finder`, `Full Disk Access`, `Lets RoomForMac see caches…`, `Move and relaunch`, `Notifications`, `Open RoomForMac at login` (Task 13's Extras toggle), `Open Settings`, `Open at login`, `Reveal in Finder`, `RoomForMac works best from your Applications folder…`, `Shows your disk's exact free space…`, `System Events`) are already in the catalog and do not change. If one of them is new in the diff, the earlier task used different wording, and one of the two must change.
+The keys this task shares with Tasks 8, 12 and 13 (`Allow`, `Applications folder`, `Checks which apps are running…`, `Drag RoomForMac into your Applications folder…`, `Finder`, `Full Disk Access`, `Lets RoomForMac see caches…`, `Move and relaunch`, `Moves apps to the Trash if the usual way fails.`, `Notifications`, `Open RoomForMac at login` (Task 13's Extras toggle), `Open Settings`, `Open at login`, `Reveal in Finder`, `RoomForMac works best from your Applications folder…`, `System Events`) are already in the catalog and do not change. If one of them is new in the diff, the earlier task used different wording, and one of the two must change.
 
 The sync writes the multi-argument keys with an `en` value in state `new`. Now make the engine line vary by plural. In `RoomForMac/Resources/Localizable.xcstrings`, find the entry the sync added:
 ```json
@@ -17296,7 +17296,7 @@ Expected: FAIL. The run prints `1..20` and all 20 are `not ok`. Each fails in `s
 #
 # An ad-hoc signature's designated requirement (DR) is the build's cdhash, which
 # changes on every build. A certificate signature's DR names the certificate:
-#   identifier "com.roomformac.app" and certificate leaf = H"<SHA-1 of the certificate>"
+#   identifier "com.roomformac.RoomForMac" and certificate leaf = H"<SHA-1 of the certificate>"
 # That stays the same across rebuilds and releases. The certificate gets no
 # trust settings: codesign and Xcode sign with an untrusted self-signed
 # identity, and a DR check compares the certificate hash, not trust.
@@ -17603,7 +17603,7 @@ cat << EOF
 Identity:  $NAME
 SHA-1:     $HASH
 Probe DR:  $DR
-App DR:    identifier "com.roomformac.app" and certificate leaf = H"$(lower "$HASH")"
+App DR:    identifier "com.roomformac.RoomForMac" and certificate leaf = H"$(lower "$HASH")"
 
 Back up the whole folder $DIR in your password manager.
 Losing it means a new certificate, and every user granting Full Disk Access
@@ -17675,7 +17675,7 @@ RoomForMac signs every build, local and release, with one self-signed code-signi
 macOS records each privacy grant against the app's bundle ID and its *designated requirement* (DR), a rule the app's signature must satisfy. The grants RoomForMac asks for are Full Disk Access and Automation of Finder and System Events. On every later launch, macOS checks the new build against the DR it recorded.
 
 - **Ad-hoc signature** (`CODE_SIGN_IDENTITY = -`, Xcode's "Sign to Run Locally"): the DR is `cdhash H"…"`, the hash of that one build. The next build has another cdhash, so macOS treats it as a different app. Onboarding asks again, and System Settings keeps an old entry that never matches.
-- **Stable identity**: the DR is `identifier "com.roomformac.app" and certificate leaf = H"<SHA-1 of the certificate>"`. It stays the same across rebuilds and releases for as long as the certificate does.
+- **Stable identity**: the DR is `identifier "com.roomformac.RoomForMac" and certificate leaf = H"<SHA-1 of the certificate>"`. It stays the same across rebuilds and releases for as long as the certificate does.
 
 The identity is self-signed, because RoomForMac has no Apple Developer account yet. It does not satisfy Gatekeeper, so users still need **Open Anyway** on first launch. It has no trust settings, and needs none:
 
@@ -17748,7 +17748,7 @@ Store the whole folder in your password manager, or another encrypted place. It 
 Grants recorded for an ad-hoc build name that build's cdhash, and they never match again. After your first signed build, do this once:
 
 1. In System Settings → Privacy & Security → Full Disk Access, select every RoomForMac entry and click **−**.
-2. Reset RoomForMac's Automation grants: `tccutil reset AppleEvents com.roomformac.app`.
+2. Reset RoomForMac's Automation grants: `tccutil reset AppleEvents com.roomformac.RoomForMac`.
 3. Launch the signed build with `open` or from Xcode, and grant access again in onboarding. Never start it by its executable path from Terminal: macOS would then check Terminal's grants, not RoomForMac's.
 
 ## Verify a signed build
@@ -17770,7 +17770,7 @@ APP="$APP" bats scripts/tests/app_bundle.bats
 Expected:
 
 - `Authority=RoomForMac Self-Signed` and `TeamIdentifier=not set`, with no `Signature=adhoc` line.
-- `dr` prints `identifier "com.roomformac.app" and certificate leaf = H"<sha1>"`, and `<sha1>` is the `--check` SHA-1 in lower case. If `dr` prints nothing, the build is still ad-hoc: `codesign -d -r-` then shows `# designated => cdhash H"…"`.
+- `dr` prints `identifier "com.roomformac.RoomForMac" and certificate leaf = H"<sha1>"`, and `<sha1>` is the `--check` SHA-1 in lower case. If `dr` prints nothing, the build is still ad-hoc: `codesign -d -r-` then shows `# designated => cdhash H"…"`.
 - `codesign --verify` prints `valid on disk` and `satisfies its Designated Requirement`.
 - Every `app_bundle.bats` test is `ok`. One of them checks that the engine helpers carry the same `Authority` as the app.
 
@@ -17838,7 +17838,7 @@ The workflow imports the PKCS#12 into a temporary keychain and deletes that keyc
 
 ## Security
 
-- **Anyone with this key can sign code that inherits RoomForMac's grants.** With `key.pem`, or `identity.p12` and its password, anyone can sign a program with the bundle ID `com.roomformac.app`. It satisfies the DR of every grant users gave RoomForMac: Full Disk Access, and Automation of Finder and System Events. Guard the folder like a password.
+- **Anyone with this key can sign code that inherits RoomForMac's grants.** With `key.pem`, or `identity.p12` and its password, anyone can sign a program with the bundle ID `com.roomformac.RoomForMac`. It satisfies the DR of every grant users gave RoomForMac: Full Disk Access, and Automation of Finder and System Events. Guard the folder like a password.
 - Never commit these files, paste them anywhere or attach them to an issue. The script refuses a `--dir` inside the repository.
 - In the keychain, the key cannot be exported, and only `codesign` may use it without asking.
 - Keep the GitHub secrets in this repository only, and let only the release workflow read them.
@@ -17913,7 +17913,7 @@ EOF
 1. Run `scripts/make-signing-identity.sh`. Enter the login password and click **Always Allow** in the dialog.
 2. Back up `~/.roomformac/signing` in the password manager.
 3. Confirm that `scripts/make-signing-identity.sh --check` prints `<SHA1> "RoomForMac Self-Signed"`.
-4. Remove the old RoomForMac Full Disk Access entries, and run `tccutil reset AppleEvents com.roomformac.app`.
+4. Remove the old RoomForMac Full Disk Access entries, and run `tccutil reset AppleEvents com.roomformac.RoomForMac`.
 5. Build, then check that `codesign -d -r-` shows `certificate leaf = H"<sha1>"` and that `APP=… bats scripts/tests/app_bundle.bats` passes.
 6. Run the stability test, then the grant-survival steps, from the command line and from Xcode's Run. Report the DR line, both CDHashes and the result. If Xcode refuses the identity, send the exact error text and use fallback (a).
 

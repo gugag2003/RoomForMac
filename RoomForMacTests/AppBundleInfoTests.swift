@@ -9,7 +9,7 @@ struct AppBundleInfoTests {
     }
 
     @Test func identity() {
-        #expect(Bundle.main.bundleIdentifier == "com.roomformac.app")
+        #expect(Bundle.main.bundleIdentifier == "com.roomformac.RoomForMac")
         #expect(Bundle.main.bundleURL.lastPathComponent == "RoomForMac.app")
         #expect(info("CFBundleDisplayName") == "RoomForMac")
         #expect(info("LSApplicationCategoryType") == "public.app-category.utilities")
@@ -19,13 +19,13 @@ struct AppBundleInfoTests {
     @Test func urlScheme() throws {
         let types = try #require(Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]])
         #expect(types.count == 1)
-        #expect(types.first?["CFBundleURLName"] as? String == "com.roomformac.app")
+        #expect(types.first?["CFBundleURLName"] as? String == "com.roomformac.RoomForMac")
         #expect(types.first?["CFBundleURLSchemes"] as? [String] == ["roomformac"])
     }
 
     @Test func appleEventsReasonIsVerbatim() {
         #expect(info("NSAppleEventsUsageDescription") == """
-            RoomForMac asks Finder for your disk's free space and, if needed, to move apps to the Trash. \
+            RoomForMac asks Finder to move apps to the Trash if the usual way fails. \
             It asks System Events which apps are running before a cleanup and to remove the login items \
             of apps you uninstall.
             """)

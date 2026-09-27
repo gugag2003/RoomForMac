@@ -61,9 +61,11 @@ struct AutomationStep: View {
     }
 
     /// Why the engine needs each app, from what it really sends (research V7).
+    /// Finder is only the fallback for moving apps to the Trash: Plan 3's Status
+    /// runs `status-go` with an `osascript` stub, so it never asks Finder (Ruling 10).
     static func reason(for id: PermissionID) -> LocalizedStringKey {
         if id == .automationFinder {
-            "Shows your disk's exact free space in Status, and moves apps to the Trash if the usual way fails."
+            "Moves apps to the Trash if the usual way fails."
         } else {
             "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall."
         }

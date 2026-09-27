@@ -97,7 +97,7 @@ private final class SleepRecorder: Sendable {
 }
 
 @MainActor
-@Suite("Permission center")
+@Suite("Permission center", .timeLimit(.minutes(1)))
 struct PermissionCenterTests {
     /// Held by the suite so the defaults outlive every use inside a test.
     private let temporary: TemporaryDefaults
