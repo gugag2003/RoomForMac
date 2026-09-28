@@ -71,7 +71,7 @@ or symlinked selection file allows nothing.
 | `section` | a cleanup section starts | `name` |
 | `candidate` | a dry run finds an item (live progress; may repeat or overlap) | `section`, `path`, `size_kb`, `size_known` |
 | `item` | end of a dry run: the deduplicated preview | `section`, `path`, `size_kb`, `count`, `size_known`, `covered_by` (nearest previewed ancestor whose size already includes this item, or `null`) |
-| `result` | real runs: one outcome per path, mirrored from `log_operation` | `command`, `action` (`removed` / `skipped` / `failed`), `path`, `detail` |
+| `result` | real runs: one outcome per path, mirrored from `log_operation` | `command`, `action` (`removed` / `skipped` / `failed`), `path`, `detail`, and on `removed` results `size_kb` when measured (patch 0006) |
 | `summary` | end of every run | `command`, `dry_run`, `items`, `size_kb`, `partial`, `exit` |
 
 Hosts total a preview from `item` events whose `covered_by` is `null`, and charge only
@@ -104,6 +104,35 @@ Details:
   `SIGINT` or `SIGTERM`, writes none, and so does one that ends before or outside that
   pass: invalid arguments, `--help`, `--whitelist`, a dry run that cannot create its
   preview file, or Mole's test mode (`MOLE_TEST_MODE=1`), for example.
+
+### Clean results (patch 0006)
+
+- **`size_kb` on `removed` results.** A `removed` result carries `size_kb`: the KiB the
+  engine measured for that path just before deleting it, measured the same way as the
+  path's preview `size_kb`. `0` is a real size (an empty file or folder). The key is
+  absent when the removal could not measure the path (its size probe failed or ran out
+  of time). `skipped` and `failed` results never carry it, and dry runs still write no
+  `result` events. Hosts charge `size_kb` when it is present and the preview size when
+  it is absent.
+- The size is measured whenever `MOLE_JSON_EVENTS_FILE` is set, even with `MO_NO_OPLOG=1`.
+  With the operations log on, the log line and the event share one measurement, and a
+  size the calling section already measured is reused without measuring again.
+- Most clean items reach the removal with a size their section measured just before
+  (`safe_clean` sizes its batch first). When that measurement fails the section passes
+  `0`, so the result reads `size_kb: 0`. A preview whose own measurement failed the same
+  way shows the row as `size_kb: 0` with `size_known: true`.
+- Removals that do not go through `safe_remove` or `safe_sudo_remove` carry no `size_kb`:
+  symlinks (`detail: "symlink"`), simulators (`"simulator"`), empty app containers
+  (`"stub-container"`), the System section's batched and memory-report removals, and
+  Time Machine.
+- **`detail` on `removed` results is text for people.** It is the measured size in
+  decimal units (Mole's `bytes_to_human`: 1 KB = 1000 bytes, as in `"922KB"` or
+  `"3.1MB"`), empty for a zero-size item, or a word such as `"symlink"`. Never parse it;
+  use `size_kb`. With the events file set it is filled in even with `MO_NO_OPLOG=1`.
+- **`skipped` results also arrive for paths the host did not select.** Sections report
+  protected paths they meet before the selection check (`detail: "protected"`; for
+  example the engine's own `~/Library/Logs/mole`). Hosts ignore results for paths they
+  did not select.
 
 ## Selections (`MOLE_SELECTION_FILE`, patch 0003)
 

@@ -52,6 +52,7 @@ jobs:
           scripts/mole-patches.sh test --tree build/engine-src
           tests/host_integration.bats tests/clean_json_events.bats
           tests/clean_selection.bats tests/uninstall_host_mode.bats
+          tests/clean_removed_sizes.bats
 
       - name: Analyzer Trash-list tests
         run: cd build/engine-src && go test ./cmd/analyze -run TrashList -count=1

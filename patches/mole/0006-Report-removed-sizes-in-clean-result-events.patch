@@ -1,0 +1,545 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Gustavo=20Gon=C3=A7alves?= <gugagon19@gmail.com>
+Date: Mon, 28 Sep 2026 16:16:43 -0300
+Subject: [PATCH] Report removed sizes in clean result events
+
+With MOLE_JSON_EVENTS_FILE set, a removed result from safe_remove or
+safe_sudo_remove carries size_kb: the KiB measured just before the path
+was deleted, 0 for an empty item. The key is left out when the size could
+not be measured, and skipped and failed results never carry it. The size
+is measured even with MO_NO_OPLOG=1; with the operations log on, the log
+and the event share one measurement. Without the events file nothing
+changes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ lib/core/file_ops.sh           |  31 ++-
+ lib/core/host.sh               |  12 +-
+ lib/core/log.sh                |   6 +-
+ tests/clean_removed_sizes.bats | 378 +++++++++++++++++++++++++++++++++
+ 4 files changed, 416 insertions(+), 11 deletions(-)
+ create mode 100644 tests/clean_removed_sizes.bats
+
+diff --git a/lib/core/file_ops.sh b/lib/core/file_ops.sh
+index 821ec7c3..8177b524 100644
+--- a/lib/core/file_ops.sh
++++ b/lib/core/file_ops.sh
+@@ -1547,12 +1547,17 @@ safe_remove() {
+ 
+     # Calculate size before deletion for logging.
+     # Accept pre-computed size to skip redundant I/O when the caller already measured.
++    # A host event stream needs the size too, even with the operations log off;
++    # both share this one measurement. size_report_kb stays empty unless
++    # size_kb is a real measurement, so the host can tell 0 from "unknown".
+     local size_kb=0
+     local size_human=""
+-    if oplog_enabled; then
++    local size_report_kb=""
++    if oplog_enabled || mole_json_events_enabled; then
+         if [[ -n "$precomputed_size_kb" ]]; then
+             if [[ "$precomputed_size_kb" =~ ^[0-9]+$ ]]; then
+                 size_kb="$precomputed_size_kb"
++                size_report_kb="$size_kb"
+             fi
+         elif [[ -e "$path" ]]; then
+             local size_probe_rc=0
+@@ -1571,7 +1576,11 @@ safe_remove() {
+                 _mole_record_clean_cancellation "$size_probe_rc"
+                 return "$size_probe_rc"
+             fi
+-            [[ $size_probe_rc -eq 0 && "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
++            if [[ $size_probe_rc -eq 0 && "$size_kb" =~ ^[0-9]+$ ]]; then
++                size_report_kb="$size_kb"
++            else
++                size_kb=0
++            fi
+         fi
+         if [[ "$size_kb" =~ ^[0-9]+$ ]] && [[ "$size_kb" -gt 0 ]]; then
+             size_human=$(bytes_to_human "$((size_kb * 1024))" 2> /dev/null || echo "${size_kb}KB")
+@@ -1765,8 +1774,8 @@ safe_remove() {
+     fi
+ 
+     if [[ $rm_exit -eq 0 ]]; then
+-        # Log successful removal
+-        log_operation "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "$path" "$size_human"
++        # Log successful removal; the host event also gets the measured size.
++        log_operation "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "$path" "$size_human" "$size_report_kb"
+         return 0
+     else
+         # Check if it's a permission error
+@@ -2084,12 +2093,16 @@ safe_sudo_remove() {
+         return 0
+     fi
+ 
++    # Same size contract as safe_remove: one measurement serves the operations
++    # log and the host event stream; size_report_kb stays empty when unmeasured.
+     local size_kb=0
+     local size_human=""
+-    if oplog_enabled; then
++    local size_report_kb=""
++    if oplog_enabled || mole_json_events_enabled; then
+         if [[ -n "$precomputed_size_kb" ]]; then
+             if [[ "$precomputed_size_kb" =~ ^[0-9]+$ ]]; then
+                 size_kb="$precomputed_size_kb"
++                size_report_kb="$size_kb"
+             fi
+         else
+             local exists_probe_rc=0
+@@ -2124,7 +2137,11 @@ safe_sudo_remove() {
+                     _mole_record_clean_cancellation "$size_probe_rc"
+                     return "$size_probe_rc"
+                 fi
+-                [[ $size_probe_rc -eq 0 && "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
++                if [[ $size_probe_rc -eq 0 && "$size_kb" =~ ^[0-9]+$ ]]; then
++                    size_report_kb="$size_kb"
++                else
++                    size_kb=0
++                fi
+             fi
+         fi
+         if [[ "$size_kb" =~ ^[0-9]+$ ]] && [[ "$size_kb" -gt 0 ]]; then
+@@ -2161,7 +2178,7 @@ safe_sudo_remove() {
+     fi
+ 
+     if [[ $ret -eq 0 ]]; then
+-        log_operation "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "$path" "$size_human"
++        log_operation "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "$path" "$size_human" "$size_report_kb"
+         return 0
+     fi
+ 
+diff --git a/lib/core/host.sh b/lib/core/host.sh
+index 72a32b42..ded149f9 100644
+--- a/lib/core/host.sh
++++ b/lib/core/host.sh
+@@ -209,7 +209,11 @@ mole_json_event_item() {
+ 
+ # Mirror of log_operation: one outcome for one path. Dry runs only preview,
+ # so they never report outcomes.
+-# Args: command, action (REMOVED/SKIPPED/FAILED), path, detail
++# Args: command, action (REMOVED/SKIPPED/FAILED), path, detail, [size_kb]
++# size_kb is the KiB a removal measured just before deleting the path. Only
++# removed results carry it, and only when it is a whole number: an empty or
++# other value means nothing was measured, and the key is left out, so a host
++# can tell an empty item (0) from an unmeasured one.
+ mole_json_event_result() {
+     mole_json_events_enabled || return 0
+     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
+@@ -222,7 +226,11 @@ mole_json_event_result() {
+         FAILED) action="failed" ;;
+         *) return 0 ;;
+     esac
+-    mole_json_emit "{\"v\":1,\"type\":\"result\",\"command\":$(mole_json_str "${1-}"),\"action\":\"$action\",\"path\":$(mole_json_str "${3-}"),\"detail\":$(mole_json_str "${4-}")}"
++    local size_field=""
++    if [[ "$action" == "removed" && "${5-}" =~ ^[0-9]+$ ]]; then
++        size_field=",\"size_kb\":$(mole_json_num "$5")"
++    fi
++    mole_json_emit "{\"v\":1,\"type\":\"result\",\"command\":$(mole_json_str "${1-}"),\"action\":\"$action\",\"path\":$(mole_json_str "${3-}"),\"detail\":$(mole_json_str "${4-}")$size_field}"
+ }
+ 
+ # Args: command, dry_run (true/false), items, size_kb, partial (true/false), exit
+diff --git a/lib/core/log.sh b/lib/core/log.sh
+index 7190b4da..6ffbe037 100644
+--- a/lib/core/log.sh
++++ b/lib/core/log.sh
+@@ -213,13 +213,15 @@ oplog_enabled() {
+ }
+ 
+ # Log an operation to the operations log file
+-# Usage: log_operation <command> <action> <path> [detail]
++# Usage: log_operation <command> <action> <path> [detail] [size_kb]
++# size_kb, the KiB measured just before a removal, goes only to the host
++# event stream; the operations log line keeps its usual shape.
+ # Example: log_operation "clean" "REMOVED" "/path/to/file" "15.2MB"
+ # Example: log_operation "clean" "SKIPPED" "/path/to/file" "whitelist"
+ # Example: log_operation "uninstall" "REMOVED" "/Applications/App.app" "150MB"
+ log_operation() {
+     # A host needs per-item outcomes even when the operations log is off.
+-    mole_json_event_result "${1:-unknown}" "${2:-UNKNOWN}" "${3:-}" "${4:-}"
++    mole_json_event_result "${1:-unknown}" "${2:-UNKNOWN}" "${3:-}" "${4:-}" "${5:-}"
+ 
+     # Allow disabling via environment variable
+     oplog_enabled || return 0
+diff --git a/tests/clean_removed_sizes.bats b/tests/clean_removed_sizes.bats
+new file mode 100644
+index 00000000..de6dbca7
+--- /dev/null
++++ b/tests/clean_removed_sizes.bats
+@@ -0,0 +1,378 @@
++#!/usr/bin/env bats
++# Removed sizes on clean result events: a removed result carries the KiB the
++# engine measured just before deleting the path, and no other result does.
++
++load helpers/common
++
++setup_file() {
++    mole_test_setup_home clean-removed-sizes
++}
++
++teardown_file() {
++    mole_test_teardown_home
++}
++
++setup() {
++    if [[ "$HOME" != "${BATS_TEST_DIRNAME}/tmp-"* ]]; then
++        printf 'FATAL: HOME is not a test temp dir: %s\n' "$HOME" >&2
++        return 1
++    fi
++    # A failed test can leave a read-only folder behind.
++    chmod -R u+w "$HOME" 2> /dev/null || true
++    rm -rf "${HOME:?}"/* "$HOME/.config" "$HOME/.cache" "$HOME/.tmp"
++    mkdir -p "$HOME/Library/Caches" "$HOME/.config/mole" "$HOME/.tmp"
++    EVENTS="$BATS_TEST_TMPDIR/events.ndjson"
++    SELECTION_FILE=""
++    NO_OPLOG=""
++    : > "$EVENTS"
++}
++
++teardown() {
++    chmod -R u+w "$HOME" 2> /dev/null || true
++}
++
++# Same seams as clean_selection.bats: no real Homebrew, Xcode, process table
++# or open-file probe may influence what the pipeline sees.
++set_mock_host_toolchains() {
++    MOCK_TOOLCHAIN_BIN="$HOME/toolchain-bin"
++    mkdir -p "$MOCK_TOOLCHAIN_BIN"
++    cat > "$MOCK_TOOLCHAIN_BIN/brew" << 'MOCK'
++#!/bin/bash
++case "${1:-}" in
++    --cache) echo "$HOME/Library/Caches/Homebrew" ;;
++    --prefix) echo "$HOME/homebrew" ;;
++esac
++exit 0
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/xcrun" << 'MOCK'
++#!/bin/bash
++exit 1
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/lsof" << 'MOCK'
++#!/bin/bash
++case " $* " in
++    *" -p 1 "*) printf 'p1\nu0\n'; exit 0 ;;
++    *) exit 1 ;;
++esac
++MOCK
++    cat > "$MOCK_TOOLCHAIN_BIN/ps" << 'MOCK'
++#!/bin/bash
++printf '  PID  PPID COMM ARGS\n'
++MOCK
++    chmod +x "$MOCK_TOOLCHAIN_BIN"/*
++}
++
++# Test-only guard: any rm aimed outside the fake HOME is refused and logged.
++install_rm_guard() {
++    RM_GUARD_BIN="$BATS_TEST_TMPDIR/rm-guard-bin"
++    RM_GUARD_LOG="$BATS_TEST_TMPDIR/rm-refused.log"
++    mkdir -p "$RM_GUARD_BIN"
++    : > "$RM_GUARD_LOG"
++    cat > "$RM_GUARD_BIN/rm" << GUARD
++#!/bin/bash
++for arg in "\$@"; do
++    case "\$arg" in
++        -*) ;;
++        "$HOME"/*) ;;
++        *)
++            printf '%s\n' "\$arg" >> "$RM_GUARD_LOG"
++            exit 1
++            ;;
++    esac
++done
++exec /bin/rm "\$@"
++GUARD
++    chmod +x "$RM_GUARD_BIN/rm"
++}
++
++# Run bin/clean.sh on the fake home with the host variables RoomForMac sets.
++# SELECTION_FILE selects paths; NO_OPLOG=1 turns Mole's operations log off.
++run_clean_json() {
++    local -a vars=(
++        HOME="$HOME" TMPDIR="$HOME/.tmp" MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=1 MOLE_NO_AUTH=1
++        MOLE_GUI_HOST=roomformac MOLE_LSREGISTER_PATH="" MOLE_JSON_EVENTS_FILE="$EVENTS"
++        PATH="$RM_GUARD_BIN:$MOCK_TOOLCHAIN_BIN:$PATH"
++    )
++    if [[ -n "$SELECTION_FILE" ]]; then
++        vars+=(MOLE_SELECTION_FILE="$SELECTION_FILE")
++    fi
++    if [[ -n "$NO_OPLOG" ]]; then
++        vars+=(MO_NO_OPLOG=1)
++    fi
++    run env "${vars[@]}" "$PROJECT_ROOT/bin/clean.sh" "$@"
++}
++
++# A folder holding one KB-sized file of zeros. Args: folder, size in KB.
++make_dir_with_blob() {
++    mkdir -p "$1"
++    dd if=/dev/zero of="$1/blob.bin" bs=1024 count="$2" 2> /dev/null
++}
++
++make_cache() {
++    make_dir_with_blob "$HOME/Library/Caches/$1" "$2"
++}
++
++# Remove TARGET with safe_remove in a fresh shell that sources Mole's core.
++# Further VAR=value arguments go into that shell's environment;
++# PRECOMPUTED_KB becomes safe_remove's third argument (a caller's own size).
++run_safe_remove() {
++    local target="$1"
++    shift
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" TARGET="$target" "$@" \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++safe_remove "$TARGET" true "${PRECOMPUTED_KB-}"
++EOF
++}
++
++# How many times the recording du double was asked about PATH.
++count_du_calls() {
++    grep -cF -- "$1" "$HOME/du-calls" || true
++}
++
++# The size_kb of the removed result for PATH: "null" when the key is absent,
++# nothing when there is no removed result for PATH.
++removed_size_of() {
++    jq -r --arg p "$1" 'select(.type == "result" and .action == "removed" and .path == $p) | .size_kb' "$EVENTS"
++}
++
++@test "result events carry size_kb only on removed results with a measured size" {
++    run env HOME="$HOME" EVENTS="$EVENTS" PROJECT_ROOT="$PROJECT_ROOT" MO_NO_OPLOG=1 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++export MOLE_JSON_EVENTS_FILE="$EVENTS"
++log_operation "clean" "REMOVED" "/tmp/rfm/a" "1MB" 1024
++log_operation "clean" "REMOVED" "/tmp/rfm/zero" "" 0
++log_operation "clean" "REMOVED" "/tmp/rfm/padded" "" 007
++log_operation "clean" "REMOVED" "/tmp/rfm/symlink" "symlink"
++log_operation "clean" "REMOVED" "/tmp/rfm/unmeasured" "" ""
++log_operation "clean" "REMOVED" "/tmp/rfm/text" "12KB" "12KB"
++log_operation "clean" "SKIPPED" "/tmp/rfm/skipped" "protected" 12
++log_operation "clean" "FAILED" "/tmp/rfm/failed" "permission denied" 12
++MOLE_DRY_RUN=1 log_operation "clean" "REMOVED" "/tmp/rfm/dry" "" 5
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$EVENTS"
++    [ "${#lines[@]}" -eq 8 ]
++    [ "${lines[0]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/a","detail":"1MB","size_kb":1024}' ]
++    [ "${lines[1]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/zero","detail":"","size_kb":0}' ]
++    [ "${lines[2]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/padded","detail":"","size_kb":7}' ]
++    [ "${lines[3]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/symlink","detail":"symlink"}' ]
++    [ "${lines[4]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/unmeasured","detail":""}' ]
++    [ "${lines[5]}" = '{"v":1,"type":"result","command":"clean","action":"removed","path":"/tmp/rfm/text","detail":"12KB"}' ]
++    [ "${lines[6]}" = '{"v":1,"type":"result","command":"clean","action":"skipped","path":"/tmp/rfm/skipped","detail":"protected"}' ]
++    [ "${lines[7]}" = '{"v":1,"type":"result","command":"clean","action":"failed","path":"/tmp/rfm/failed","detail":"permission denied"}' ]
++}
++
++@test "one measurement serves the operations log and the event stream" {
++    command -v jq > /dev/null || skip "jq is required"
++    # shellcheck disable=SC2016  # the fake du expands these when it runs
++    mole_test_fake_command du 'printf "%s\n" "$*" >> "$HOME/du-calls"; exec /usr/bin/du "$@"'
++    : > "$HOME/du-calls"
++    local name
++    for name in neither log-only log-and-events events-only precomputed; do
++        make_dir_with_blob "$HOME/data/$name" 64
++    done
++
++    run_safe_remove "$HOME/data/neither" MO_NO_OPLOG=1
++    [ "$status" -eq 0 ]
++    run_safe_remove "$HOME/data/log-only"
++    [ "$status" -eq 0 ]
++    run_safe_remove "$HOME/data/log-and-events" MOLE_JSON_EVENTS_FILE="$EVENTS"
++    [ "$status" -eq 0 ]
++    run_safe_remove "$HOME/data/events-only" MO_NO_OPLOG=1 MOLE_JSON_EVENTS_FILE="$EVENTS"
++    [ "$status" -eq 0 ]
++    run_safe_remove "$HOME/data/precomputed" MO_NO_OPLOG=1 MOLE_JSON_EVENTS_FILE="$EVENTS" PRECOMPUTED_KB=4096
++    [ "$status" -eq 0 ]
++
++    # Without the events file nothing changes: the operations log costs one du
++    # and no log costs none. The event stream reuses that one du, measures
++    # once when the log is off, and trusts a size the caller already measured.
++    local neither log_only both events_only precomputed
++    neither=$(count_du_calls "$HOME/data/neither")
++    log_only=$(count_du_calls "$HOME/data/log-only")
++    both=$(count_du_calls "$HOME/data/log-and-events")
++    events_only=$(count_du_calls "$HOME/data/events-only")
++    precomputed=$(count_du_calls "$HOME/data/precomputed")
++    [ "$log_only" -eq $((neither + 1)) ]
++    [ "$both" -eq "$log_only" ]
++    [ "$events_only" -eq "$log_only" ]
++    [ "$precomputed" -eq "$neither" ]
++
++    run removed_size_of "$HOME/data/log-and-events"
++    [ "$output" -ge 64 ]
++    run removed_size_of "$HOME/data/events-only"
++    [ "$output" -ge 64 ]
++    run removed_size_of "$HOME/data/precomputed"
++    [ "$output" = "4096" ]
++}
++
++@test "an empty file reports size_kb 0" {
++    command -v jq > /dev/null || skip "jq is required"
++    mkdir -p "$HOME/data"
++    : > "$HOME/data/empty.bin"
++
++    run_safe_remove "$HOME/data/empty.bin" MOLE_JSON_EVENTS_FILE="$EVENTS"
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/data/empty.bin" ]
++    run jq -r 'select(.type == "result") | [.action, .size_kb, .detail] | @tsv' "$EVENTS"
++    [ "$output" = $'removed\t0\t' ]
++}
++
++@test "a size probe that fails leaves size_kb out" {
++    command -v jq > /dev/null || skip "jq is required"
++    # du prints a partial total and then fails, as it does on an unreadable child.
++    mole_test_fake_command du 'echo 4; exit 1'
++    make_dir_with_blob "$HOME/data/unmeasurable" 64
++
++    run_safe_remove "$HOME/data/unmeasurable" MOLE_JSON_EVENTS_FILE="$EVENTS"
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/data/unmeasurable" ]
++    run jq -r 'select(.type == "result") | [.action, has("size_kb")] | @tsv' "$EVENTS"
++    [ "$output" = $'removed\tfalse' ]
++}
++
++@test "a size probe that times out leaves size_kb out" {
++    command -v jq > /dev/null || skip "jq is required"
++    mole_test_fake_command du 'exec sleep 10'
++    make_dir_with_blob "$HOME/data/slow" 64
++
++    run_safe_remove "$HOME/data/slow" MOLE_JSON_EVENTS_FILE="$EVENTS" MOLE_TIMEOUT_DISK_VERIFY_SEC=2
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/data/slow" ]
++    run jq -r 'select(.type == "result") | [.action, has("size_kb")] | @tsv' "$EVENTS"
++    [ "$output" = $'removed\tfalse' ]
++}
++
++@test "safe_sudo_remove reports the size it measured" {
++    command -v jq > /dev/null || skip "jq is required"
++    make_dir_with_blob "$HOME/admin-cache/blobs" 64
++
++    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" TARGET_DIR="$HOME/admin-cache/blobs" \
++        MOLE_JSON_EVENTS_FILE="$EVENTS" MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
++        /bin/bash --noprofile --norc << 'EOF'
++set -euo pipefail
++source "$PROJECT_ROOT/lib/core/common.sh"
++# Model a root-owned path, so safe_sudo_remove measures and removes the
++# target itself, with a sudo that runs each command as this user.
++_mole_privileged_path_has_mutable_ancestor() { return 1; }
++sudo() {
++    printf '%s\n' "$*" >> "$HOME/sudo-calls"
++    [[ "${1:-}" == "-n" ]] || return 99
++    shift
++    "$@"
++}
++safe_sudo_remove "$TARGET_DIR"
++EOF
++    [ "$status" -eq 0 ]
++    [ ! -e "$HOME/admin-cache/blobs" ]
++    run grep -c '^-n du -skP ' "$HOME/sudo-calls"
++    [ "$output" -eq 1 ]
++    run removed_size_of "$HOME/admin-cache/blobs"
++    [ "$output" -ge 64 ]
++}
++
++@test "a selected run reports the size measured after the cache grew" {
++    command -v jq > /dev/null || skip "jq is required"
++    local alpha="$HOME/Library/Caches/com.example.alpha"
++    # Four caches, so the section sizes them in parallel before removing any.
++    make_cache com.example.alpha 256
++    make_cache com.example.beta 64
++    make_cache com.example.gamma 64
++    make_cache com.example.delta 64
++    set_mock_host_toolchains
++    install_rm_guard
++
++    run_clean_json --dry-run
++    [ "$status" -eq 0 ]
++    local preview_kb
++    preview_kb=$(jq -r --arg p "$alpha" 'select(.type == "item" and .path == $p) | .size_kb' "$EVENTS")
++    [ "$preview_kb" -ge 256 ]
++
++    dd if=/dev/zero of="$alpha/grown.bin" bs=1024 count=512 2> /dev/null
++    local grown_kb
++    grown_kb=$(du -skP "$alpha" | awk '{print $1}')
++    [ "$grown_kb" -gt "$preview_kb" ]
++
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$alpha" > "$SELECTION_FILE"
++    : > "$EVENTS"
++    run_clean_json
++    [ "$status" -eq 0 ]
++    [ ! -e "$alpha" ]
++    [ -f "$HOME/Library/Caches/com.example.beta/blob.bin" ]
++
++    run removed_size_of "$alpha"
++    [ "${#lines[@]}" -eq 1 ]
++    [ "$output" -ge "$grown_kb" ]
++    [ ! -s "$RM_GUARD_LOG" ]
++}
++
++@test "MO_NO_OPLOG=1 still reports removed sizes in a selected run" {
++    command -v jq > /dev/null || skip "jq is required"
++    local alpha="$HOME/Library/Caches/com.example.alpha"
++    make_cache com.example.alpha 128
++    set_mock_host_toolchains
++    install_rm_guard
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$alpha" > "$SELECTION_FILE"
++    NO_OPLOG=1
++
++    run_clean_json
++    [ "$status" -eq 0 ]
++    [ ! -e "$alpha" ]
++    # The operations log really was off.
++    [ ! -e "$HOME/Library/Logs/mole/operations.log" ]
++    run removed_size_of "$alpha"
++    [ "$output" -ge 128 ]
++    [ ! -s "$RM_GUARD_LOG" ]
++}
++
++@test "skipped and failed results never carry size_kb" {
++    command -v jq > /dev/null || skip "jq is required"
++    local caches="$HOME/Library/Caches"
++    make_cache com.example.alpha 64
++    make_cache com.example.beta 64
++    # A read-only folder inside beta makes its removal fail part way.
++    make_dir_with_blob "$caches/com.example.beta/locked" 16
++    chmod 555 "$caches/com.example.beta/locked"
++    set_mock_host_toolchains
++    install_rm_guard
++    SELECTION_FILE="$BATS_TEST_TMPDIR/selection"
++    printf '%s\0' "$caches/com.example.alpha" "$caches/com.example.beta" > "$SELECTION_FILE"
++
++    run_clean_json
++    [ "$status" -eq 0 ]
++
++    # One result of each kind: alpha is removed, beta fails, and the engine's
++    # own log folder is skipped as protected although nobody selected it.
++    run removed_size_of "$caches/com.example.alpha"
++    [ "$output" -ge 64 ]
++    run jq -r --arg p "$caches/com.example.beta" 'select(.type == "result" and .path == $p) | .action' "$EVENTS"
++    [ "$output" = "failed" ]
++    run jq -r 'select(.type == "result" and .action == "skipped") | .path' "$EVENTS"
++    [[ "$output" == *"$HOME/Library/Logs/mole"* ]] || return 1
++
++    run jq -c 'select(.type == "result" and .action != "removed" and has("size_kb"))' "$EVENTS"
++    [ "$status" -eq 0 ]
++    [ -z "$output" ]
++    [ ! -s "$RM_GUARD_LOG" ]
++}
++
++@test "a dry run writes no result events" {
++    command -v jq > /dev/null || skip "jq is required"
++    make_cache com.example.alpha 64
++    set_mock_host_toolchains
++    install_rm_guard
++
++    run_clean_json --dry-run
++    [ "$status" -eq 0 ]
++    [ -f "$HOME/Library/Caches/com.example.alpha/blob.bin" ]
++    run jq -r 'select(.type == "item") | .path' "$EVENTS"
++    [[ "$output" == *"$HOME/Library/Caches/com.example.alpha"* ]] || return 1
++    run jq -c 'select(.type == "result")' "$EVENTS"
++    [ "$status" -eq 0 ]
++    [ -z "$output" ]
++}
