@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import MoleEngine
 import Testing
@@ -689,6 +690,91 @@ struct SmartCleanModelTests {
         #expect(harness.model.phase.preview != nil)
         #expect(harness.gate.requests.isEmpty)
         #expect(harness.service.calls.count == 2)
+    }
+
+    // MARK: Fix round 1
+
+    /// `EngineLogStore.append` has no test seam, but its final `open(O_WRONLY, …)` genuinely
+    /// blocks until a reader appears (standard FIFO semantics). Routing the log through a
+    /// named pipe gives a real, deterministic pause after the recheck has already shown its
+    /// refreshed preview (Ruling 7) but before `requestClean()` regains control — exactly the
+    /// window `requestClean()` must re-check the phase in.
+    @Test func aSelectionChangeWhileTheRecheckIsStillLoggingDropsTheStaleGateCall() async throws {
+        let grown = CleanItem(section: Fixture.alpha.section, path: Fixture.alpha.path, sizeBytes: 3_145_728, sizeKnown: true)
+        let rescanned = [grown, Fixture.google, Fixture.derived]
+        let rescan: [Step] = [.event(.section("User essentials"))] + rescanned.map { .event(.item($0)) } + [
+            .event(.summary(RunSummary(command: "clean", dryRun: true, items: 3, sizeBytes: 5_640_192, partial: false, exitCode: 0))),
+        ]
+        let harness = makeHarness(ScriptedCleanService(scan: Fixture.dryRun(), rescan: rescan))
+        let preview = try await scanToResults(harness)
+        clock.mutate { $0 += 901 }
+
+        // Let the scan's own diagnostics write normally, then swap the log file for a FIFO so
+        // only the recheck's append blocks.
+        let logPath = try #require(harness.logStore.directory).appending(path: EngineLogStore.fileName)
+        try? FileManager.default.removeItem(at: logPath)
+        #expect(mkfifo(logPath.path, 0o600) == 0)
+
+        var expectedRefreshed = preview
+        _ = expectedRefreshed.refresh(with: rescanned)
+
+        let request = Task { await harness.model.requestClean() }
+        while harness.model.phase.preview != expectedRefreshed {
+            await Task.yield()
+        }
+        // The model is blocked delivering the recheck's diagnostics; the phase already shows
+        // the refreshed preview but `requestClean()` has not asked the gate yet. Change the
+        // selection now.
+        harness.model.toggle(Fixture.id(Fixture.derived))
+
+        // Release the FIFO: keep reading until the writer closes, so it can never see EPIPE.
+        let reader = Task.detached {
+            let descriptor = open(logPath.path, O_RDONLY)
+            guard descriptor >= 0 else { return }
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while read(descriptor, &buffer, buffer.count) > 0 {}
+            close(descriptor)
+        }
+        await request.value
+        _ = await reader.value
+
+        #expect(harness.gate.requests.isEmpty)
+        #expect(harness.model.phase.confirmation == nil)
+        var expected = expectedRefreshed
+        expected.toggle(Fixture.id(Fixture.derived))
+        #expect(harness.model.phase == .results(expected))
+    }
+
+    @Test func aPreviewScannedInTheFutureIsNeverTreatedAsFreshSoCleanRechecksIt() async throws {
+        let harness = makeHarness(ScriptedCleanService(scan: Fixture.dryRun(), rescan: Fixture.rows()))
+        let preview = try await scanToResults(harness)
+        let plan = preview.makePlan(id: UUID(), now: start)
+        // The system clock moved backward after the scan: `now` is now before `scannedAt`, a
+        // negative age. `now - scannedAt <= limit` was true for any negative age, so the
+        // preview counted as fresh and Clean skipped the recheck.
+        clock.mutate { $0 -= 5 }
+        await harness.model.requestClean()
+        #expect(harness.model.phase.confirmation != nil)
+        #expect(harness.service.calls == [.scan, .rescan(plan.items.map(\.path))])
+    }
+
+    @Test func aStaleGateDecisionIsClearedWhenARecheckFailsAndAfterDone() async throws {
+        let harness = makeHarness(
+            ScriptedCleanService(scan: Fixture.dryRun(), rescan: [.fail(.timedOut)]), decisions: [.exhausted]
+        )
+        _ = try await scanToResults(harness)
+        await harness.model.requestClean()
+        #expect(harness.model.gateDecision == .exhausted)
+
+        // Past the freshness limit, so the next Clean press rechecks first.
+        clock.mutate { $0 += 901 }
+        await harness.model.requestClean()
+        #expect(harness.model.phase.failure != nil)
+        #expect(harness.model.gateDecision == nil)
+
+        harness.model.done()
+        #expect(harness.model.phase == .idle(note: nil))
+        #expect(harness.model.gateDecision == nil)
     }
 
     // MARK: Entry and endings

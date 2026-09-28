@@ -249,6 +249,9 @@ final class SmartCleanModel {
         var current = preview
         if needsRecheck(plan, in: preview) {
             guard let refreshed = await recheck(plan, in: preview) else { return }
+            // The user may have scanned again or changed the selection while the recheck's
+            // diagnostics were still being logged.
+            guard case .results(let latest) = phase, latest == refreshed else { return }
             current = refreshed
             plan = refreshed.makePlan(id: plan.id, now: dependencies.now())
             guard !plan.isEmpty else { return }
@@ -448,7 +451,13 @@ final class SmartCleanModel {
         }
     }
 
+    /// A gate refusal is only meaningful over `results`: any other phase (a new scan, a
+    /// recheck starting, cleaning, a summary, a failure, idle) clears it, so a stale
+    /// decision never survives into a phase where it no longer applies.
     private func show(_ newPhase: SmartCleanPhase, note: SmartCleanNote? = nil) {
+        if case .results = newPhase {} else {
+            gateDecision = nil
+        }
         phase = newPhase
         resultsNote = note
     }
@@ -531,7 +540,8 @@ final class SmartCleanModel {
     nonisolated static func isFresh(_ date: Date, now: Date, limit: Duration) -> Bool {
         let parts = limit.components
         let seconds = Double(parts.seconds) + Double(parts.attoseconds) / 1e18
-        return now.timeIntervalSince(date) <= seconds
+        let age = now.timeIntervalSince(date)
+        return age >= 0 && age <= seconds
     }
 }
 
