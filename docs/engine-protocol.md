@@ -276,6 +276,65 @@ Details:
 - Exit code 0 when the list was processed; 1 only when FILE cannot be read.
 - Hosts route `.app` bundles to the uninstaller instead of this command.
 
+## Live status (`bin/status-go --watch`, no patch)
+
+`bin/status-go --watch --interval <n>s` (whole seconds, at least 1) writes one JSON snapshot per
+line on stdout until the host ends it; it exits by itself only when stdout closes. It runs with
+`status-bin/` first on `PATH` (see Status helpers). A host keeps one process for the whole app
+run and pauses it with `SIGSTOP` and `SIGCONT` to its process group instead of restarting it: a
+new process starts cold again (no rates, no enrichment, an empty `network_history`). A host stop
+is `SIGTERM` followed by `SIGCONT`, so a paused process ends at once.
+
+**Timing** (measured on macOS 27 with `--interval 2s`):
+- The first line arrives about 0.13 s after the start. It is a *fast* collect and is not
+  enriched: every `hardware` string is `""`, `gpu` and `batteries` are `null`,
+  `cpu.p_core_count` and `e_core_count` are 0, `memory.pressure` and `cached` are empty,
+  `disks[]` hold raw `statfs` values, `disk_io` is 0, the network rate covers about 0.1 s, and
+  `top_processes` and the `process_*` keys are absent. Its `health_score` comes from that partial
+  data (74 against 43 for the full snapshot 70 ms later).
+- The first *full* collect starts right after the first line; its line arrives about 2 s after
+  the start. From then on `hardware.os_version` is not empty, which is how a host tells an
+  enriched snapshot (`SystemSnapshot.isEnriched`).
+- Then one line per interval, plus 0.1–0.5 s of collection. A full collect runs every 30 s of
+  wall-clock time. The fast collects in between copy the last full collect's hardware, P/E core
+  counts, memory pressure and cache, corrected disks, GPU, batteries and thermal readings. Only a
+  full collect in which every step succeeded refreshes that copy; until one has, every tick is a
+  full collect.
+- After `SIGCONT`, the next line arrives within about 0.5 s, and its rates cover the paused time.
+- A collect step that fails writes `status: collect failed: …` to stderr; the snapshot is still
+  written.
+
+**Dates.** `collected_at` (when the collection started) and `process_collected_at` are RFC 3339
+with 0 to 9 fraction digits and a zone offset or `Z`, for example
+`2026-09-27T02:08:28.26406-03:00`. MoleEngine parses them with
+`Date.ISO8601FormatStyle(includingFractionalSeconds: true)`, then `.iso8601`. A line whose date
+parses with neither is skipped, like any line that does not decode.
+
+**Fields a host reads.** Units are the Go source's: bytes, percent, MiB/s (the engine's "MB/s"
+divides by 1024 × 1024), °C, rpm and W. Any key may be missing or `null`, so MoleEngine decodes
+each one as optional. After `.convertFromSnakeCase` the names are `diskIo` and `logicalCpu`, not
+`diskIO` and `logicalCPU`: a differently cased optional property decodes as nil without an error.
+
+| Key | Notes |
+|---|---|
+| `collected_at`, `host`, `platform` (`darwin 27.0`), `uptime_seconds`, `procs` | |
+| `hardware{model,cpu_model,total_ram,disk_size,os_version,refresh_rate}` | strings; `""` until the first full collect |
+| `health_score`, `health_score_msg` | 0–100 and English `"<Band>[: Issue, Issue]"`. A host shows them only once a snapshot is enriched, and maps the message to its own copy |
+| `cpu{usage,per_core[],per_core_estimated,load1,load5,load15,core_count,logical_cpu,p_core_count,e_core_count}` | fast collects use raw deltas; full collects apply the parked-core floor |
+| `gpu[]{name,usage,core_count,note}` | full collects only. `usage` is −1 without root, so the app reads GPU use itself |
+| `memory{used,total,available,used_percent,swap_used,swap_total,cached,pressure}` | `pressure` is always `""` on macOS 27, so the app reads the pressure level itself |
+| `disks[]{mount,device,used,total,used_percent,fstype,external,smart_status,purgeable}` | at most 3, internal first. `purgeable` is present only when Finder answered, so never with `status-bin`. A host uses the disk mounted at `/`, else the first (`SystemSnapshot.rootDisk`) |
+| `disk_io{read_rate,write_rate}` | MiB/s since the previous line; 0 on the first |
+| `network[]{name,rx_rate_mbs,tx_rate_mbs,ip}`, `network_history{rx_history[],tx_history[]}` | the top 3 interfaces; up to 120 summed samples, which restart with the process |
+| `batteries[]{percent,status,time_left,health,cycle_count,capacity}` | `null` on the first line and on Macs without a battery |
+| `thermal{cpu_temp,gpu_temp,battery_temp,fan_speed,fan_count,system_power,adapter_power,battery_power}` | 0 means unknown (`cpu_temp` and the fans read 0 on an M2 MacBook Air) |
+| `trash_size`, `trash_approx` | walks `$HOME/.Trash` for up to 2 s; 0 without Full Disk Access |
+| `top_processes[]{pid,ppid,name,command,cpu,memory,memory_bytes}`, `process_collected_at`, `process_stale` | the top 5; absent on the first line |
+
+A host ignores `uptime`, `proxy`, `sensors` (always `null`), `bluetooth` (the engine's
+`"No Bluetooth info"` placeholder with `status-bin`), `zombie_*`, `process_watch` and
+`process_alerts`.
+
 ## Status helpers (`status-bin/`, no patch)
 
 `scripts/build-engine.sh` writes two bash scripts into `status-bin/`. Hosts put that directory

@@ -25,7 +25,9 @@ enum IntegrationEngine {
 struct `Engine integration` {
     @Test(.timeLimit(.minutes(2)))
     func statusStreamsLiveSnapshots() async throws {
-        let service = StatusService(installation: try IntegrationEngine.installation())
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let service = StatusService(installation: try IntegrationEngine.installation(), environment: fake.environment())
         var first: SystemSnapshot?
         for try await snapshot in service.snapshots(interval: .seconds(1)) {
             first = snapshot
@@ -51,7 +53,9 @@ struct `Engine integration` {
 
     @Test(.timeLimit(.minutes(2)))
     func analyzerTrashRefusesProtectedPaths() async throws {
-        let service = AnalyzerService(installation: try IntegrationEngine.installation())
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let service = AnalyzerService(installation: try IntegrationEngine.installation(), environment: fake.environment())
         var results: [ItemResult] = []
         for try await event in service.trash(["/System/Library"]) {
             if case .result(let result) = event {
@@ -408,5 +412,150 @@ extension `Engine integration` {
             }
         }
         return items
+    }
+}
+
+// MARK: - Status (Plan 3 Task 8)
+
+/// Spies for the two tools `status-bin` shadows. They sit on `status-go`'s
+/// `PATH` right after `status-bin`, so they log a call only if `status-bin`
+/// stopped winning the lookup. Each logs its arguments and exits 1 without
+/// contacting anything.
+struct StatusToolSpies {
+    let directory: URL
+    let log: URL
+
+    static func make(in fake: FakeHome) throws -> StatusToolSpies {
+        let spies = StatusToolSpies(
+            directory: fake.root.appending(path: "status-spies"),
+            log: fake.root.appending(path: "status-spies.log")
+        )
+        try FileManager.default.createDirectory(at: spies.directory, withIntermediateDirectories: true)
+        for tool in ["osascript", "system_profiler"] {
+            let url = spies.directory.appending(path: tool)
+            let body = "#!/bin/bash\nprintf '%s %s\\n' \"\(tool)\" \"$*\" >> \"\(spies.log.path)\"\nexit 1\n"
+            try body.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        return spies
+    }
+
+    /// The fake home and temporary folder, with the spies as the only test
+    /// prefix. FakeHome's own tool stubs stay off this `PATH`: its `ps`
+    /// lists no processes, which would fail every full collect's process step.
+    func environment(for fake: FakeHome) -> EngineEnvironment {
+        EngineEnvironment(
+            home: fake.home.path,
+            user: NSUserName(),
+            temporaryDirectory: fake.temporary.path,
+            pathPrefix: [directory.path]
+        )
+    }
+
+    var calls: [String] {
+        let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        return text.split(separator: "\n").map(String.init)
+    }
+}
+
+extension `Engine integration` {
+    @Test(.timeLimit(.minutes(2)))
+    func statusSessionEnrichesTheSecondSnapshotWithoutFinderOrBluetooth() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let spies = try StatusToolSpies.make(in: fake)
+        let service = StatusService(installation: try IntegrationEngine.installation(), environment: spies.environment(for: fake))
+        let session = service.session(interval: .seconds(2))
+
+        var snapshots: [SystemSnapshot] = []
+        for try await snapshot in session.snapshots {
+            snapshots.append(snapshot)
+            if snapshots.count == 2 {
+                break
+            }
+        }
+        #expect(snapshots.count == 2)
+        #expect(snapshots.first?.isEnriched == false)
+        #expect(snapshots.first?.collectedAt != nil)
+        let full = try #require(snapshots.last)
+        #expect(full.isEnriched)
+        #expect((full.cpu?.logicalCpu ?? 0) > 0)
+        #expect((full.memory?.available ?? 0) > 0)
+        #expect(full.rootDisk?.mount == "/")
+        // The Finder tier failed at status-bin's osascript, so no purgeable space.
+        #expect(full.rootDisk?.purgeable == nil)
+        #expect(spies.calls.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func aSuspendedStatusSessionHoldsSnapshotsUntilResumed() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let spies = try StatusToolSpies.make(in: fake)
+        let service = StatusService(installation: try IntegrationEngine.installation(), environment: spies.environment(for: fake))
+        let session = service.session(interval: .seconds(2))
+        let control = session.control
+        let clock = ContinuousClock()
+
+        var iterator = session.snapshots.makeAsyncIterator()
+        let fast = try await iterator.next()
+        let full = try await iterator.next()
+        #expect(fast != nil)
+        #expect(full?.isEnriched == true)
+
+        // status-go now sleeps 2 s before its next collect.
+        let suspendedAt = clock.now
+        control.suspend()
+        #expect(control.isSuspended)
+        let resumer = Task {
+            try await Task.sleep(for: .seconds(3))
+            control.resume()
+        }
+        let resumed = try await iterator.next()
+        let waited = clock.now - suspendedAt
+        try await resumer.value
+        #expect(resumed != nil)
+        #expect(waited >= .seconds(3))
+        #expect(waited < .seconds(6))
+
+        // A stop reaches a suspended collector at once (SIGTERM, then SIGCONT).
+        control.suspend()
+        let stoppedAt = clock.now
+        control.stop()
+        var failure: (any Error)?
+        do {
+            while try await iterator.next() != nil {}
+        } catch {
+            failure = error
+        }
+        #expect(failure as? EngineError == .cancelled)
+        #expect(clock.now - stoppedAt < .seconds(2))
+        #expect(spies.calls.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func stoppingAStatusSessionEndsItInUnderTwoSeconds() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let spies = try StatusToolSpies.make(in: fake)
+        let service = StatusService(installation: try IntegrationEngine.installation(), environment: spies.environment(for: fake))
+        let session = service.session(interval: .seconds(2))
+        let clock = ContinuousClock()
+
+        var iterator = session.snapshots.makeAsyncIterator()
+        let first = try await iterator.next()
+        #expect(first != nil)
+        // status-go starts its first full collect right after the first line,
+        // so the stop lands while its helpers run.
+        let stoppedAt = clock.now
+        session.control.stop()
+        var failure: (any Error)?
+        do {
+            while try await iterator.next() != nil {}
+        } catch {
+            failure = error
+        }
+        #expect(failure as? EngineError == .cancelled)
+        #expect(clock.now - stoppedAt < .seconds(2))
     }
 }
