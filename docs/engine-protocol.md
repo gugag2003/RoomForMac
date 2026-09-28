@@ -232,3 +232,68 @@ Both stubs are required, executable files of an engine: `EngineInstallation(root
 directory without them (`missing status-bin/osascript`, `not executable: …`), and the app then
 shows its "Reinstall RoomForMac" card. They are scripts, so the app keeps them in
 `Contents/Resources/engine/status-bin`; `Contents/Helpers` holds only the two Go tools.
+
+## Stopping a run, how it ended, and diagnostics (host side)
+
+These rules belong to `Packages/MoleEngine`; the engine needs no patch for them.
+
+- **Host stop.** `EngineRunControl.stop()` sends `SIGTERM`, then `SIGCONT`, to the engine's
+  process group, so a suspended group ends at once. The host keeps reading until the process
+  exits, delivers every line written before the exit, and then ends the stream with
+  `EngineError.cancelled`. `SIGKILL` follows after the grace period (5 s) if the group is still
+  alive. Cancelling the consuming Task instead is a hard abort: lines not yet read are dropped.
+- **A stream stopped by the host has no `summary`.** Mole's `TERM` trap exits 143 without writing
+  one (see Clean events). The exception is a stop that raced the end of the run: a `summary`
+  with `exit` 0 that arrived before the stop means the run finished.
+- **How a run ended** is decided in one place, `RunCompletion.classify(summary:error:stopRequested:)`.
+  The first matching rule wins:
+
+  | # | Condition | Outcome |
+  |---|---|---|
+  | 1 | a `summary` with `exit` 0, and no error (or only the `cancelled` that a stop after it produced) | `completed` |
+  | 2 | the host requested a stop | `cancelled`, with the summary if one arrived |
+  | 3 | a `summary` with a non-zero `exit` | `stoppedEarly` |
+  | 4 | an `EngineError` (a Swift `CancellationError` counts as `cancelled`) | `failed` |
+  | 5 | any other error | `failed` with `launchFailed` |
+  | 6 | no error and no summary | `incomplete` |
+
+  Services throw only `EngineError`. Anything that fails before the engine starts (the run
+  folder, a path list) becomes `launchFailed`.
+- **The engine outlives a crashed host.** Each command leads its own process group, and nothing
+  ties it to the app's life. If RoomForMac crashes or is force-quit, the engine is reparented to
+  `launchd` and runs to the end. Its results are never read, and its run folder
+  (`$TMPDIR/roomformac-engine-<UUID>/`) is left behind. The same holds for a run the host
+  neither stops nor awaits before a normal quit.
+- **Run folder.** Besides `events.ndjson`, `stderr.log` and the path lists, it holds `stdout.log`
+  (0600). An events-file run's stdout, the engine's readable transcript, is appended there instead
+  of going to `/dev/null`.
+- **Diagnostics.** Every run produces one `RunDiagnostics` just before its stream ends, however it
+  ends: success, error, stop, Task cancellation or a launch failure.
+  - `command`: the executable's last path component and the arguments.
+  - `startedAt` and `endedAt`.
+  - `exit`: `exit 0`, `exit <n>`, `signal <n>`, `cancelled`, `timed out` or `not started`.
+  - `eventCounts`: events by `type`. `unparsed` counts lines the host skipped, and `protected`
+    counts preview rows the host dropped (Smart Clean).
+  - `stdoutTail` and `stderrTail`: the last 64 KiB of each, starting at a UTF-8 character
+    boundary. For a stdout-mode command, the stdout tail is the last lines received.
+  - `unexpectedRemovals`: filled by the feature from its tally.
+
+  The tails are read before the run folder is removed.
+- **Log.** The app appends each record to `~/Library/Logs/RoomForMac/engine.log` with
+  `EngineLogStore`: the folder is 0700, the files 0600, and a symlinked file is never written
+  through. Before an entry would push the file past 1 MiB, the file rotates, keeping
+  `engine.1.log` (the newest) to `engine.4.log`. Each entry is a header line and the tails, with
+  every tail line indented by two spaces, so only headers start with `===`:
+
+  ```
+  === 2026-09-27T02:05:54Z clean.sh --dry-run · exit 0 · 7.2 s · item=24 section=14 summary=1
+  --- stdout (tail)
+    Scanning caches
+  --- stderr (tail)
+  ```
+
+  A non-empty `unexpectedRemovals` adds an `--- unexpected removals` block. **Show details** and
+  **Copy diagnostics** read this log. It holds paths, so it never leaves the Mac.
+- `MO_NO_OPLOG` stays unset, so the engine keeps writing its own operations log in
+  `~/Library/Logs/mole`, which RoomForMac leaves alone. (With patch 0006 the `removed` sizes
+  would arrive either way.)

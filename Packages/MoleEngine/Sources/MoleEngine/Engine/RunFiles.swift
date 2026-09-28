@@ -1,12 +1,15 @@
 import Foundation
 
 /// A private scratch directory for one engine run: the events file, the
-/// stderr log, and any path lists handed to the engine. Removed afterwards.
+/// stdout and stderr logs, and any path lists handed to the engine. Removed
+/// afterwards.
 struct RunFiles: Sendable {
     let directory: URL
 
     var events: URL { directory.appending(path: "events.ndjson") }
     var stderrLog: URL { directory.appending(path: "stderr.log") }
+    /// An events-file run's stdout: the engine's readable transcript.
+    var stdoutLog: URL { directory.appending(path: "stdout.log") }
 
     static func make(in parent: URL) throws -> RunFiles {
         let directory = parent.appending(path: "roomformac-engine-\(UUID().uuidString)")
@@ -16,8 +19,11 @@ struct RunFiles: Sendable {
             attributes: [.posixPermissions: 0o700]
         )
         let files = RunFiles(directory: directory)
-        guard FileManager.default.createFile(atPath: files.events.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: files.events.path])
+        for url in [files.events, files.stdoutLog] {
+            guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+                files.remove()
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+            }
         }
         return files
     }
