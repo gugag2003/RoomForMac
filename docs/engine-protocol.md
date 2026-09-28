@@ -19,7 +19,8 @@ machine-readable results. This is the contract between `patches/mole/` and
 
 Every command runs with `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG=en_US.UTF-8`, `NO_COLOR=1`,
 `TERM=dumb`, stdin `/dev/null`, its own process group, and `PATH` = test prefixes, then
-`host-bin/` (while admin access is off), then Homebrew and system directories.
+`host-bin/` (while admin access is off), then Homebrew and system directories. `bin/status-go`
+alone runs with `status-bin/` in front of that `PATH` (see Status helpers).
 
 ## Host variables
 
@@ -215,3 +216,19 @@ Details:
 - stdout: one `result` event per path (`command:"analyze"`, `action` `removed` / `skipped` (missing) / `failed` with `detail`), then one `summary` (`items` = removed count, `partial` = any failure, `size_kb` 0).
 - Exit code 0 when the list was processed; 1 only when FILE cannot be read.
 - Hosts route `.app` bundles to the uninstaller instead of this command.
+
+## Status helpers (`status-bin/`, no patch)
+
+`scripts/build-engine.sh` writes two bash scripts into `status-bin/`. Hosts put that directory
+first on `PATH` for `bin/status-go` only, in front of the `PATH` above. Every other command runs
+without it, so Smart Clean, the uninstaller and the analyzer always reach the real tools.
+
+| Stub | Behaviour | Effect on `status-go` |
+|---|---|---|
+| `status-bin/osascript` | Exits 1 without output, whatever its arguments. | Full collects ask Finder for the startup disk's free space (`tell application "Finder" …`; the result, a failure included, is cached for 2 minutes). With the stub that tier fails at once: `status-go` never sends Finder an Apple event and never launches Finder. It falls back to `diskutil`, and `disks[].purgeable` is absent. |
+| `status-bin/system_profiler` | Exits 1 without output when any argument is `SPBluetoothDataType`; otherwise `exec /usr/sbin/system_profiler "$@"`. | Full collects list Bluetooth devices, which may make macOS ask for Bluetooth access. With the stub, `bluetooth` holds the engine's `"No Bluetooth info"` placeholder. The power, hardware and display queries are unchanged. |
+
+Both stubs are required, executable files of an engine: `EngineInstallation(root:)` rejects a
+directory without them (`missing status-bin/osascript`, `not executable: …`), and the app then
+shows its "Reinstall RoomForMac" card. They are scripts, so the app keeps them in
+`Contents/Resources/engine/status-bin`; `Contents/Helpers` holds only the two Go tools.

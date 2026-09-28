@@ -4,6 +4,8 @@ import Testing
 
 @Suite("Engine installation and environment")
 struct EngineInstallationTests {
+    static let statusStubs = ["status-bin/osascript", "status-bin/system_profiler"]
+
     @Test func acceptsACompleteLayout() throws {
         let root = try TestInstallation.makeLayout()
         let installation = try EngineInstallation(root: root)
@@ -11,6 +13,7 @@ struct EngineInstallationTests {
         #expect(installation.version.patchCount == 5)
         #expect(installation.cleanScript == root.appending(path: "bin/clean.sh"))
         #expect(installation.hostBinDirectory == root.appending(path: "host-bin"))
+        #expect(installation.statusBinDirectory == root.appending(path: "status-bin"))
     }
 
     @Test func rejectsAMissingScript() throws {
@@ -25,6 +28,24 @@ struct EngineInstallationTests {
         let root = try TestInstallation.makeLayout()
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: root.appending(path: "bin/status-go").path)
         #expect(throws: EngineError.installationInvalid("not executable: bin/status-go")) {
+            try EngineInstallation(root: root)
+        }
+    }
+
+    @Test(arguments: EngineInstallationTests.statusStubs)
+    func rejectsALayoutWithoutAStatusStub(stub: String) throws {
+        let root = try TestInstallation.makeLayout()
+        try FileManager.default.removeItem(at: root.appending(path: stub))
+        #expect(throws: EngineError.installationInvalid("missing \(stub)")) {
+            try EngineInstallation(root: root)
+        }
+    }
+
+    @Test(arguments: EngineInstallationTests.statusStubs)
+    func rejectsAStatusStubThatIsNotExecutable(stub: String) throws {
+        let root = try TestInstallation.makeLayout()
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: root.appending(path: stub).path)
+        #expect(throws: EngineError.installationInvalid("not executable: \(stub)")) {
             try EngineInstallation(root: root)
         }
     }
@@ -55,6 +76,19 @@ struct EngineInstallationTests {
         let variables = environment.variables(for: installation)
         #expect(variables["MOLE_NO_AUTH"] == nil)
         #expect(!(variables["PATH"] ?? "").contains("host-bin"))
+    }
+
+    /// The stubs are for `status-go` alone (its service prepends them); the shared
+    /// environment that every other engine command runs with never lists them.
+    @Test(arguments: [false, true])
+    func theSharedPathNeverListsTheStatusStubs(allowsAdministrator: Bool) throws {
+        let installation = try TestInstallation.make()
+        let environment = EngineEnvironment(
+            home: "/Users/test", user: "test", temporaryDirectory: "/tmp/t", allowsAdministrator: allowsAdministrator
+        )
+        let path = environment.variables(for: installation)["PATH"] ?? ""
+        #expect(!path.isEmpty)
+        #expect(!path.split(separator: ":").contains { $0 == installation.statusBinDirectory.path })
     }
 
     @Test func extraVariablesWin() throws {

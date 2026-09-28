@@ -7,13 +7,15 @@ enum EngineLayout {
     static let requiredFiles = [
         "bin/clean.sh", "bin/uninstall.sh", "bin/analyze-go", "bin/status-go",
         "lib/core/common.sh", "lib/core/host.sh", "host-bin/sudo",
+        "status-bin/osascript", "status-bin/system_profiler",
     ]
     /// Mirrors MoleEngine's internal `EngineInstallation.executableFiles`.
     static let executableFiles: Set<String> = [
         "bin/clean.sh", "bin/uninstall.sh", "bin/analyze-go", "bin/status-go", "host-bin/sudo",
+        "status-bin/osascript", "status-bin/system_profiler",
     ]
 
-    /// Writes the seven required files and a `VERSION` with one `key=value` line per entry,
+    /// Writes the nine required files and a `VERSION` with one `key=value` line per entry,
     /// verbatim and sorted by key, into `directory/engine`. Returns that root.
     static func make(in directory: URL, version: [String: String]) throws -> URL {
         let root = directory.appending(path: "engine")

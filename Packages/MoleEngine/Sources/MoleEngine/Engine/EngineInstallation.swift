@@ -9,9 +9,11 @@ public struct EngineInstallation: Sendable, Equatable {
     static let requiredFiles = [
         "bin/clean.sh", "bin/uninstall.sh", "bin/analyze-go", "bin/status-go",
         "lib/core/common.sh", "lib/core/host.sh", "host-bin/sudo",
+        "status-bin/osascript", "status-bin/system_profiler",
     ]
     static let executableFiles = [
         "bin/clean.sh", "bin/uninstall.sh", "bin/analyze-go", "bin/status-go", "host-bin/sudo",
+        "status-bin/osascript", "status-bin/system_profiler",
     ]
 
     public init(root: URL) throws {
@@ -45,4 +47,12 @@ public struct EngineInstallation: Sendable, Equatable {
     public var analyzeBinary: URL { root.appending(path: "bin/analyze-go") }
     public var statusBinary: URL { root.appending(path: "bin/status-go") }
     public var hostBinDirectory: URL { root.appending(path: "host-bin") }
+}
+
+extension EngineInstallation {
+    /// Goes first on `PATH` for `status-go` only, never for another engine command.
+    /// Its `osascript` always fails, so the status tool never sends Finder an Apple
+    /// event, and its `system_profiler` refuses `SPBluetoothDataType`. See "Status
+    /// helpers" in docs/engine-protocol.md.
+    public var statusBinDirectory: URL { root.appending(path: "status-bin") }
 }
