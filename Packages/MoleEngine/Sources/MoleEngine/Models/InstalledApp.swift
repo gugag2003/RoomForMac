@@ -14,6 +14,29 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
     public var sizeKb: Int64?
     public var lastUsedEpoch: Int64?
 
+    /// An app as `uninstall --list` would report it, for hosts' tests and
+    /// fixtures. Declared in the type itself: in an extension it would clash
+    /// with the synthesized memberwise initializer.
+    public init(
+        name: String,
+        bundleId: String,
+        source: String,
+        uninstallName: String,
+        path: String,
+        size: String,
+        sizeKb: Int64?,
+        lastUsedEpoch: Int64?
+    ) {
+        self.name = name
+        self.bundleId = bundleId
+        self.source = source
+        self.uninstallName = uninstallName
+        self.path = path
+        self.size = size
+        self.sizeKb = sizeKb
+        self.lastUsedEpoch = lastUsedEpoch
+    }
+
     /// 0 when the size is unknown. Decoding rejects sizes too large to count
     /// in bytes; one set that large by hand counts as 0 too.
     public var sizeBytes: Int64 { EngineJSON.bytes(fromKilobytes: sizeKb) ?? 0 }
@@ -37,4 +60,9 @@ public struct InstalledApp: Sendable, Hashable, Decodable {
         }
         return apps
     }
+}
+
+extension InstalledApp: Identifiable {
+    /// The bundle path: the one value the engine keeps unique in its list.
+    public var id: String { path }
 }

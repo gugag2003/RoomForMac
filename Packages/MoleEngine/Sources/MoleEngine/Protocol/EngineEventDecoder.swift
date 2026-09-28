@@ -45,6 +45,15 @@ private struct RawEvent: Decodable {
     var vendor: String?
     var status: String?
     var freedKb: Int64?
+    var leftoverItems: [RawLeftover]?
+
+    /// One entry of an `app` event's `leftover_items` (amended patch 0004).
+    struct RawLeftover: Decodable {
+        var path: String
+        var sizeKb: Int64?
+        var sizeKnown: Bool?
+        var coveredBy: String?
+    }
 
     var event: EngineEvent? {
         // Like a size too large for Int64 itself, a size too large to count
@@ -82,12 +91,13 @@ private struct RawEvent: Decodable {
                 sizeBytes: sizeBytes, partial: partial ?? false, exitCode: exit ?? 0
             ))
         case "app":
-            guard let path else { return nil }
+            guard let path, let measured = appLeftovers else { return nil }
             return .app(AppPreview(
                 path: path, name: name ?? "", bundleId: bundleId ?? "",
                 sizeBytes: sizeBytes, needsAdmin: needsSudo ?? false,
                 homebrewCask: brewCask ?? false, hasSensitiveData: sensitiveData ?? false,
-                isRunning: running ?? false, leftovers: leftovers ?? [], reviewOnly: reviewOnly ?? []
+                isRunning: running ?? false, leftovers: leftovers ?? [], reviewOnly: reviewOnly ?? [],
+                leftoverItems: measured
             ))
         case "app_blocked":
             guard let path, let reason = reason.flatMap(BlockedApp.Reason.init(rawValue:)) else { return nil }
@@ -101,5 +111,20 @@ private struct RawEvent: Decodable {
         default:
             return nil
         }
+    }
+
+    /// `leftover_items` as models; empty when the engine sent none. Nil when a
+    /// leftover's size is too large to count in bytes, which makes the whole
+    /// line malformed, like any other size.
+    private var appLeftovers: [AppLeftover]? {
+        var items: [AppLeftover] = []
+        for raw in leftoverItems ?? [] {
+            guard let bytes = EngineJSON.bytes(fromKilobytes: raw.sizeKb) else { return nil }
+            items.append(AppLeftover(
+                path: raw.path, sizeBytes: bytes,
+                sizeKnown: raw.sizeKnown ?? false, coveredBy: raw.coveredBy
+            ))
+        }
+        return items
     }
 }

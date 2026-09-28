@@ -128,6 +128,111 @@ struct `Engine integration` {
         #expect(!FileManager.default.fileExists(atPath: support.path))
         #expect(fake.rmRefusalLines().isEmpty)
     }
+
+    @Test(.timeLimit(.minutes(10)))
+    func uninstallPreviewSizesEachLeftover() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        // Bundle id com.rfmnest.RFMNest names the vendor folder
+        // "Application Support/RFMNest", so the engine also lists its
+        // "RFMNest" child: a leftover inside another leftover.
+        let app = try fake.makeApp(named: "RFMNest", bundleId: "com.rfmnest.RFMNest")
+        try fake.makeFile("Library/Application Support/RFMNest/state.bin", kilobytes: 40)
+        try fake.makeFile("Library/Application Support/RFMNest/RFMNest/nested.bin", kilobytes: 12)
+        try fake.makeFile("Library/Caches/com.rfmnest.RFMNest/cache.bin", kilobytes: 300)
+        let support = fake.home.appending(path: "Library/Application Support/RFMNest").path
+        let nested = support + "/RFMNest"
+        let caches = fake.home.appending(path: "Library/Caches/com.rfmnest.RFMNest").path
+        let service = UninstallService(installation: try IntegrationEngine.installation(), environment: fake.environment())
+
+        let preview = try await service.preview(appPaths: [app.path])
+        let planned = try #require(preview.apps.first { $0.path == app.path })
+        #expect(planned.leftoverItems.map(\.path) == planned.leftovers)
+        let items = Dictionary(planned.leftoverItems.map { ($0.path, $0) }) { first, _ in first }
+        let covered = try #require(items[nested])
+        #expect(covered.coveredBy == support)
+        #expect(covered.sizeBytes == 0)
+        let folder = try #require(items[support])
+        #expect(folder.coveredBy == nil)
+        #expect(folder.sizeKnown)
+        #expect(folder.sizeBytes >= 52 * 1024)
+        #expect((items[caches]?.sizeBytes ?? 0) >= 300 * 1024)
+        let counted = planned.leftoverItems
+            .filter { $0.coveredBy == nil && $0.sizeKnown }
+            .reduce(Int64(0)) { $0 + $1.sizeBytes }
+        #expect(counted >= 352 * 1024)
+        #expect(counted <= planned.sizeBytes)
+        #expect(FileManager.default.fileExists(atPath: app.path))
+    }
+
+    @Test(.timeLimit(.minutes(10)))
+    func previewOfOnlyAnOfficialUninstallerAppIsBlockedNotAnError() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        // "falcon" in the name matches the engine's CrowdStrike rule.
+        let app = try fake.makeApp(named: "RFMFalcon", bundleId: "com.example.rfmfalcon")
+        let service = UninstallService(installation: try IntegrationEngine.installation(), environment: fake.environment())
+
+        let preview = try await service.preview(appPaths: [app.path])
+        #expect(preview.apps.isEmpty)
+        #expect(preview.blocked.map(\.path) == [app.path])
+        #expect(preview.blocked.map(\.reason) == [.officialUninstaller])
+        #expect(preview.blocked.first?.vendor == "CrowdStrike")
+        #expect(FileManager.default.fileExists(atPath: app.path))
+    }
+
+    @Test(.timeLimit(.minutes(15)))
+    func uninstallMovesTheAppToTheTestTrashAndTalliesIt() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        let app = try fake.makeApp(named: "RFMTrash", bundleId: "com.example.rfmtrash")
+        try fake.makeFile("Applications/RFMTrash.app/Contents/Resources/payload.bin", kilobytes: 256)
+        try fake.makeFile("Library/Caches/com.example.rfmtrash/blob.bin", kilobytes: 64)
+        let service = UninstallService(installation: try IntegrationEngine.installation(), environment: fake.environment())
+
+        var tally = UninstallRunTally(appPaths: [app.path])
+        var confirmed: [AppResult] = []
+        for try await event in service.uninstall(appPaths: [app.path]) {
+            if let removal = tally.record(event) {
+                confirmed.append(removal)
+            }
+        }
+        #expect(confirmed.map(\.path) == [app.path])
+        #expect(tally.removedPaths == [app.path])
+        #expect(tally.pendingPaths.isEmpty)
+        #expect(tally.unexpectedResults.isEmpty)
+        #expect(tally.scanned[app.path] != nil)
+        guard case .removed(let freed)? = tally.outcomes[app.path] else {
+            Issue.record("expected the app to be removed, got \(String(describing: tally.outcomes[app.path]))")
+            return
+        }
+        #expect(freed > 0)
+        #expect(tally.freedBytes == freed)
+        #expect(!FileManager.default.fileExists(atPath: app.path))
+        let trashed = try FileManager.default.contentsOfDirectory(atPath: fake.trash.path)
+        #expect(trashed.contains { $0.hasPrefix("RFMTrash.app.") })
+        #expect(fake.rmRefusalLines().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(10)))
+    func aColdListMeasuresEveryApp() async throws {
+        let fake = try FakeHome.make()
+        defer { fake.remove() }
+        // More than the engine's 20 cold rows it measures by default; the
+        // fake home has no metadata cache yet.
+        var fixtures: Set<String> = []
+        for index in 1...21 {
+            let name = String(format: "RFMCold%02d", index)
+            let app = try fake.makeApp(named: name, bundleId: "com.example.\(name.lowercased())")
+            try fake.makeFile("Applications/\(name).app/Contents/Resources/payload.bin", kilobytes: 64)
+            fixtures.insert(app.path)
+        }
+        let service = UninstallService(installation: try IntegrationEngine.installation(), environment: fake.environment())
+
+        let listed = try await service.listApps().filter { fixtures.contains($0.path) }
+        #expect(Set(listed.map(\.path)) == fixtures)
+        #expect(listed.filter { $0.sizeBytes == 0 }.map(\.path) == [])
+    }
 }
 
 // MARK: - Smart Clean (Plan 3 Task 6)

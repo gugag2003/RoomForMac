@@ -5,7 +5,8 @@ public struct AppPreview: Sendable, Hashable, Codable {
     public var path: String
     public var name: String
     public var bundleId: String
-    /// App bundle plus leftovers.
+    /// App bundle plus the leftovers that are not covered by another
+    /// leftover and whose size is known.
     public var sizeBytes: Int64
     /// Removal needs administrator access (unavailable until admin support ships).
     public var needsAdmin: Bool
@@ -17,6 +18,9 @@ public struct AppPreview: Sendable, Hashable, Codable {
     public var leftovers: [String]
     /// System paths shown for review but never removed.
     public var reviewOnly: [String]
+    /// `leftovers` in the same order, with the sizes the engine counted in
+    /// `sizeBytes`. Empty from an engine without per-leftover sizes.
+    public var leftoverItems: [AppLeftover]
 
     public init(
         path: String,
@@ -28,7 +32,8 @@ public struct AppPreview: Sendable, Hashable, Codable {
         hasSensitiveData: Bool,
         isRunning: Bool,
         leftovers: [String],
-        reviewOnly: [String]
+        reviewOnly: [String],
+        leftoverItems: [AppLeftover] = []
     ) {
         self.path = path
         self.name = name
@@ -40,6 +45,30 @@ public struct AppPreview: Sendable, Hashable, Codable {
         self.isRunning = isRunning
         self.leftovers = leftovers
         self.reviewOnly = reviewOnly
+        self.leftoverItems = leftoverItems
+    }
+}
+
+extension AppPreview: Identifiable {
+    public var id: String { path }
+}
+
+/// One leftover of an app preview, with the size the engine counted for it.
+public struct AppLeftover: Sendable, Hashable, Codable {
+    public var path: String
+    /// 0 when the size is unknown or the leftover is covered.
+    public var sizeBytes: Int64
+    /// False when measuring timed out; the app's total leaves it out.
+    public var sizeKnown: Bool
+    /// The nearest listed leftover this one lies inside. Its bytes are
+    /// counted there, so it reads 0 here.
+    public var coveredBy: String?
+
+    public init(path: String, sizeBytes: Int64, sizeKnown: Bool, coveredBy: String? = nil) {
+        self.path = path
+        self.sizeBytes = sizeBytes
+        self.sizeKnown = sizeKnown
+        self.coveredBy = coveredBy
     }
 }
 
@@ -67,6 +96,10 @@ public struct BlockedApp: Sendable, Hashable, Codable {
     }
 }
 
+extension BlockedApp: Identifiable {
+    public var id: String { path }
+}
+
 /// The outcome of uninstalling one app.
 public struct AppResult: Sendable, Hashable, Codable {
     public enum Status: String, Sendable, Codable {
@@ -76,6 +109,8 @@ public struct AppResult: Sendable, Hashable, Codable {
     public var path: String
     public var name: String
     public var status: Status
+    /// For a removed app, the previewed size minus the leftovers that could
+    /// not be moved. No event names those leftovers.
     public var freedBytes: Int64
     public var reason: String
 

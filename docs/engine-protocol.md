@@ -247,6 +247,28 @@ Details:
   are added keys, and the existing ones are unchanged. A `size_kb` above the limit in the JSON
   conventions makes the whole array malformed.
 
+### Uninstall host notes (MoleEngine)
+
+- `uninstall --list` prints apps by last use, oldest first (`last_used_epoch` ascending). Hosts
+  sort for themselves.
+- An app without an entry in the engine's metadata cache (`~/.cache/mole`, which the engine
+  refreshes in the background) is a cold row. The engine measures cold rows with `du` only when there
+  are at most `MOLE_UNINSTALL_INLINE_DU_MAX_COLD_ROWS` of them (default 20); otherwise each
+  one reads `size_kb: 0` and `size: "--"` until the background refresh has run, so a first list
+  after install has no sizes. The variable is an overridable default, not a patch.
+  `UninstallService.listApps(measureColdSizes: true)`, the default, sets it to `100000`: every
+  app is measured, each `du` still capped at 2 s, which adds a few seconds on a cold cache only.
+- `UninstallService` sends each requested path once, without trailing slashes, in request
+  order (`normalizedAppPaths`); the engine would scan a duplicate twice.
+- A preview that exits 1 with only `app_blocked` events that cover every requested path is an
+  answer (every app was blocked in the scan), not a failure; an engine without the amended 0004
+  exits 1 there. Any other non-zero exit, any requested path reported neither as `app` nor as
+  `app_blocked`, and a cancelled caller are errors: a preview is never partial. The error names no
+  path.
+- A real run writes no `summary`. `UninstallRunTally` gives each requested app one outcome: the
+  first `app_result` wins, an app without one was not handled, and an `app_result` for a path
+  nobody requested is kept apart for the diagnostics and never charged.
+
 ## Analyzer Trash list (`bin/analyze-go --trash-list FILE`, patch 0005)
 
 - FILE lists absolute paths separated by NUL bytes. Each is moved to the Trash with the analyzer's own validation (protected and critical paths are refused), deepest paths first.
