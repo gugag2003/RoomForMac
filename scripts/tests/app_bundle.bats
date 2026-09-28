@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Checks a built RoomForMac.app: the embedded engine, its helpers' signatures
-# and the architectures. Run it after a build:
+# Checks a built RoomForMac.app: the embedded engine, its helpers' signatures,
+# the status stubs and the architectures. Run it after a build:
 #
 #   APP=build/DerivedData/Build/Products/Release/RoomForMac.app EXPECT_UNIVERSAL=1 \
 #       bats scripts/tests/app_bundle.bats
@@ -60,6 +60,33 @@ signer() {
     run ls "$HELPERS"
     [ "$status" -eq 0 ]
     [ "$output" = $'analyze-go\nstatus-go' ]
+}
+
+@test "engine/status-bin holds the two status stubs as executable scripts" {
+    local stub
+    run ls "$ENGINE/status-bin"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'osascript\nsystem_profiler' ]
+    for stub in osascript system_profiler; do
+        [ -f "$ENGINE/status-bin/$stub" ]
+        [ ! -L "$ENGINE/status-bin/$stub" ]
+        [ -x "$ENGINE/status-bin/$stub" ]
+        if lipo -archs "$ENGINE/status-bin/$stub" > /dev/null 2>&1; then
+            echo "Mach-O status stub: $ENGINE/status-bin/$stub" >&2
+            return 1
+        fi
+        cmp "$SOURCE_ENGINE/status-bin/$stub" "$ENGINE/status-bin/$stub"
+    done
+}
+
+@test "the bundled status stubs refuse Finder and Bluetooth" {
+    run "$ENGINE/status-bin/osascript" -e \
+        'tell application "Finder" to return {free space of startup disk, capacity of startup disk}'
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    run "$ENGINE/status-bin/system_profiler" SPBluetoothDataType
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
 }
 
 @test "each helper is signed as com.roomformac.RoomForMac.engine.<tool>" {

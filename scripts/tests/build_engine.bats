@@ -37,6 +37,47 @@ setup_file() {
     [ "$status" -eq 1 ]
 }
 
+@test "status-bin holds the two status stubs as bash scripts that say why they exist" {
+    local stub
+    run ls "$ENGINE_OUT/status-bin"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'osascript\nsystem_profiler' ]
+    for stub in osascript system_profiler; do
+        [ -f "$ENGINE_OUT/status-bin/$stub" ]
+        [ -x "$ENGINE_OUT/status-bin/$stub" ]
+        [ "$(sed -n 1p "$ENGINE_OUT/status-bin/$stub")" = "#!/bin/bash" ]
+        sed -n 2p "$ENGINE_OUT/status-bin/$stub" |
+            grep -qx '# RoomForMac puts this directory first on PATH for status-go only. status-go'
+        /bin/bash -n "$ENGINE_OUT/status-bin/$stub"
+    done
+}
+
+@test "the status osascript stub fails at once without output" {
+    run "$ENGINE_OUT/status-bin/osascript" -e \
+        'tell application "Finder" to return {free space of startup disk, capacity of startup disk}'
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "the status system_profiler stub refuses the Bluetooth data type" {
+    run "$ENGINE_OUT/status-bin/system_profiler" SPBluetoothDataType
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+    run "$ENGINE_OUT/status-bin/system_profiler" -json -detailLevel mini SPBluetoothDataType
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "the status system_profiler stub runs the real tool for everything else" {
+    run "$ENGINE_OUT/status-bin/system_profiler" -listDataTypes
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(/usr/sbin/system_profiler -listDataTypes 2>&1)" ]
+    # An unknown data type costs nothing, and the real tool names it back.
+    run "$ENGINE_OUT/status-bin/system_profiler" -json SPRoomForMacProbeDataType
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"SPRoomForMacProbeDataType"'* ]]
+}
+
 @test "VERSION records the pinned Mole release and patch set" {
     run cat "$ENGINE_OUT/VERSION"
     [[ "$output" == *"mole_tag=V1.56.0"* ]] || return 1

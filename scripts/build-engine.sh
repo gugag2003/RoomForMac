@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build the patched Mole engine that RoomForMac bundles.
 #
-# Output:  $ENGINE_OUT (default build/engine): mole, bin/, lib/, host-bin/, LICENSE, VERSION
+# Output:  $ENGINE_OUT (default build/engine): mole, bin/, lib/, host-bin/, status-bin/,
+#          LICENSE, VERSION
 # Source:  build/engine-src: pinned Mole with patches/mole applied (kept for tests)
 #
 # Every build re-clones build/engine-src, so only one runs at a time: a second
@@ -73,7 +74,7 @@ build_universal analyze-go ./cmd/analyze
 build_universal status-go ./cmd/status
 
 rm -rf "$OUT"
-mkdir -p "$OUT/bin" "$OUT/host-bin"
+mkdir -p "$OUT/bin" "$OUT/host-bin" "$OUT/status-bin"
 cp "$SRC/mole" "$OUT/mole"
 cp "$SRC"/bin/*.sh "$OUT/bin/"
 cp "$SRC/bin/analyze-go" "$SRC/bin/status-go" "$OUT/bin/"
@@ -87,6 +88,33 @@ cat > "$OUT/host-bin/sudo" << 'SHIM'
 exit 1
 SHIM
 chmod +x "$OUT/host-bin/sudo"
+
+# For status-go only: RoomForMac puts status-bin first on that one tool's PATH
+# ("Status helpers" in docs/engine-protocol.md). Every other command runs
+# without it.
+cat > "$OUT/status-bin/osascript" << 'SHIM'
+#!/bin/bash
+# RoomForMac puts this directory first on PATH for status-go only. status-go
+# asks Finder for the startup disk's free space through osascript: an Apple
+# event, which also launches Finder when it is not running. Failing at once,
+# with no output, sends status-go to its diskutil fallback. RoomForMac reads
+# free space itself.
+exit 1
+SHIM
+cat > "$OUT/status-bin/system_profiler" << 'SHIM'
+#!/bin/bash
+# RoomForMac puts this directory first on PATH for status-go only. status-go
+# lists Bluetooth devices on every full collect, which may make macOS ask for
+# Bluetooth access. RoomForMac shows no Bluetooth devices, so that query fails
+# at once, with no output. Every other query runs the real system_profiler.
+for arg in "$@"; do
+    if [[ "$arg" == "SPBluetoothDataType" ]]; then
+        exit 1
+    fi
+done
+exec /usr/sbin/system_profiler "$@"
+SHIM
+chmod +x "$OUT/status-bin/osascript" "$OUT/status-bin/system_profiler"
 
 # GPL-3.0: the engine ships with Mole's license text.
 cp "$VENDOR/LICENSE" "$OUT/LICENSE"
