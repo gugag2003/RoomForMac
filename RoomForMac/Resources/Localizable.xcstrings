@@ -85,6 +85,9 @@
     "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall." : {
 
     },
+    "Clang module cache" : {
+
+    },
     "Cleaning couldn't start." : {
 
     },
@@ -340,6 +343,9 @@
 
     },
     "Licenses and notices" : {
+
+    },
+    "Logs" : {
 
     },
     "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
@@ -664,6 +670,9 @@
     "Title: %@" : {
 
     },
+    "Trash" : {
+
+    },
     "Try again" : {
 
     },
@@ -725,6 +734,12 @@
     "Without Full Disk Access:" : {
 
     },
+    "Xcode build data" : {
+
+    },
+    "Xcode build data · %@" : {
+
+    },
     "Xcode's simulator service didn't answer. Open Xcode once, then try again." : {
 
     },
@@ -732,6 +747,9 @@
 
     },
     "at least %@" : {
+
+    },
+    "iOS software update" : {
 
     },
     "macOS %@" : {

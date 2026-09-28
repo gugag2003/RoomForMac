@@ -15,6 +15,7 @@ struct AppPreferences: @unchecked Sendable {
         static let analyticsEnabled = "analytics.enabled"
         static let notificationsWanted = "notifications.wanted"
         static let lastKnownStatePrefix = "permissions.lastKnown."
+        static let cleanSectionTimings = "clean.sectionTimings"
     }
 
     private let defaults: UserDefaults
@@ -73,6 +74,24 @@ struct AppPreferences: @unchecked Sendable {
         nonmutating set { defaults.set(newValue, forKey: Key.notificationsWanted) }
     }
 
+    /// Seconds each Smart Clean section took in the latest scans, by the engine's section name,
+    /// for `SectionTimings` (Ruling 21). Kept on this Mac and never sent. Values that are not
+    /// finite numbers are dropped when read and when written; an empty dictionary removes the key.
+    var cleanSectionTimings: [String: Double] {
+        get {
+            guard let stored = defaults.dictionary(forKey: Key.cleanSectionTimings) else { return [:] }
+            return stored.compactMapValues(Self.finiteSeconds)
+        }
+        nonmutating set {
+            let kept = newValue.filter { $0.value.isFinite }
+            if kept.isEmpty {
+                defaults.removeObject(forKey: Key.cleanSectionTimings)
+            } else {
+                defaults.set(kept, forKey: Key.cleanSectionTimings)
+            }
+        }
+    }
+
     /// The last state stored for a permission (a `PermissionState.storageValue`),
     /// keyed by its raw `PermissionID`.
     func lastKnownState(for permission: String) -> String? {
@@ -95,6 +114,13 @@ struct AppPreferences: @unchecked Sendable {
     /// also reads the strings `defaults write` stores, such as "0" or "NO".
     private func bool(forKey key: String, default fallback: Bool) -> Bool {
         defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key)
+    }
+
+    /// A stored number as seconds: nil for anything else, Booleans and non-finite numbers included.
+    private static func finiteSeconds(_ value: Any) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let seconds = number.doubleValue
+        return seconds.isFinite ? seconds : nil
     }
 
     private func store(_ value: String?, forKey key: String) {
