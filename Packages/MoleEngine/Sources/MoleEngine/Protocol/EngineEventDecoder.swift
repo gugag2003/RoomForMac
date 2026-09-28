@@ -71,7 +71,11 @@ private struct RawEvent: Decodable {
             ))
         case "result":
             guard let path, let action = action.flatMap(ItemResult.Action.init(rawValue:)) else { return nil }
-            return .result(ItemResult(command: command ?? "", action: action, path: path, detail: detail ?? ""))
+            // `size_kb` on a result is optional (patch 0006): absent means unknown, not 0.
+            return .result(ItemResult(
+                command: command ?? "", action: action, path: path, detail: detail ?? "",
+                sizeBytes: sizeKb == nil ? nil : sizeBytes
+            ))
         case "summary":
             return .summary(RunSummary(
                 command: command ?? "", dryRun: dryRun ?? false, items: items ?? 0,

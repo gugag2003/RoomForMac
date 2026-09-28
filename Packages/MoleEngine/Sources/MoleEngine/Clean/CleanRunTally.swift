@@ -10,6 +10,8 @@ public struct CleanRunTally: Sendable, Equatable {
     public private(set) var unexpectedRemovals: [String] = []
     private let itemsByPath: [String: CleanItem]
     private var outcomes: [String: ItemResult] = [:]
+    /// How many removals this run has confirmed so far.
+    private var confirmedRemovals = 0
 
     public init(selection: [CleanItem]) {
         let enginePaths = Set(CleanSelection.enginePaths(for: selection))
@@ -23,24 +25,42 @@ public struct CleanRunTally: Sendable, Equatable {
         itemsByPath = items
     }
 
+    /// Records an event. Same as `confirm(_:)`, for callers that do not need
+    /// the removal it returns.
     public mutating func record(_ event: EngineEvent) {
+        _ = confirm(event)
+    }
+
+    /// Records an event and returns the removal it confirms: the first
+    /// `removed` result for a selected path. Every other event returns nil: a
+    /// repeated `removed`, a `removed` for a path that was not selected (kept
+    /// in `unexpectedRemovals`), `skipped` and `failed` results, and non-result
+    /// events. Sequences count every removal this tally confirmed, through
+    /// either method, starting at 1.
+    public mutating func confirm(_ event: EngineEvent) -> CleanRemoval? {
         switch event {
         case .result(let result):
             let path = CleanSelection.normalize(result.path)
-            guard itemsByPath[path] != nil else {
+            guard let item = itemsByPath[path] else {
                 if result.action == .removed {
                     unexpectedRemovals.append(result.path)
                 }
-                return
+                return nil
             }
             if outcomes[path]?.action == .removed {
-                return
+                return nil
             }
             outcomes[path] = result
+            guard result.action == .removed else {
+                return nil
+            }
+            confirmedRemovals += 1
+            return CleanRemoval(item: item, bytes: result.sizeBytes ?? item.sizeBytes, sequence: confirmedRemovals)
         case .summary(let value):
             summary = value
+            return nil
         default:
-            break
+            return nil
         }
     }
 
@@ -54,10 +74,13 @@ public struct CleanRunTally: Sendable, Equatable {
         sortedItems.filter { outcome(for: $0)?.action != .removed }
     }
 
-    /// Previewed size of the confirmed removals, stopping at Int64.max.
+    /// Bytes of the confirmed removals, stopping at Int64.max: the size the
+    /// engine measured just before each removal, or the previewed size when
+    /// the `removed` result carried none.
     public var removedBytes: Int64 {
         removedItems.reduce(0) { total, item in
-            let (sum, overflow) = total.addingReportingOverflow(item.sizeBytes)
+            let bytes = outcome(for: item)?.sizeBytes ?? item.sizeBytes
+            let (sum, overflow) = total.addingReportingOverflow(bytes)
             return overflow ? .max : sum
         }
     }
