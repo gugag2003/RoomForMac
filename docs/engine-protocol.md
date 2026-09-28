@@ -121,10 +121,11 @@ Details:
 | `MOLE_UNINSTALL_APP_PATHS_FILE=PATH` | NUL-separated `.app` paths. Each must exactly match an app from the normal eligibility scan; others produce `app_blocked` / `not_eligible`. |
 | `MOLE_UNINSTALL_PREVIEW_ONLY=1` | Stop after scanning the selected apps (always pair with `--dry-run`). |
 | `MOLE_ASSUME_YES=1` | Treat the plan as confirmed; never read a key. |
+| `MOLE_UNINSTALL_INLINE_DU_MAX_COLD_ROWS=100000` | Upstream variable, no patch; RoomForMac sets it on `uninstall --list`. Every app missing from Mole's metadata cache is then measured with a bounded `du` (2 s per app). Upstream does that only when 20 or fewer apps are missing, so a first list on a Mac with more apps reports `size_kb: 0` for them until Mole's background refresh fills the cache. |
 
 | `type` | Fields |
 |---|---|
-| `app` | `path`, `name`, `bundle_id`, `size_kb` (app + leftovers), `needs_sudo`, `brew_cask`, `sensitive_data`, `running`, `leftovers` (paths removed with the app), `review_only` (system paths shown but never removed) |
+| `app` | `path`, `name`, `bundle_id`, `size_kb` (app + leftovers), `needs_sudo`, `brew_cask`, `sensitive_data`, `running`, `leftovers` (paths removed with the app), `review_only` (system paths shown but never removed), `leftover_items` (each leftover's size; see below) |
 | `app_blocked` | `path`, `name`, `reason` (`not_eligible` / `official_uninstaller` / `manual_removal`), `vendor` |
 | `app_result` | `path`, `name`, `status` (`removed` / `failed`), `freed_kb`, `reason` |
 
@@ -140,13 +141,39 @@ Details:
 - `app` events come from the scan, so previews and real runs both write one for each selected
   app that passed it, before anything is removed. A `not_eligible` event carries the requested
   path (trailing slashes removed) with an empty `name` and `vendor`.
-- `app_result` events are written only for real runs, never with `--dry-run`. `freed_kb` is the
-  scanned `size_kb` of a removed app and `0` for a failed one; `reason` is empty on success.
-- Exit status `0`: the run finished (per-app failures are reported by `app_result`), or no
-  requested path was eligible (only `app_blocked` events). A non-zero status before removals
-  start removes nothing: a missing path list, a scan that could not finish, every selected app
-  blocked during the scan, or a batch that needs the sudo session `MOLE_NO_AUTH=1` refuses. A
-  timeout or signal during removals leaves `app_result` events only for apps already handled.
+- `leftover_items` has one object per entry of `leftovers`, in the same order:
+  `{"path", "size_kb", "size_known", "covered_by"}`. `path` is the `leftovers` entry exactly.
+  - Each leftover is measured once, on the basis of the engine's own total: `du -skP` for a
+    folder, allocated blocks for a file. The app's `size_kb` is the bundle plus every item
+    with `covered_by: null` and `size_known: true`, so the bundle's own size is `size_kb`
+    minus their sum.
+  - A leftover equal to or inside another listed leftover is not measured again: `size_kb` is
+    `0`, `covered_by` names its nearest listed ancestor (for a path listed twice, its first
+    listing), and `size_known` repeats the flag of the leftover whose size holds its bytes.
+  - `size_known: false` (with `size_kb: 0`) means measuring failed or timed out, for that
+    leftover only. After two timeouts in one app, its remaining leftovers are not measured
+    and report `false`. A path containing byte `0x1f` is never measured, reports `false`, and
+    never covers another leftover.
+  - A leftover that no longer exists reports `size_kb: 0`, `size_known: true`.
+  - Without `MOLE_JSON_EVENTS_FILE` the engine totals leftovers exactly as Mole `V1.56.0`
+    does, where one size timeout counts all of an app's leftovers as 0.
+- `app_result` events are written only for real runs, never with `--dry-run`. For a removed
+  app, `freed_kb` is the `size_kb` of that run's own `app` event minus the leftovers still in
+  place after the removal (measured again with `du`, never below 0). The app is still
+  reported `removed`, and no event names the leftovers left behind: a host that needs them
+  checks which `leftovers` still exist. Container folders macOS keeps (a
+  `Library/Containers/*` folder that still holds `.com.apple.containermanagerd.metadata.plist`)
+  are neither subtracted nor reported by the engine. A failed app reports `0`. `reason` is
+  empty on success.
+- Exit status `0`: the run finished (per-app failures are reported by `app_result`), or every
+  requested app was blocked, whether not eligible or blocked during the scan
+  (`official_uninstaller`, `manual_removal`). Then the `app_blocked` events are the whole
+  answer, for previews and real runs alike, and nothing was removed. A non-zero status before
+  removals start also removes nothing: a missing path list, a scan that could not finish (even
+  when other apps were already blocked), a scan timeout or signal, or a batch that needs the
+  sudo session `MOLE_NO_AUTH=1` refuses. A timeout or signal during removals leaves
+  `app_result` events only for apps already handled. Without `MOLE_UNINSTALL_APP_PATHS_FILE`,
+  a batch whose apps were all blocked still exits 1, as in Mole `V1.56.0`.
 - In `uninstall --list`, `size_kb` is the scanned bundle size and `last_used_epoch` the last use
   in seconds since 1970 (the bundle's modification time when macOS has no last-use date, `0`
   when neither is known). These two fields are the only change without a host variable; they

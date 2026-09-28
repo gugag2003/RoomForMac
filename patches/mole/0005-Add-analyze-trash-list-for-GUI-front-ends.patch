@@ -375,10 +375,10 @@ index 9e46778f..b9772454 100644
      run env HOME="$HOME" PATH="$PATH" PROJECT_ROOT="$PROJECT_ROOT" APP="$app" \
          MOLE_GUI_HOST=roomformac MOLE_NO_AUTH=1 MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 \
 diff --git a/tests/uninstall_host_mode.bats b/tests/uninstall_host_mode.bats
-index 1dfe5818..3a180ec8 100644
+index e28c18ff..4a838331 100644
 --- a/tests/uninstall_host_mode.bats
 +++ b/tests/uninstall_host_mode.bats
-@@ -124,6 +124,7 @@ EOF
+@@ -128,6 +128,7 @@ EOF
  @test "MOLE_ASSUME_YES confirms the plan without reading a key" {
      local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
      sourceable_uninstall_sh "$src"

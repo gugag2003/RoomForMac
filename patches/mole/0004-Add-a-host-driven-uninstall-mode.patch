@@ -11,11 +11,11 @@ per-app results. uninstall --list JSON gains size_kb and last_used_epoch.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- bin/uninstall.sh               |  73 +++++++++++-
- lib/core/host.sh               |  41 +++++++
- lib/uninstall/batch.sh         |  35 +++++-
- tests/uninstall_host_mode.bats | 198 +++++++++++++++++++++++++++++++++
- 4 files changed, 341 insertions(+), 6 deletions(-)
+ bin/uninstall.sh               |  73 +++++-
+ lib/core/host.sh               |  64 +++++
+ lib/uninstall/batch.sh         | 182 ++++++++++++-
+ tests/uninstall_host_mode.bats | 454 +++++++++++++++++++++++++++++++++
+ 4 files changed, 766 insertions(+), 7 deletions(-)
  create mode 100644 tests/uninstall_host_mode.bats
 
 diff --git a/bin/uninstall.sh b/bin/uninstall.sh
@@ -130,10 +130,10 @@ index db6e03e1..f0e78bd1 100755
      if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
          echo -e "${YELLOW}${ICON_DRY_RUN} DRY RUN MODE${NC}, No app files or settings will be modified"
 diff --git a/lib/core/host.sh b/lib/core/host.sh
-index 05273769..bda7bf4b 100644
+index 05273769..72a32b42 100644
 --- a/lib/core/host.sh
 +++ b/lib/core/host.sh
-@@ -230,3 +230,44 @@ mole_json_event_summary() {
+@@ -230,3 +230,67 @@ mole_json_event_summary() {
      mole_json_events_enabled || return 0
      mole_json_emit "{\"v\":1,\"type\":\"summary\",\"command\":$(mole_json_str "${1-}"),\"dry_run\":$(mole_json_bool "${2-}"),\"items\":$(mole_json_num "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"partial\":$(mole_json_bool "${5-}"),\"exit\":$(mole_json_num "${6-}")}"
  }
@@ -158,13 +158,36 @@ index 05273769..bda7bf4b 100644
 +}
 +
 +# Args: path, name, bundle_id, size_kb, needs_sudo, brew_cask,
-+#       sensitive_data, running, leftovers (lines), review_only (lines)
++#       sensitive_data, running, leftovers (lines), review_only (lines),
++#       leftover_items (a JSON array from mole_json_leftover_items; default [])
 +mole_json_event_app() {
 +    mole_json_events_enabled || return 0
-+    local leftovers review_only
++    local leftovers review_only leftover_items="${11:-[]}"
 +    leftovers=$(mole_json_array_from_lines "${9-}")
 +    review_only=$(mole_json_array_from_lines "${10-}")
-+    mole_json_emit "{\"v\":1,\"type\":\"app\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"bundle_id\":$(mole_json_str "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"needs_sudo\":$(mole_json_bool "${5-}"),\"brew_cask\":$(mole_json_bool "${6-}"),\"sensitive_data\":$(mole_json_bool "${7-}"),\"running\":$(mole_json_bool "${8-}"),\"leftovers\":$leftovers,\"review_only\":$review_only}"
++    mole_json_emit "{\"v\":1,\"type\":\"app\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"bundle_id\":$(mole_json_str "${3-}"),\"size_kb\":$(mole_json_num "${4-}"),\"needs_sudo\":$(mole_json_bool "${5-}"),\"brew_cask\":$(mole_json_bool "${6-}"),\"sensitive_data\":$(mole_json_bool "${7-}"),\"running\":$(mole_json_bool "${8-}"),\"leftovers\":$leftovers,\"review_only\":$review_only,\"leftover_items\":$leftover_items}"
++}
++
++# JSON array for an app event's leftover_items, built from the rows
++# _batch_measure_leftovers prints (lib/uninstall/batch.sh): size_kb, known,
++# covered_by and path, separated by the unit separator (\037). An empty
++# covered_by becomes null.
++mole_json_leftover_items() {
++    local rows="${1-}" out="[" first=true size_kb known covered_by path covered
++    while IFS=$'\037' read -r size_kb known covered_by path; do
++        [[ -n "$path" ]] || continue
++        if [[ "$first" == "true" ]]; then
++            first=false
++        else
++            out+=","
++        fi
++        covered="null"
++        if [[ -n "$covered_by" ]]; then
++            covered=$(mole_json_str "$covered_by")
++        fi
++        out+="{\"path\":$(mole_json_str "$path"),\"size_kb\":$(mole_json_num "$size_kb"),\"size_known\":$(mole_json_bool "$known"),\"covered_by\":$covered}"
++    done <<< "$rows"
++    printf '%s]' "$out"
 +}
 +
 +# Args: path, name, reason (not_eligible|official_uninstaller|manual_removal), vendor
@@ -179,10 +202,142 @@ index 05273769..bda7bf4b 100644
 +    mole_json_emit "{\"v\":1,\"type\":\"app_result\",\"path\":$(mole_json_str "${1-}"),\"name\":$(mole_json_str "${2-}"),\"status\":$(mole_json_str "${3-}"),\"freed_kb\":$(mole_json_num "${4-}"),\"reason\":$(mole_json_str "${5-}")}"
 +}
 diff --git a/lib/uninstall/batch.sh b/lib/uninstall/batch.sh
-index b36ba271..2cb6514b 100755
+index b36ba271..98556622 100755
 --- a/lib/uninstall/batch.sh
 +++ b/lib/uninstall/batch.sh
-@@ -1324,6 +1324,7 @@ _batch_scan_app_details() {
+@@ -1302,6 +1302,131 @@ _batch_selected_app_plan_matches() {
+         "$current_info_identity" == "$expected_info_identity" ]]
+ }
+ 
++# Host mode (MOLE_JSON_EVENTS_FILE): measure each leftover once, for the app
++# event's leftover_items. FILES is the newline-separated leftover list that
++# the event reports as `leftovers`. Prints one row per non-empty line, in
++# order: size_kb, known (true/false), covered_by and path, separated by the
++# unit separator (\037; a tab is IFS whitespace and would collapse an empty
++# covered_by). path and covered_by are printed as listed, so a host can match
++# them to `leftovers`.
++#   - De-duplication is calculate_total_size's: a line equal to or inside
++#     another existing line is not measured. It prints 0, covered_by names its
++#     nearest listed ancestor (or the first listing of the same path), and
++#     known repeats the flag of the row whose size holds its bytes.
++#   - A missing path prints 0 and true, as calculate_total_size counts it.
++#   - A failed or timed-out measurement prints 0 and false for that path only.
++#     After two timeouts the remaining paths print 0 and false unmeasured, so
++#     one app never waits for more than two size timeouts.
++#   - A line containing the separator is never measured (0 and false), and
++#     never covers another line.
++#   - A signal returns its status, as in calculate_total_size.
++# When nothing times out and no line contains the separator, the sizes add
++# up to calculate_total_size's total.
++_batch_measure_leftovers() {
++    local files="${1-}"
++    local unit_sep=$'\037'
++    local -a raw=() norm=() usable=() known=() sizes=() cover=()
++    local line normalized
++    while IFS= read -r line; do
++        [[ -n "$line" ]] || continue
++        normalized="${line%/}"
++        [[ -n "$normalized" ]] || normalized="$line"
++        raw+=("$line")
++        norm+=("$normalized")
++        sizes+=(0)
++        cover+=(-1)
++        if [[ "$line" == *"$unit_sep"* ]]; then
++            usable+=(false)
++            known+=(false)
++        elif [[ -e "$line" ]]; then
++            usable+=(true)
++            known+=(true)
++        else
++            usable+=(false)
++            known+=(true)
++        fi
++    done <<< "$files"
++
++    local count=${#raw[@]}
++    local i j nearest duplicate
++    for ((i = 0; i < count; i++)); do
++        [[ "${usable[i]}" == true ]] || continue
++        nearest=-1
++        duplicate=-1
++        for ((j = 0; j < count; j++)); do
++            if [[ $j -eq $i || "${usable[j]}" != true ]]; then
++                continue
++            fi
++            if [[ "${norm[i]}" == "${norm[j]}" ]]; then
++                if [[ $j -lt $i && $duplicate -lt 0 ]]; then
++                    duplicate=$j
++                fi
++            elif [[ "${norm[i]}" == "${norm[j]}"/* ]]; then
++                if [[ $nearest -lt 0 ]]; then
++                    nearest=$j
++                elif [[ ${#norm[j]} -gt ${#norm[nearest]} ]]; then
++                    nearest=$j
++                fi
++            fi
++        done
++        if [[ $duplicate -ge 0 ]]; then
++            cover[i]=$duplicate
++        elif [[ $nearest -ge 0 ]]; then
++            cover[i]=$nearest
++        fi
++    done
++
++    local timeouts=0 size_kb size_rc
++    for ((i = 0; i < count; i++)); do
++        if [[ "${usable[i]}" != true || ${cover[i]} -ge 0 ]]; then
++            continue
++        fi
++        if [[ $timeouts -ge 2 ]]; then
++            known[i]=false
++            continue
++        fi
++        size_kb=""
++        size_rc=0
++        size_kb=$(get_path_size_kb "${norm[i]}") || size_rc=$?
++        if mole_rc_timeout "$size_rc"; then
++            timeouts=$((timeouts + 1))
++            known[i]=false
++        elif [[ $size_rc -ge 128 ]]; then
++            return "$size_rc"
++        elif [[ $size_rc -eq 0 && "$size_kb" =~ ^[0-9]+$ ]]; then
++            sizes[i]=$((10#$size_kb))
++        else
++            known[i]=false
++        fi
++    done
++
++    local covered_by target
++    for ((i = 0; i < count; i++)); do
++        covered_by=""
++        if [[ "${usable[i]}" == true && ${cover[i]} -ge 0 ]]; then
++            target=${cover[i]}
++            covered_by="${raw[target]}"
++            while [[ ${cover[target]} -ge 0 ]]; do
++                target=${cover[target]}
++            done
++            known[i]=${known[target]}
++        fi
++        printf '%s\037%s\037%s\037%s\n' "${sizes[i]}" "${known[i]}" "$covered_by" "${raw[i]}"
++    done
++}
++
++# Total KiB of _batch_measure_leftovers rows. Covered, missing and unknown
++# rows print 0, so this is the sum of the uncovered, known sizes.
++_batch_sum_leftover_rows() {
++    local rows="${1-}" total=0 row_size
++    while IFS=$'\037' read -r row_size _; do
++        if [[ "$row_size" =~ ^[0-9]+$ ]]; then
++            total=$((total + 10#$row_size))
++        fi
++    done <<< "$rows"
++    printf '%s\n' "$total"
++}
++
+ _batch_scan_app_details() {
+     # All selected-app discovery shares one wall-clock budget. Individual
+     # producer probes clamp themselves to this deadline.
+@@ -1324,6 +1449,7 @@ _batch_scan_app_details() {
              return "$refresh_rc"
          elif [[ $refresh_rc -ne 0 ]]; then
              manual_removal_apps+=("$app_name")
@@ -190,7 +345,7 @@ index b36ba271..2cb6514b 100755
              continue
          fi
          bundle_id="$current_bundle_id"
-@@ -1340,6 +1341,7 @@ _batch_scan_app_details() {
+@@ -1340,6 +1466,7 @@ _batch_scan_app_details() {
              return "$app_identity_rc"
          elif [[ $app_identity_rc -ne 0 ]]; then
              manual_removal_apps+=("$app_name")
@@ -198,7 +353,7 @@ index b36ba271..2cb6514b 100755
              continue
          fi
          local app_info_identity=""
-@@ -1350,6 +1352,7 @@ _batch_scan_app_details() {
+@@ -1350,6 +1477,7 @@ _batch_scan_app_details() {
              return "$app_info_identity_rc"
          elif [[ $app_info_identity_rc -ne 0 ]]; then
              manual_removal_apps+=("$app_name")
@@ -206,7 +361,7 @@ index b36ba271..2cb6514b 100755
              continue
          fi
  
-@@ -1361,6 +1364,7 @@ _batch_scan_app_details() {
+@@ -1361,6 +1489,7 @@ _batch_scan_app_details() {
          local official_vendor=""
          if official_vendor=$(official_uninstaller_vendor "$bundle_id" "$app_name" "$app_path" 2> /dev/null); then
              blocked_apps+=("$app_name|$official_vendor")
@@ -214,7 +369,7 @@ index b36ba271..2cb6514b 100755
              continue
          fi
  
-@@ -1467,8 +1471,10 @@ _batch_scan_app_details() {
+@@ -1467,8 +1596,10 @@ _batch_scan_app_details() {
          if [[ -e "$info_plist" ]]; then
              exec_name=$(plutil -extract CFBundleExecutable raw "$info_plist" 2> /dev/null || echo "")
          fi
@@ -225,7 +380,7 @@ index b36ba271..2cb6514b 100755
          fi
  
          _batch_scan_stage="Homebrew ownership check"
-@@ -1519,6 +1525,7 @@ _batch_scan_app_details() {
+@@ -1519,6 +1650,7 @@ _batch_scan_app_details() {
          if [[ "$needs_sudo" == true && "$is_brew_cask" != "true" ]] &&
              _mole_privileged_path_has_mutable_ancestor "$app_path"; then
              manual_removal_apps+=("$app_name")
@@ -233,17 +388,40 @@ index b36ba271..2cb6514b 100755
              continue
          fi
  
-@@ -1666,6 +1673,9 @@ _batch_scan_app_details() {
+@@ -1606,7 +1738,17 @@ _batch_scan_app_details() {
+         fi
+         local related_size_kb="0"
+         local related_size_rc=0
+-        related_size_kb=$(calculate_total_size "$related_files") || related_size_rc=$?
++        local leftover_rows=""
++        if mole_json_events_enabled; then
++            # A host shows each leftover's size, so measure each one once and
++            # total those rows: the event's leftover_items add up to size_kb.
++            leftover_rows=$(_batch_measure_leftovers "$related_files") || related_size_rc=$?
++            if [[ $related_size_rc -eq 0 ]]; then
++                related_size_kb=$(_batch_sum_leftover_rows "$leftover_rows")
++            fi
++        else
++            related_size_kb=$(calculate_total_size "$related_files") || related_size_rc=$?
++        fi
+         if mole_rc_timeout "$related_size_rc"; then
+             # Size is display-only here; keep the leftover plan and under-report.
+             related_size_kb=0
+@@ -1666,6 +1808,13 @@ _batch_scan_app_details() {
          local encoded_live_sibling_fingerprint
          encoded_live_sibling_fingerprint=$(printf '%s' "$preview_live_sibling_fingerprint" | base64 | tr -d '\n') || return 1
          app_details+=("$app_name|$app_path|$bundle_id|$total_kb|$encoded_files|$encoded_system_files|$has_sensitive_data|$needs_sudo|$is_brew_cask|$cask_name|$encoded_diag_system|$encoded_review_system|$encoded_login_item_helpers|$sibling_guard|$app_identity|$original_bundle_id|$encoded_live_sibling_fingerprint|$app_info_identity")
++        local leftover_items_json="[]"
++        if [[ -n "$leftover_rows" ]]; then
++            leftover_items_json=$(mole_json_leftover_items "$leftover_rows")
++        fi
 +        mole_json_event_app "$app_path" "$app_name" "$original_bundle_id" "$total_kb" \
 +            "$needs_sudo" "$is_brew_cask" "$has_sensitive_data" "$app_running" \
-+            "$related_files" "$review_only_system_files"
++            "$related_files" "$review_only_system_files" "$leftover_items_json"
      done
      if [[ -t 1 ]]; then stop_inline_spinner; fi
  
-@@ -1788,9 +1798,15 @@ _batch_preview_and_confirm() {
+@@ -1788,9 +1937,15 @@ _batch_preview_and_confirm() {
      fi
      echo -ne "${PURPLE}${ICON_ARROW}${NC} ${removal_note}  ${GREEN}Enter${NC} confirm, ${GRAY}ESC${NC} cancel: "
  
@@ -262,7 +440,7 @@ index b36ba271..2cb6514b 100755
      case "$key" in
          $'\e' | q | Q)
              echo ""
-@@ -2318,6 +2334,9 @@ _batch_execute_removals() {
+@@ -2318,6 +2473,9 @@ _batch_execute_removals() {
              total_items=$((total_items + 1))
              success_items+=("$app_path")
              success_dock_targets+=("$app_path|$bundle_id")
@@ -272,7 +450,7 @@ index b36ba271..2cb6514b 100755
              # Check for orphaned system extensions (camera, network, endpoint security, etc.)
              if mole_is_reverse_dns_bundle_id "$bundle_id" && [[ -d /Library/SystemExtensions ]]; then
                  local system_extension_path=""
-@@ -2349,6 +2368,9 @@ _batch_execute_removals() {
+@@ -2349,6 +2507,9 @@ _batch_execute_removals() {
  
              failed_count=$((failed_count + 1))
              failed_items+=("$app_name:$reason:${suggestion:-}")
@@ -282,7 +460,16 @@ index b36ba271..2cb6514b 100755
          fi
      done
  }
-@@ -2620,6 +2642,13 @@ batch_uninstall_applications() {
+@@ -2617,9 +2778,22 @@ batch_uninstall_applications() {
+ 
+     if [[ ${#app_details[@]} -eq 0 ]]; then
+         _abort_uninstall_batch
++        # A host asked for exact apps and every one was blocked during the
++        # scan: the app_blocked events already are the whole answer.
++        if [[ -n "${MOLE_UNINSTALL_APP_PATHS_FILE:-}" ]] &&
++            ((${#blocked_apps[@]} + ${#manual_removal_apps[@]} > 0)); then
++            return 0
++        fi
          return 1
      fi
  
@@ -298,10 +485,10 @@ index b36ba271..2cb6514b 100755
      if [[ $_batch_interrupted -eq 1 ]]; then
 diff --git a/tests/uninstall_host_mode.bats b/tests/uninstall_host_mode.bats
 new file mode 100644
-index 00000000..1dfe5818
+index 00000000..e28c18ff
 --- /dev/null
 +++ b/tests/uninstall_host_mode.bats
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,454 @@
 +#!/usr/bin/env bats
 +# Host-driven uninstall: exact bundle paths, no prompts, preview-only runs,
 +# app events and per-app results.
@@ -390,6 +577,10 @@ index 00000000..1dfe5818
 +uninstall_print_app_search_dirs() { printf '%s\n' "$HOME/Applications"; }
 +is_homebrew_available() { return 1; }
 +get_brew_cask_name() { return 1; }
++# A test may redefine more engine functions in a file (OVERRIDES=<file>).
++if [[ -n "${OVERRIDES:-}" ]]; then
++    source "$OVERRIDES"
++fi
 +main ${MAIN_ARGS:-}
 +EOF
 +}
@@ -499,4 +690,256 @@ index 00000000..1dfe5818
 +EOF
 +    [ "$status" -eq 0 ]
 +    [[ "$output" == *'"size": "420MB", "size_kb": 430080, "last_used_epoch": 1700000000}'* ]]
++}
++
++# Leftover discovery is replaced by exactly these paths: three leftovers,
++# plus one inside the first that is listed before it.
++create_fixture_with_nested_leftover() {
++    FIXTURE_APP="$HOME/Applications/RFMFixture.app"
++    create_fixture_app "$FIXTURE_APP" "com.example.rfmfixture" "RFMFixture"
++    SUPPORT="$HOME/Library/Application Support/RFMFixture"
++    NESTED="$SUPPORT/Nested"
++    CACHE="$HOME/Library/Caches/com.example.rfmfixture"
++    PREFS="$HOME/Library/Preferences/com.example.rfmfixture.plist"
++    mkdir -p "$NESTED" "$CACHE" "$HOME/Library/Preferences"
++    dd if=/dev/urandom of="$SUPPORT/state.bin" bs=1024 count=24 2> /dev/null
++    dd if=/dev/urandom of="$NESTED/blob.bin" bs=1024 count=16 2> /dev/null
++    dd if=/dev/urandom of="$CACHE/c.bin" bs=1024 count=40 2> /dev/null
++    printf 'prefs' > "$PREFS"
++    printf '%s\0' "$FIXTURE_APP" > "$PATHS_FILE"
++    OVERRIDES_FILE="$BATS_TEST_TMPDIR/overrides.sh"
++    cat > "$OVERRIDES_FILE" << 'SH'
++uninstall_live_bundle_has_other_install() { return 1; }
++find_app_files() {
++    printf '%s\n' \
++        "$HOME/Library/Application Support/RFMFixture/Nested" \
++        "$HOME/Library/Application Support/RFMFixture" \
++        "$HOME/Library/Caches/com.example.rfmfixture" \
++        "$HOME/Library/Preferences/com.example.rfmfixture.plist"
++}
++SH
++}
++
++# Source bin/uninstall.sh (its functions, not main) in a fresh bash, then run
++# the script on stdin there. Extra NAME=value arguments become its environment.
++run_with_uninstall_functions() {
++    local src="$BATS_TEST_TMPDIR/uninstall_source.sh"
++    sourceable_uninstall_sh "$src"
++    local script="$BATS_TEST_TMPDIR/script.sh"
++    cat > "$script"
++    # shellcheck disable=SC2016  # the inner bash expands these from its environment
++    run env HOME="$HOME" PATH="$PATH" SRC_PATH="$src" SCRIPT="$script" MOLE_TEST_NO_AUTH=1 "$@" \
++        /bin/bash --noprofile --norc -c 'set -euo pipefail; source "$SRC_PATH"; source "$SCRIPT"'
++}
++
++@test "a host preview sizes each leftover once and marks a nested one as covered" {
++    command -v jq > /dev/null || skip "jq is required"
++    create_fixture_with_nested_leftover
++    install_uninstall_fakes
++    # No Spotlight size, so the engine measures the bundle with du -skP as below.
++    mole_test_fake_command mdls 'exit 1'
++    run_host_uninstall OVERRIDES="$OVERRIDES_FILE" MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    [ "$status" -eq 0 ]
++    run jq -r 'select(.type == "app") | (.leftover_items | length), ([.leftover_items[].path] == .leftovers)' "$EVENTS"
++    [ "$output" = "$(printf '4\ntrue')" ]
++    run jq -r --arg support "$SUPPORT" \
++        'select(.type == "app") | .leftover_items[0] | .size_kb == 0 and .size_known and .covered_by == $support' "$EVENTS"
++    [ "$output" = "true" ]
++    local leftover expected
++    for leftover in "$SUPPORT" "$CACHE" "$PREFS"; do
++        expected=$(/usr/bin/du -skP "$leftover" | awk '{print $1}')
++        [ "$expected" -gt 0 ]
++        run jq -r --arg path "$leftover" \
++            'select(.type == "app") | .leftover_items[] | select(.path == $path) | "\(.size_kb) \(.size_known) \(.covered_by)"' "$EVENTS"
++        [ "$output" = "$expected true null" ]
++    done
++    local bundle_kb
++    bundle_kb=$(/usr/bin/du -skP "$FIXTURE_APP" | awk '{print $1}')
++    run jq -r 'select(.type == "app")
++        | .size_kb - ([.leftover_items[] | select(.covered_by == null and .size_known) | .size_kb] | add)' "$EVENTS"
++    [ "$output" = "$bundle_kb" ]
++}
++
++@test "leftover paths with spaces, quotes, a backslash and UTF-8 round-trip in leftover_items" {
++    command -v jq > /dev/null || skip "jq is required"
++    FIXTURE_APP="$HOME/Applications/RFMFixture.app"
++    create_fixture_app "$FIXTURE_APP" "com.example.rfmfixture" "RFMFixture"
++    local odd
++    odd="$HOME/Library/Application Support/RFM \"Quoted\" back\\slash Caf$(printf '\303\251')"
++    mkdir -p "$odd/Inner"
++    printf 'state' > "$odd/Inner/state.json"
++    printf '%s\0' "$FIXTURE_APP" > "$PATHS_FILE"
++    local overrides="$BATS_TEST_TMPDIR/overrides.sh"
++    cat > "$overrides" << 'SH'
++uninstall_live_bundle_has_other_install() { return 1; }
++find_app_files() { printf '%s\n' "$ODD_LEFTOVER" "$ODD_LEFTOVER/Inner"; }
++SH
++    install_uninstall_fakes
++    run_host_uninstall OVERRIDES="$overrides" ODD_LEFTOVER="$odd" \
++        MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    [ "$status" -eq 0 ]
++    run jq -r --arg odd "$odd" 'select(.type == "app")
++        | .leftovers == [$odd, $odd + "/Inner"]
++        and .leftover_items[0].path == $odd and .leftover_items[0].size_known
++        and .leftover_items[0].covered_by == null
++        and .leftover_items[1].path == $odd + "/Inner" and .leftover_items[1].covered_by == $odd' "$EVENTS"
++    [ "$output" = "true" ]
++}
++
++@test "a leftover whose size times out is unknown and the others keep their sizes" {
++    command -v jq > /dev/null || skip "jq is required"
++    local caches="$HOME/Library/Caches"
++    mkdir -p "$caches/FastA" "$caches/SlowCache" "$caches/FastB"
++    dd if=/dev/urandom of="$caches/FastA/a.bin" bs=1024 count=12 2> /dev/null
++    dd if=/dev/urandom of="$caches/SlowCache/s.bin" bs=1024 count=8 2> /dev/null
++    dd if=/dev/urandom of="$caches/FastB/b.bin" bs=1024 count=20 2> /dev/null
++    # shellcheck disable=SC2016  # the fake du expands these when it runs
++    mole_test_fake_command du 'case "$*" in *SlowCache*) exec sleep 10 ;; esac
++exec /usr/bin/du "$@"'
++    # 2 s rather than 1: get_path_size_kb turns its budget into a whole-second
++    # deadline, and with 1 a SECONDS tick between two of its lines could time
++    # out a fast path as well.
++    run_with_uninstall_functions MOLE_TIMEOUT_DISK_VERIFY_SEC=2 OUT="$BATS_TEST_TMPDIR/measured" << 'EOF'
++caches="$HOME/Library/Caches"
++rows=$(_batch_measure_leftovers "$(printf '%s\n' "$caches/FastA" "$caches/SlowCache" "$caches/FastB")")
++_batch_sum_leftover_rows "$rows" > "$OUT.total"
++mole_json_leftover_items "$rows" > "$OUT.json"
++EOF
++    [ "$status" -eq 0 ]
++    local a b
++    a=$(/usr/bin/du -skP "$caches/FastA" | awk '{print $1}')
++    b=$(/usr/bin/du -skP "$caches/FastB" | awk '{print $1}')
++    [ "$a" -gt 0 ]
++    [ "$b" -gt 0 ]
++    run jq -c '[.[] | [.size_kb, .size_known, .covered_by]]' "$BATS_TEST_TMPDIR/measured.json"
++    [ "$output" = "[[$a,true,null],[0,false,null],[$b,true,null]]" ]
++    run cat "$BATS_TEST_TMPDIR/measured.total"
++    [ "$output" -eq $((a + b)) ]
++}
++
++@test "after two size timeouts the remaining leftovers are reported unknown without measuring" {
++    local caches="$HOME/Library/Caches" us=$'\037'
++    mkdir -p "$caches/Early" "$caches/SlowA/Inner" "$caches/SlowB" "$caches/Late"
++    run_with_uninstall_functions CALLS="$BATS_TEST_TMPDIR/size-calls" ROWS="$BATS_TEST_TMPDIR/rows" << 'EOF'
++get_path_size_kb() {
++    printf '%s\n' "${1##*/}" >> "$CALLS"
++    case "$1" in
++        */Slow*) return 124 ;;
++    esac
++    printf '8\n'
++}
++caches="$HOME/Library/Caches"
++_batch_measure_leftovers "$(printf '%s\n' "$caches/Early" "$caches/SlowA" "$caches/SlowA/Inner" \
++    "$caches/SlowB" "$caches/Late")" > "$ROWS"
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$BATS_TEST_TMPDIR/size-calls"
++    [ "$output" = "$(printf '%s\n' Early SlowA SlowB)" ]
++    run cat "$BATS_TEST_TMPDIR/rows"
++    [ "${#lines[@]}" -eq 5 ]
++    [ "${lines[0]}" = "8${us}true${us}${us}$caches/Early" ]
++    [ "${lines[1]}" = "0${us}false${us}${us}$caches/SlowA" ]
++    [ "${lines[2]}" = "0${us}false${us}$caches/SlowA${us}$caches/SlowA/Inner" ]
++    [ "${lines[3]}" = "0${us}false${us}${us}$caches/SlowB" ]
++    [ "${lines[4]}" = "0${us}false${us}${us}$caches/Late" ]
++}
++
++@test "leftover rows keep their order and name the nearest listed ancestor" {
++    command -v jq > /dev/null || skip "jq is required"
++    local caches="$HOME/Library/Caches" us=$'\037'
++    local odd="$caches/Odd${us}Name"
++    mkdir -p "$caches/Parent/Child/Deeper" "$odd"
++    run_with_uninstall_functions CALLS="$BATS_TEST_TMPDIR/size-calls" ROWS="$BATS_TEST_TMPDIR/rows" << 'EOF'
++get_path_size_kb() {
++    printf '%s\n' "$1" >> "$CALLS"
++    printf '8\n'
++}
++caches="$HOME/Library/Caches"
++_batch_measure_leftovers "$(printf '%s\n' "$caches/Parent/Child" "$caches/Parent" "$caches/Parent/" \
++    "$caches/Gone" "$caches/Odd"$'\037'"Name" "$caches/Parent/Child/Deeper")" > "$ROWS"
++mole_json_leftover_items "$(cat "$ROWS")" > "$ROWS.json"
++EOF
++    [ "$status" -eq 0 ]
++    run cat "$BATS_TEST_TMPDIR/size-calls"
++    [ "$output" = "$caches/Parent" ]
++    run cat "$BATS_TEST_TMPDIR/rows"
++    [ "${#lines[@]}" -eq 6 ]
++    [ "${lines[0]}" = "0${us}true${us}$caches/Parent${us}$caches/Parent/Child" ]
++    [ "${lines[1]}" = "8${us}true${us}${us}$caches/Parent" ]
++    [ "${lines[2]}" = "0${us}true${us}$caches/Parent${us}$caches/Parent/" ]
++    [ "${lines[3]}" = "0${us}true${us}${us}$caches/Gone" ]
++    [ "${lines[4]}" = "0${us}false${us}${us}$odd" ]
++    [ "${lines[5]}" = "0${us}true${us}$caches/Parent/Child${us}$caches/Parent/Child/Deeper" ]
++    run jq -r --arg odd "$odd" \
++        'length == 6 and .[4].path == $odd and .[4].covered_by == null and (.[4].size_known | not)' \
++        "$BATS_TEST_TMPDIR/rows.json"
++    [ "$output" = "true" ]
++}
++
++@test "only an app that needs its official uninstaller: previews and real runs exit 0 and remove nothing" {
++    command -v jq > /dev/null || skip "jq is required"
++    local falcon="$HOME/Applications/Falcon.app" trash="$BATS_TEST_TMPDIR/trash"
++    create_fixture_app "$falcon" "com.example.falcon" "Falcon"
++    printf '%s\0' "$falcon" > "$PATHS_FILE"
++    install_uninstall_fakes
++    run_host_uninstall MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    [ "$status" -eq 0 ]
++    run jq -r '[.type, .reason, .vendor] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'app_blocked\tofficial_uninstaller\tCrowdStrike')" ]
++    : > "$EVENTS"
++    run_host_uninstall MOLE_TEST_TRASH_DIR="$trash"
++    [ "$status" -eq 0 ]
++    run jq -r '[.type, .reason, .vendor] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'app_blocked\tofficial_uninstaller\tCrowdStrike')" ]
++    [ -d "$falcon" ]
++    [ -z "$(ls -A "$trash" 2> /dev/null)" ]
++}
++
++@test "a missing path plus an app that needs its official uninstaller exits 0" {
++    command -v jq > /dev/null || skip "jq is required"
++    local falcon="$HOME/Applications/Falcon.app" missing="$HOME/Applications/Missing.app"
++    create_fixture_app "$falcon" "com.example.falcon" "Falcon"
++    printf '%s\0' "$missing" "$falcon" > "$PATHS_FILE"
++    install_uninstall_fakes
++    run_host_uninstall MOLE_TEST_TRASH_DIR="$BATS_TEST_TMPDIR/trash"
++    [ "$status" -eq 0 ]
++    [ -d "$falcon" ]
++    run jq -r '[.type, .reason, .path] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'app_blocked\tnot_eligible\t%s\napp_blocked\tofficial_uninstaller\t%s' "$missing" "$falcon")" ]
++}
++
++@test "an app in a folder the user cannot write is manual_removal and exits 0" {
++    command -v jq > /dev/null || skip "jq is required"
++    [[ $EUID -ne 0 ]] || skip "root can write to every folder"
++    local locked="$HOME/Applications/RFMLocked.app"
++    create_fixture_app "$locked" "com.example.rfmlocked" "RFMLocked"
++    printf '%s\0' "$locked" > "$PATHS_FILE"
++    install_uninstall_fakes
++    chmod 555 "$HOME/Applications"
++    run_host_uninstall MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    chmod 755 "$HOME/Applications"
++    [ "$status" -eq 0 ]
++    [ -d "$locked" ]
++    run jq -r '[.type, .reason, .path] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'app_blocked\tmanual_removal\t%s' "$locked")" ]
++}
++
++@test "a blocked app next to an app whose scan fails still exits non-zero" {
++    command -v jq > /dev/null || skip "jq is required"
++    local falcon="$HOME/Applications/Falcon.app" broken="$HOME/Applications/RFMBroken.app"
++    create_fixture_app "$falcon" "com.example.falcon" "Falcon"
++    create_fixture_app "$broken" "com.example.rfmbroken" "RFMBroken"
++    printf '%s\0' "$falcon" "$broken" > "$PATHS_FILE"
++    # Falcon is blocked first; then leftover discovery fails for RFMBroken.
++    local overrides="$BATS_TEST_TMPDIR/overrides.sh"
++    cat > "$overrides" << 'SH'
++uninstall_live_bundle_has_other_install() { return 1; }
++find_app_files() { return 1; }
++SH
++    install_uninstall_fakes
++    run_host_uninstall OVERRIDES="$overrides" MOLE_UNINSTALL_PREVIEW_ONLY=1 MAIN_ARGS=--dry-run
++    [ "$status" -eq 1 ]
++    [ -d "$broken" ]
++    run jq -r '[.type, .reason, .path] | @tsv' "$EVENTS"
++    [ "$output" = "$(printf 'app_blocked\tofficial_uninstaller\t%s' "$falcon")" ]
 +}
