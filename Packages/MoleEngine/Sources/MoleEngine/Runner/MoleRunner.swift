@@ -13,17 +13,31 @@ public struct MoleRunner: EngineRunning {
         self.pollInterval = pollInterval
     }
 
+    /// Streams the command's output lines.
+    ///
+    /// - A command whose `control` is already stopped never starts: the stream
+    ///   throws `EngineError.cancelled`.
+    /// - After `control.stop()` the stream keeps reading until the process
+    ///   exits, yields every line, then throws `EngineError.cancelled`.
+    /// - Cancelling the consuming Task is a hard abort: the stream ends at once
+    ///   without an error, and the group gets SIGTERM, SIGCONT, then SIGKILL
+    ///   after the grace period.
     public func lines(for command: EngineCommand) -> AsyncThrowingStream<String, any Error> {
         let gracePeriod = self.gracePeriod
         let pollInterval = self.pollInterval
         return AsyncThrowingStream { continuation in
+            if command.control?.isStopRequested == true {
+                continuation.finish(throwing: EngineError.cancelled)
+                return
+            }
+
             let spawned: SpawnedProcess
             do {
                 spawned = try Spawner.spawn(
                     executable: command.executable.path,
                     arguments: command.arguments,
                     environment: command.environment,
-                    stdout: command.output == .stdout ? .pipe : .discard,
+                    stdout: Self.stdoutMode(for: command),
                     stderrPath: command.stderrLog?.path
                 )
             } catch {
@@ -34,15 +48,17 @@ public struct MoleRunner: EngineRunning {
                 return
             }
 
-            let control = ProcessControl(pid: spawned.pid, gracePeriod: gracePeriod)
+            let process = ProcessControl(pid: spawned.pid, gracePeriod: gracePeriod)
             continuation.onTermination = { termination in
                 if case .cancelled = termination {
-                    control.stop(.cancelled)
+                    process.stop(.cancelled)
                 }
             }
             if let timeout = command.timeout {
-                control.scheduleTimeout(after: timeout)
+                process.scheduleTimeout(after: timeout)
             }
+            // Applies a stop or a suspend requested before or during the spawn.
+            command.control?.attach(process)
 
             let reader = Thread {
                 var buffer = NDJSONLineBuffer()
@@ -61,9 +77,10 @@ public struct MoleRunner: EngineRunning {
                         for line in buffer.append(chunk) { continuation.yield(line) }
                     }
                 }
-                control.markExited()
+                process.markExited()
+                command.control?.detach()
                 for line in buffer.finish() { continuation.yield(line) }
-                if let error = EngineError.failure(exit: exit, stopReason: control.stopReason, stderrLog: command.stderrLog) {
+                if let error = EngineError.failure(exit: exit, stopReason: process.stopReason, stderrLog: command.stderrLog) {
                     continuation.finish(throwing: error)
                 } else {
                     continuation.finish()
@@ -73,13 +90,24 @@ public struct MoleRunner: EngineRunning {
             reader.start()
         }
     }
+
+    /// Where the process's stdout goes: the pipe the lines come from, or, for
+    /// an events-file command, its stdout log when it has one.
+    static func stdoutMode(for command: EngineCommand) -> StdoutMode {
+        switch command.output {
+        case .stdout:
+            return .pipe
+        case .eventsFile:
+            return command.stdoutLog.map { StdoutMode.file($0.path) } ?? .discard
+        }
+    }
 }
 
 extension EngineError {
     static func failure(exit: ProcessExit, stopReason: ProcessControl.StopReason?, stderrLog: URL?) -> EngineError? {
         switch stopReason {
         case .timedOut: return .timedOut
-        case .cancelled: return .cancelled
+        case .cancelled, .requested: return .cancelled
         case nil: break
         }
         switch exit {

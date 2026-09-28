@@ -4,6 +4,8 @@ import Foundation
 enum StdoutMode: Sendable, Equatable {
     case discard
     case pipe
+    /// Appended to the file at this path, which is created 0600 when missing.
+    case file(String)
 }
 
 struct SpawnedProcess: Sendable {
@@ -41,6 +43,8 @@ enum Spawner {
         case .pipe:
             guard pipe(&pipeFDs) == 0 else { throw SpawnError.failed(errno) }
             posix_spawn_file_actions_adddup2(&fileActions, pipeFDs[1], 1)
+        case .file(let path):
+            posix_spawn_file_actions_addopen(&fileActions, 1, path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
         }
         if let stderrPath {
             posix_spawn_file_actions_addopen(&fileActions, 2, stderrPath, O_WRONLY | O_CREAT | O_APPEND, 0o600)

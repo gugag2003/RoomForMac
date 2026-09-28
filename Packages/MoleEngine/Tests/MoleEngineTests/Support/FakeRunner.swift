@@ -3,11 +3,16 @@ import Foundation
 
 /// Records every command and answers with canned lines. Files a service wrote
 /// for the run are captured at call time, before the service removes them.
+/// Like `MoleRunner`, it throws `EngineError.cancelled` without answering when
+/// the command's control was stopped before the call.
 final class FakeRunner: EngineRunning, @unchecked Sendable {
     struct Call: Sendable {
         let command: EngineCommand
         let eventsFileExisted: Bool
         let files: [String: Data]
+
+        /// The run control the caller passed, if any.
+        var control: EngineRunControl? { command.control }
     }
 
     private let lock = NSLock()
@@ -41,6 +46,10 @@ final class FakeRunner: EngineRunning, @unchecked Sendable {
         }
         let respond = self.respond
         return AsyncThrowingStream { continuation in
+            if command.control?.isStopRequested == true {
+                continuation.finish(throwing: EngineError.cancelled)
+                return
+            }
             do {
                 for line in try respond(command) {
                     continuation.yield(line)
