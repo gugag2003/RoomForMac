@@ -135,6 +135,43 @@ Details:
   example the engine's own `~/Library/Logs/mole`). Hosts ignore results for paths they
   did not select.
 
+### Host notes for Smart Clean
+
+Verified against the patched `V1.56.0` engine; `MoleEngine`'s `CleanService`,
+`CleanSections`, `CleanSelection` and `CleanRunTally` follow them.
+
+- `item.count` is always `1`. It is not a file count.
+- Paths may lie outside `HOME`. The per-user clang module cache, for example, is reported
+  as `/var/folders/<xx>/<id>/C/clang/ModuleCache`, in `/var/…` form rather than
+  `/private/var/…`. Selections match exact strings, so hosts pass every path back byte for
+  byte.
+- `covered_by` may name a row in another section. `User essentials` sweeps
+  `~/Library/Caches/*` whole, so a `Browsers` or `Developer tools` row inside one of those
+  folders is covered by a `User essentials` row, and a section's own total can look small.
+- Sections arrive in a fixed order: `System` (only with a sudo session, which
+  `MOLE_NO_AUTH=1` never grants), `User essentials`, `App caches`, `Browsers`,
+  `Cloud & Office`, `Developer tools`, `Apps & utilities`, `Virtualization`,
+  `Application Support`, `App leftovers`, `Apple Silicon updates` (Apple silicon only),
+  `Device backups & firmware`, `Time Machine`, `Large files`, `Project artifacts`. Every
+  section's `section` event arrives even when it finds nothing. The names are English and
+  never localized; hosts must still accept a name they do not know.
+- Two sections only report: `Large files` and `Project artifacts` write to stdout, which
+  the host discards, and never produce `candidate` or `item` rows. They still take time.
+- `Time Machine` rows can only end `failed` for a normal user (see Clean events above);
+  RoomForMac never offers them.
+- A real run's `summary.items` and `summary.size_kb` are Mole's display totals. They do not
+  add up from the `result` events, so hosts count removals and bytes from `result` events
+  only.
+- A selected dry run (`--dry-run` with `MOLE_SELECTION_FILE`) still walks every section,
+  so it costs about as much as a whole preview. Its rows carry fresh sizes and
+  `covered_by: null`, because a host never selects a row together with its covering
+  ancestor.
+- Protected paths are a host-side filter, not an engine rule. RoomForMac's own data
+  (`ProtectedPaths`) is dropped by `CleanService`: `candidate` and `item` rows equal to,
+  inside or containing a protected path (ignoring trailing slashes and letter case) never
+  reach the app, and are counted as `"protected"` in the run's diagnostics. Such a path is
+  never written to a selection file.
+
 ## Selections (`MOLE_SELECTION_FILE`, patch 0003)
 
 - The file lists absolute paths separated by NUL bytes, exactly as the preview's `item.path` reported them. Trailing slashes are ignored; parents and children of a listed path are **not** selected.
