@@ -32,6 +32,17 @@ final class AppModel {
     /// The onboarding in progress, resumed from preferences. Nil once onboarding is complete.
     private(set) var onboardingFlow: OnboardingFlow?
 
+    /// The one lease for destructive runs, shared by every feature (Ruling 12).
+    let runQueue: DestructiveRunQueue
+
+    /// The engine services, set once, right after the engine becomes `.ready`.
+    /// Nil while checking and when the engine is broken.
+    private(set) var services: EngineServices?
+
+    /// Where the features report finished runs. It starts as
+    /// `dependencies.runReporter`; `makeFeatures` sets the final one.
+    private(set) var reporter: any RunReporter
+
     @ObservationIgnored private var hasStarted = false
 
     init(dependencies: AppDependencies) {
@@ -44,10 +55,13 @@ final class AppModel {
         onboardingFlow = isOnboarded
             ? nil
             : OnboardingFlow(preferences: preferences, permissions: permissions, needsMoveStep: dependencies.needsMoveStep)
+        runQueue = DestructiveRunQueue()
+        reporter = dependencies.runReporter
     }
 
     /// Runs the engine check once. Later calls, including one made while the
-    /// check is still running, return at once.
+    /// check is still running, return at once. A ready engine gets its services
+    /// and the feature models; a broken one gets neither.
     func start() async {
         guard !hasStarted else {
             return
@@ -56,9 +70,24 @@ final class AppModel {
         switch await dependencies.engineCheck() {
         case .success(let installation):
             engine = .ready(installation)
+            let services = dependencies.makeServices(installation)
+            self.services = services
+            makeFeatures(services)
         case .failure(let problem):
             engine = .broken(problem)
         }
+    }
+
+    /// Builds the feature models over `services`. `start()` calls it once, right
+    /// after the engine is ready. The models refuse to start engine commands
+    /// until `isOnboarded` is true (Ruling 10).
+    ///
+    /// The order, as later tasks fill it in: the Status monitor (Task 17), the
+    /// run notifier (Task 20), then `reporter` becomes a `CompositeRunReporter`
+    /// of `dependencies.runReporter`, the notifier and the monitor, then Smart
+    /// Clean (Task 11) and the Uninstaller (Task 14), which both report to it.
+    func makeFeatures(_ services: EngineServices) {
+        reporter = dependencies.runReporter
     }
 
     /// Saves that onboarding is done and shows Smart Clean.

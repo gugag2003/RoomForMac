@@ -19,6 +19,24 @@ struct AppDependencies {
     /// Settings need its `disable()`, which `PermissionCenter` does not offer.
     var loginItem: LoginItemChecker? = nil
 
+    // Plan 3. Every default is inert (Ruling 25): no engine run, no protected
+    // paths, no log folder, an unlimited gate and reporters that keep nothing.
+    // Only `live()` connects the real ones.
+
+    /// The engine services for a ready installation. The default never spawns.
+    var makeServices: @Sendable (EngineInstallation) -> EngineServices = { _ in .unavailable }
+    /// RoomForMac's own data, which Smart Clean never offers (Ruling 13).
+    var protectedPaths: ProtectedPaths = .none
+    /// The running app bundle, which the Uninstaller never lists.
+    var hostAppPath: String = ""
+    var files: FileProbes = .live
+    /// Where each run's diagnostics are appended. The default keeps nothing.
+    var logStore: EngineLogStore = EngineLogStore(directory: nil)
+    var removalGate: any RemovalGate = UnlimitedRemovalGate()
+    var removalRecorder: any RemovalRecorder = NoOpRemovalRecorder()
+    var runReporter: any RunReporter = NoOpRunReporter()
+    var now: @Sendable () -> Date = { Date() }
+
     static func live(defaults: UserDefaults = .standard) -> AppDependencies {
         let openSettings: @MainActor @Sendable (URL) -> Void = { url in
             _ = NSWorkspace.shared.open(url)
@@ -36,13 +54,20 @@ struct AppDependencies {
             NotificationChecker.live(),
             loginItem,
         ]
+        let protectedPaths = ProtectedPaths.live()
         return AppDependencies(
             preferences: AppPreferences(defaults: defaults),
             engineCheck: { await EngineHealthCheck().run() },
             openURL: { url in _ = NSWorkspace.shared.open(url) },
             permissionCheckers: checkers,
             needsMoveStep: !bypass && AppLocation.current() != .installed,
-            loginItem: loginItem
+            loginItem: loginItem,
+            makeServices: { installation in
+                EngineServices.live(installation: installation, protectedPaths: protectedPaths)
+            },
+            protectedPaths: protectedPaths,
+            hostAppPath: Bundle.main.bundlePath,
+            logStore: EngineLogStore(directory: AppLogLocation.directory())
         )
     }
 

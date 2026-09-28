@@ -106,3 +106,13 @@ extension AccessibilityID {
         "settings.about.legal.\(document.rawValue)"
     }
 }
+
+// MARK: - Run problem card (Plan 3 Task 9)
+
+extension AccessibilityID {
+    static let runProblemCard = "runProblem.card"
+    /// The "Show details" disclosure.
+    static let runProblemDetails = "runProblem.details"
+    static let runProblemCopy = "runProblem.copy"
+    static let runProblemRetry = "runProblem.retry"
+}

@@ -1,6 +1,15 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@/s" : {
+
+    },
+    "(empty)" : {
+
+    },
+    "(none)" : {
+
+    },
     "1 GB of free cleanup, once" : {
 
     },
@@ -49,6 +58,9 @@
     "Coming in the next update." : {
 
     },
+    "Command: %@" : {
+
+    },
     "Continue" : {
 
     },
@@ -74,6 +86,9 @@
 
     },
     "Drag RoomForMac into your Applications folder, then open it from there." : {
+
+    },
+    "Duration: %@ s" : {
 
     },
     "Engine" : {
@@ -104,10 +119,19 @@
     "Engine License (Mole)" : {
 
     },
+    "Engine run" : {
+
+    },
     "Engine unavailable" : {
 
     },
+    "Events: %@" : {
+
+    },
     "Exit code %lld" : {
+
+    },
+    "Exit: %@" : {
 
     },
     "Expected engine: %@" : {
@@ -332,7 +356,16 @@
     "Something went wrong" : {
 
     },
+    "Standard error (end):" : {
+
+    },
+    "Standard output (end):" : {
+
+    },
     "Start first scan" : {
+
+    },
+    "Started: %@" : {
 
     },
     "Status" : {
@@ -393,7 +426,13 @@
     "Title: %@" : {
 
     },
+    "Try again" : {
+
+    },
     "Turned it on? Relaunch RoomForMac" : {
+
+    },
+    "Unexpected removals:" : {
 
     },
     "Uninstaller" : {
@@ -418,6 +457,12 @@
         }
       }
     },
+    "Wait for cleaning to finish." : {
+
+    },
+    "Wait for the uninstall to finish." : {
+
+    },
     "What we collect" : {
 
     },
@@ -437,6 +482,9 @@
 
     },
     "Your Trash shows as empty, even when it isn't." : {
+
+    },
+    "at least %@" : {
 
     },
     "macOS %@" : {
