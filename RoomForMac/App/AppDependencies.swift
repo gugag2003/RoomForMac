@@ -37,6 +37,12 @@ struct AppDependencies {
     var runReporter: any RunReporter = NoOpRunReporter()
     var now: @Sendable () -> Date = { Date() }
 
+    /// How Smart Clean names its rows (Task 10's table). The default never asks Launch
+    /// Services for an app's name, so unit tests stay off the system; `live()` does.
+    var cleanItemLabel: @Sendable (CleanItem) -> String = { item in
+        CleanItemLabeler.label(for: item, home: NSHomeDirectory(), appName: { _ in nil })
+    }
+
     static func live(defaults: UserDefaults = .standard) -> AppDependencies {
         let openSettings: @MainActor @Sendable (URL) -> Void = { url in
             _ = NSWorkspace.shared.open(url)
@@ -67,7 +73,12 @@ struct AppDependencies {
             },
             protectedPaths: protectedPaths,
             hostAppPath: Bundle.main.bundlePath,
-            logStore: EngineLogStore(directory: AppLogLocation.directory())
+            logStore: EngineLogStore(directory: AppLogLocation.directory()),
+            cleanItemLabel: { item in
+                CleanItemLabeler.label(
+                    for: item, home: NSHomeDirectory(), appName: CleanItemLabeler.appName(bundleIdentifier:)
+                )
+            }
         )
     }
 

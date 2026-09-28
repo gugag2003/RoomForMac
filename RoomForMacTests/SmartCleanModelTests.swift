@@ -792,3 +792,70 @@ struct SmartCleanModelTests {
         #expect(log.contains(stray))
     }
 }
+
+@MainActor
+@Suite("Smart Clean in the app model", .timeLimit(.minutes(1)))
+struct SmartCleanWiringTests {
+    private let temporary: TemporaryDefaults
+    private let directory: TemporaryDirectory
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+        directory = try TemporaryDirectory()
+    }
+
+    @Test func theEngineCheckBuildsSmartCleanWhichWaitsForOnboarding() async throws {
+        let root = try EngineLayout.make(in: directory.url, version: [
+            "mole_tag": "V1.56.0",
+            "mole_commit": String(repeating: "a", count: 40),
+            "patches_sha256": "none",
+            "patch_count": "6",
+        ])
+        let installation = try EngineInstallation(root: root)
+        let service = ScriptedCleanService(scan: Fixture.dryRun())
+        let reporter = RecordingRunReporter()
+        var dependencies = AppDependencies(
+            preferences: temporary.preferences,
+            engineCheck: { .success(installation) },
+            openURL: { _ in }
+        )
+        dependencies.makeServices = { _ in
+            EngineServices(clean: service, uninstall: EngineServices.unavailable.uninstall, status: EngineServices.unavailable.status)
+        }
+        dependencies.files = FileProbes(fileExists: { _ in false }, isWritableDirectory: { _ in true })
+        dependencies.runReporter = reporter
+        let appModel = AppModel(dependencies: dependencies)
+        #expect(appModel.smartClean == nil)
+
+        await appModel.start()
+        let smartClean = try #require(appModel.smartClean)
+        smartClean.scan()
+        #expect(smartClean.phase == .failed(.notReady))
+        #expect(service.calls.isEmpty)
+
+        appModel.completeOnboarding(startFirstScan: true)
+        smartClean.consumePendingScan(from: appModel)
+        #expect(!appModel.pendingFirstScan)
+        #expect(service.calls == [.scan])
+        await smartClean.waitForCurrentRun()
+        #expect(smartClean.phase.preview != nil)
+        #expect(reporter.scans.count == 1)
+
+        let other = try #require(appModel.runQueue.begin(.uninstaller, stop: nil))
+        #expect(smartClean.blockedBy == .uninstaller)
+        other.end()
+        #expect(smartClean.blockedBy == nil)
+    }
+
+    @Test func theDefaultLabelNamesRowsWithoutLaunchServices() {
+        let dependencies = AppDependencies(
+            preferences: temporary.preferences,
+            engineCheck: { .failure(.installationInvalid("not used")) },
+            openURL: { _ in }
+        )
+        let item = CleanItem(
+            section: "User essentials", path: NSHomeDirectory() + "/Library/Caches/com.apple.Safari", sizeBytes: 1, sizeKnown: true
+        )
+        #expect(dependencies.cleanItemLabel(item) == CleanItemLabeler.label(for: item, home: NSHomeDirectory(), appName: { _ in nil }))
+    }
+}

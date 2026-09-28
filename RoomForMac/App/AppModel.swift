@@ -43,6 +43,10 @@ final class AppModel {
     /// `dependencies.runReporter`; `makeFeatures` sets the final one.
     private(set) var reporter: any RunReporter
 
+    /// Smart Clean, built by `makeFeatures(_:)` once the engine is ready. It refuses to
+    /// start engine commands until onboarding is complete.
+    private(set) var smartClean: SmartCleanModel?
+
     @ObservationIgnored private var hasStarted = false
 
     init(dependencies: AppDependencies) {
@@ -88,6 +92,28 @@ final class AppModel {
     /// Clean (Task 11) and the Uninstaller (Task 14), which both report to it.
     func makeFeatures(_ services: EngineServices) {
         reporter = dependencies.runReporter
+        smartClean = SmartCleanModel(dependencies: smartCleanDependencies(service: services.clean))
+    }
+
+    /// Smart Clean's dependencies over this model's seams. `isAllowed` reads `isOnboarded`
+    /// on every call, so the feature starts nothing before onboarding completes (Ruling 10).
+    /// Timings live in preferences under `clean.sectionTimings` (Task 10).
+    private func smartCleanDependencies(service: any CleanServicing) -> SmartCleanDependencies {
+        let preferences = dependencies.preferences
+        return SmartCleanDependencies(
+            service: service,
+            gate: dependencies.removalGate,
+            recorder: dependencies.removalRecorder,
+            reporter: reporter,
+            logStore: dependencies.logStore,
+            runQueue: runQueue,
+            isAllowed: { [weak self] in self?.isOnboarded ?? false },
+            files: dependencies.files,
+            label: dependencies.cleanItemLabel,
+            loadTimings: { SectionTimings(stored: preferences.cleanSectionTimings) },
+            saveTimings: { preferences.cleanSectionTimings = $0.durations },
+            now: dependencies.now
+        )
     }
 
     /// Saves that onboarding is done and shows Smart Clean.
