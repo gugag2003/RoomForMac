@@ -78,7 +78,7 @@ public struct MoleRunner: EngineRunning {
                     }
                 }
                 process.markExited()
-                command.control?.detach()
+                command.control?.detach(process)
                 for line in buffer.finish() { continuation.yield(line) }
                 if let error = EngineError.failure(exit: exit, stopReason: process.stopReason, stderrLog: command.stderrLog) {
                     continuation.finish(throwing: error)

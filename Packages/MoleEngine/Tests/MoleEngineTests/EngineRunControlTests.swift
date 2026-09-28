@@ -151,6 +151,61 @@ struct EngineRunControlTests {
         #expect(lineCount(terms) == 1)
     }
 
+    /// Regression for a late `detach()` racing a reused control's next
+    /// `attach()`. Run 1 ignores TERM, so with the 5 s grace period its
+    /// process is not reaped, and its reader thread does not call
+    /// `detach(process1)`, until well after run 2 has already attached
+    /// below. The test waits for run 1's group to actually be gone — so its
+    /// detach call has landed — before exercising the stop. Before the fix,
+    /// that late detach unconditionally cleared the control's phase to
+    /// `.exited`, so the `stop()` below would set `isStopRequested` but
+    /// never reach run 2's process, which would then run unsignalled.
+    @Test func reusingAControlBeforeTheEarlierRunDetachesStillDeliversTheNextStop() async throws {
+        let script1 = try StubScript("""
+        trap '' TERM
+        echo $$ > "$PIDFILE"
+        echo ready
+        sleep 30
+        """)
+        let pidFile1 = script1.directory.appending(path: "leader.pid")
+        let control = EngineRunControl()
+        defer { control.stop() }
+
+        for try await line in patientRunner.lines(for: script1.command(environment: ["PIDFILE": pidFile1.path]).controlled(by: control)) where line == "ready" {
+            break
+        }
+        // Breaking here deinitializes run 1's stream, which cancels it: its
+        // process ignores SIGTERM and is not reaped until patientRunner's
+        // 5 s grace period ends.
+        let group1 = try readGroupID(pidFile1)
+
+        // Run 2 starts on the same control right away, while run 1's process
+        // is still alive and its reader thread has not yet detached.
+        let script2 = try StubScript("""
+        echo ready
+        sleep 30
+        """)
+        let recorder = LineRecorder()
+        let stream2 = runner.lines(for: script2.command().controlled(by: control))
+        let consumer = Task { await recorder.consume(stream2) }
+        // Confirms run 2 has spawned and attached, not merely that run 1
+        // (whose own attach is still in place at this point) has.
+        #expect(await eventually { recorder.count >= 1 })
+
+        // Wait for run 1's late detach(process1) to actually land: its
+        // process ignores SIGTERM, so it is only reaped after the grace
+        // period's SIGKILL.
+        #expect(await eventually(timeout: .seconds(7)) { groupIsGone(group1) })
+
+        let stoppedAt = ContinuousClock.now
+        control.stop()
+        await consumer.value
+        #expect(recorder.error as? EngineError == .cancelled)
+        // The late detach from run 1 must never have erased run 2's
+        // attachment: the stop still reaches run 2's process at once.
+        #expect(ContinuousClock.now - stoppedAt < .seconds(2))
+    }
+
     @Test func stoppedReturnsOnceStopIsCalled() async throws {
         let control = EngineRunControl()
         let returned = Flag()

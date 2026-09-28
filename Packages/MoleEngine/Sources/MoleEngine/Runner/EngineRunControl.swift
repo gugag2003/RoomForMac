@@ -141,6 +141,11 @@ public final class EngineRunControl: Sendable, Equatable {
     /// suspend that was requested before or during the spawn.
     func attach(_ process: ProcessControl) {
         state.withLock { state in
+            // A caller may reuse a control for a new run before the earlier
+            // run's stale reader thread has called `detach(_:)` for the
+            // process that run abandoned (Task cancelled / loop broken
+            // early): `phase` may already be `.running` with a different
+            // process here. That is expected; see `detach(_:)`.
             state.phase = .running(process)
             if state.stopRequested {
                 process.stop(.requested)
@@ -150,10 +155,18 @@ public final class EngineRunControl: Sendable, Equatable {
         }
     }
 
-    /// Called by `MoleRunner` once the process has been reaped. Signals are
-    /// never sent after this.
-    func detach() {
+    /// Called by `MoleRunner` once `process` has been reaped. Signals are
+    /// never sent to `process` after this.
+    ///
+    /// A control can be reused for a later run once the earlier one detaches.
+    /// That later run's `attach(_:)` may already have replaced `phase` with
+    /// its own process by the time this one's reader thread gets here (the
+    /// reader keeps running until its process is reaped even after the
+    /// consumer has gone) — this only clears `phase` when it still names
+    /// `process`, so a late detach from run 1 never erases run 2's phase.
+    func detach(_ process: ProcessControl) {
         state.withLock { state in
+            guard case .running(let current) = state.phase, current === process else { return }
             state.phase = .exited
             state.suspended = false
         }
