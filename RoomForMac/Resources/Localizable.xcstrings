@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@" : {
+
+    },
     "%@/s" : {
 
     },
@@ -19,6 +22,9 @@
     "A random install ID made on this Mac, so events from one install can be counted together. It is not linked to you." : {
 
     },
+    "A system process still needs these compiled models." : {
+
+    },
     "About" : {
 
     },
@@ -31,10 +37,28 @@
     "Allowed" : {
 
     },
+    "Already gone" : {
+
+    },
+    "An app may have this database open, so it was left alone." : {
+
+    },
     "Another copy of RoomForMac is already open in %@. Quit it, then try again." : {
 
     },
     "App %@" : {
+
+    },
+    "App caches" : {
+
+    },
+    "App leftovers" : {
+
+    },
+    "Apple silicon updates" : {
+
+    },
+    "Application Support" : {
 
     },
     "Applications" : {
@@ -46,13 +70,52 @@
     "Approve in System Settings" : {
 
     },
+    "Apps & utilities" : {
+
+    },
     "Back" : {
+
+    },
+    "Browsers" : {
 
     },
     "Checking RoomForMac…" : {
 
     },
     "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall." : {
+
+    },
+    "Cleaning couldn't start." : {
+
+    },
+    "Cleaning ended without a report. Some items may have been removed." : {
+
+    },
+    "Cleaning ran into a problem." : {
+
+    },
+    "Cleaning stopped before anything was removed." : {
+
+    },
+    "Cleaning stopped before it finished." : {
+
+    },
+    "Cleaning stopped early because a step failed." : {
+
+    },
+    "Cleaning stopped early because a step took too long." : {
+
+    },
+    "Cleaning stopped. Freed %@ before stopping; nothing else was touched." : {
+
+    },
+    "Cleaning took too long and was stopped." : {
+
+    },
+    "Cleaning was interrupted." : {
+
+    },
+    "Cloud & Office" : {
 
     },
     "Coming in the next update." : {
@@ -70,6 +133,27 @@
     "Copy diagnostics" : {
 
     },
+    "Couldn't delete the simulator" : {
+
+    },
+    "Couldn't finish removing" : {
+
+    },
+    "Couldn't remove" : {
+
+    },
+    "Couldn't remove a shortcut" : {
+
+    },
+    "Couldn't remove all system files" : {
+
+    },
+    "Couldn't remove an empty app container" : {
+
+    },
+    "Couldn't remove: macOS blocked it" : {
+
+    },
     "Counts and sizes in ranges. Never file names, paths or app names." : {
 
     },
@@ -80,6 +164,12 @@
 
     },
     "Details:" : {
+
+    },
+    "Developer tools" : {
+
+    },
+    "Device backups & firmware" : {
 
     },
     "Done" : {
@@ -149,8 +239,33 @@
     "Finder & System Events" : {
 
     },
+    "Finish or cancel the download, then clean again." : {
+
+    },
     "Found: %@" : {
 
+    },
+    "Freed %@ · %lld items removed" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Freed %1$@ · %2$lld item removed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Freed %1$@ · %2$lld items removed"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "Full Disk Access" : {
 
@@ -167,7 +282,55 @@
     "Here's where your approvals stand. You can change them any time in Settings." : {
 
     },
+    "It matches a rule in your protected-files list (~/.config/mole/whitelist)." : {
+
+    },
     "It stopped with error code %lld." : {
+
+    },
+    "It took too long; part of it may still be there." : {
+
+    },
+    "It was in use or protected when cleaning reached it. Quit apps you aren't using and clean again." : {
+
+    },
+    "It was replaced or moved while cleaning, so it was left alone to be safe." : {
+
+    },
+    "Kept" : {
+
+    },
+    "Kept: a database may be in use" : {
+
+    },
+    "Kept: a last safety check stopped it" : {
+
+    },
+    "Kept: an empty app container" : {
+
+    },
+    "Kept: download may be in progress" : {
+
+    },
+    "Kept: it changed during cleaning" : {
+
+    },
+    "Kept: its app is open" : {
+
+    },
+    "Kept: macOS is using it" : {
+
+    },
+    "Kept: on your protected list" : {
+
+    },
+    "Kept: protected" : {
+
+    },
+    "Large files" : {
+
+    },
+    "Left in place" : {
 
     },
     "Lets RoomForMac see caches, logs and leftovers in every folder, so scans are complete." : {
@@ -177,6 +340,9 @@
 
     },
     "Licenses and notices" : {
+
+    },
+    "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
 
     },
     "Message: %@" : {
@@ -191,10 +357,19 @@
     "Moves apps to the Trash if the usual way fails." : {
 
     },
+    "Needs administrator access" : {
+
+    },
     "Needs approval" : {
 
     },
     "No account, no card." : {
+
+    },
+    "Not cleaned: cleaning stopped first" : {
+
+    },
+    "Not cleaned: ran out of time" : {
 
     },
     "Not needed" : {
@@ -206,6 +381,9 @@
     "Not yet" : {
 
     },
+    "Nothing was removed." : {
+
+    },
     "Notice" : {
 
     },
@@ -213,6 +391,12 @@
 
     },
     "Notify me when a cleanup finishes" : {
+
+    },
+    "Old Time Machine backups can only be deleted with your password, which RoomForMac doesn't do yet." : {
+
+    },
+    "Only an administrator can remove it, and RoomForMac doesn't ask for your password yet." : {
 
     },
     "Open RoomForMac at login" : {
@@ -239,10 +423,22 @@
     "Pick what you like. Nothing changes until you finish setup." : {
 
     },
+    "Project artifacts" : {
+
+    },
+    "Protected by macOS" : {
+
+    },
+    "Quit the app it belongs to, then clean again." : {
+
+    },
     "Reinstall RoomForMac" : {
 
     },
     "Reinstall RoomForMac to restore it." : {
+
+    },
+    "Removed" : {
 
     },
     "Reveal in Finder" : {
@@ -329,6 +525,9 @@
     "RoomForMac's engine asks these two parts of macOS for help. Allow them now, so macOS doesn't stop your first cleanup to ask." : {
 
     },
+    "Safety rules keep this item." : {
+
+    },
     "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
 
     },
@@ -351,6 +550,18 @@
 
     },
     "Some files RoomForMac needs are missing or damaged." : {
+
+    },
+    "Some sizes couldn't be measured, so totals are at least what's shown. Full Disk Access gives more complete results." : {
+
+    },
+    "Something else removed it first. It isn't counted." : {
+
+    },
+    "Something prevented it. Details are in the log." : {
+
+    },
+    "Something started using it just before removal." : {
 
     },
     "Something went wrong" : {
@@ -384,7 +595,13 @@
     "Stopped" : {
 
     },
+    "System" : {
+
+    },
     "System Events" : {
+
+    },
+    "System Integrity Protection or your organization protects it." : {
 
     },
     "System-level items arrive in a later update." : {
@@ -397,6 +614,15 @@
 
     },
     "That setup finished, and which approvals you gave, as yes or no." : {
+
+    },
+    "The cleaner reported: %@" : {
+
+    },
+    "The cleaner stopped unexpectedly. macOS ended it before it finished." : {
+
+    },
+    "The disk is read-only" : {
 
     },
     "The engine couldn't start" : {
@@ -420,7 +646,19 @@
     "The engine was stopped before it finished." : {
 
     },
+    "The scan stopped early because a step took too long. Showing what it found." : {
+
+    },
+    "The scan stopped early. Showing what it found." : {
+
+    },
     "This document is missing" : {
+
+    },
+    "This group took too long. Try again." : {
+
+    },
+    "Time Machine" : {
 
     },
     "Title: %@" : {
@@ -447,6 +685,9 @@
     "Upgrade once for unlimited cleanup — every future version included." : {
 
     },
+    "User essentials" : {
+
+    },
     "Version %@ (%@)" : {
       "localizations" : {
         "en" : {
@@ -456,6 +697,9 @@
           }
         }
       }
+    },
+    "Virtualization" : {
+
     },
     "Wait for cleaning to finish." : {
 
@@ -479,6 +723,9 @@
 
     },
     "Without Full Disk Access:" : {
+
+    },
+    "Xcode's simulator service didn't answer. Open Xcode once, then try again." : {
 
     },
     "Your Trash shows as empty, even when it isn't." : {
