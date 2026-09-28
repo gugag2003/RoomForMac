@@ -86,11 +86,11 @@ struct RootViewTests {
     /// empty frame in tens of thousands.
     private static let minimumDifference = 1_000
 
-    /// The three placeholders, each through its own view type.
+    /// The placeholders still shipping, each through its own view type. Smart Clean's went
+    /// with Plan 3 Task 12; Tasks 15 and 18 remove the other two.
     @MainActor
     private static func placeholders() -> [(SidebarSection, AnyView)] {
         [
-            (.smartClean, AnyView(SmartCleanPlaceholderView())),
             (.uninstaller, AnyView(UninstallerPlaceholderView())),
             (.status, AnyView(StatusPlaceholderView())),
         ]

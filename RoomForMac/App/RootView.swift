@@ -87,7 +87,7 @@ private struct MainSplitView: View {
     private var detail: some View {
         switch model.selection {
         case .smartClean:
-            SmartCleanPlaceholderView()
+            SmartCleanView(appModel: model)
         case .uninstaller:
             UninstallerPlaceholderView()
         case .status:

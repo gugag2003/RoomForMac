@@ -116,3 +116,68 @@ extension AccessibilityID {
     static let runProblemCopy = "runProblem.copy"
     static let runProblemRetry = "runProblem.retry"
 }
+
+// MARK: - Smart Clean (Plan 3 Task 12)
+
+extension AccessibilityID {
+    static let smartCleanScan = "smartClean.scan"
+    static let smartCleanStop = "smartClean.stop"
+    static let smartCleanProgress = "smartClean.progress"
+    static let smartCleanResults = "smartClean.results"
+    static let smartCleanSelectAll = "smartClean.selectAll"
+    static let smartCleanSelectNone = "smartClean.selectNone"
+    static let smartCleanClean = "smartClean.clean"
+    static let smartCleanConfirm = "smartClean.confirm"
+    static let smartCleanConfirmCancel = "smartClean.confirm.cancel"
+    static let smartCleanCleaning = "smartClean.cleaning"
+    static let smartCleanSummary = "smartClean.summary"
+    static let smartCleanDone = "smartClean.done"
+    static let smartCleanScanAgain = "smartClean.scanAgain"
+    static let smartCleanEmpty = "smartClean.empty"
+    static let smartCleanGateNotice = "smartClean.gateNotice"
+    /// The same notice in the Uninstaller's drawer (Task 15).
+    static let uninstallerGateNotice = "uninstaller.gateNotice"
+
+    /// The removal gate's notice for `feature`: `smartCleanGateNotice` or `uninstallerGateNotice`.
+    static func gateNotice(_ feature: RemovalFeature) -> String {
+        switch feature {
+        case .smartClean: smartCleanGateNotice
+        case .uninstaller: uninstallerGateNotice
+        }
+    }
+
+    /// A section's checkbox row in the results: "smartClean.section.<slug>".
+    static func smartCleanSection(_ engineName: String) -> String {
+        "smartClean.section.\(slug(engineName))"
+    }
+
+    /// A section's show/hide-items button: "smartClean.section.<slug>.expand".
+    static func smartCleanSectionExpand(_ engineName: String) -> String {
+        "\(smartCleanSection(engineName)).expand"
+    }
+
+    /// An item row, by its position in its section's engine order:
+    /// "smartClean.item.<slug>.<index>". An identifier never carries a path.
+    static func smartCleanItem(section engineName: String, index: Int) -> String {
+        "smartClean.item.\(slug(engineName)).\(index)"
+    }
+
+    /// `text` lowercased, with each run of characters that are neither letters nor digits
+    /// turned into one "-", and none at either end: "Cloud & Office" → "cloud-office".
+    static func slug(_ text: String) -> String {
+        var slug = ""
+        var pendingDash = false
+        for character in text.lowercased() {
+            guard character.isLetter || character.isNumber else {
+                pendingDash = true
+                continue
+            }
+            if pendingDash && !slug.isEmpty {
+                slug.append("-")
+            }
+            pendingDash = false
+            slug.append(character)
+        }
+        return slug
+    }
+}

@@ -7,6 +7,86 @@
     "%@/s" : {
 
     },
+    "%lld items" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld items removed" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item removed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items removed"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "%lld percent, %@, %@ found, %@ elapsed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld percent, %2$@, %3$@ found, %4$@ elapsed"
+          }
+        }
+      }
+    },
+    "%lld removed" : {
+
+    },
+    "%lld removed · %lld not removed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld removed · %2$lld not removed"
+          }
+        }
+      }
+    },
+    "%lld selected" : {
+
+    },
     "(empty)" : {
 
     },
@@ -73,10 +153,16 @@
     "Apps & utilities" : {
 
     },
+    "At least" : {
+
+    },
     "Back" : {
 
     },
     "Browsers" : {
+
+    },
+    "Cancel" : {
 
     },
     "Checking RoomForMac…" : {
@@ -85,7 +171,28 @@
     "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall." : {
 
     },
+    "Choose fewer apps to fit within it. The app list and previews stay free." : {
+
+    },
+    "Choose fewer items to clean within it. Scans and previews stay free." : {
+
+    },
     "Clang module cache" : {
+
+    },
+    "Clean" : {
+
+    },
+    "Clean %@" : {
+
+    },
+    "Clean at least %@" : {
+
+    },
+    "Clean these items?" : {
+
+    },
+    "Cleaning" : {
 
     },
     "Cleaning couldn't start." : {
@@ -242,7 +349,13 @@
     "Finder & System Events" : {
 
     },
+    "Finds caches, logs and leftovers that are safe to remove." : {
+
+    },
     "Finish or cancel the download, then clean again." : {
+
+    },
+    "Finish setting up RoomForMac, then scan again." : {
 
     },
     "Found: %@" : {
@@ -282,8 +395,24 @@
     "Get started" : {
 
     },
+    "Getting ready…" : {
+
+    },
     "Here's where your approvals stand. You can change them any time in Settings." : {
 
+    },
+    "Hide items" : {
+
+    },
+    "Included in %@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Included in %1$@ (%2$@)"
+          }
+        }
+      }
     },
     "It matches a rule in your protected-files list (~/.config/mole/whitelist)." : {
 
@@ -348,6 +477,9 @@
     "Logs" : {
 
     },
+    "Looks for files Smart Clean can remove. Nothing is removed until you confirm." : {
+
+    },
     "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
 
     },
@@ -369,6 +501,9 @@
     "Needs approval" : {
 
     },
+    "Needs your password" : {
+
+    },
     "No account, no card." : {
 
     },
@@ -384,7 +519,13 @@
     "Not now" : {
 
     },
+    "Not selected" : {
+
+    },
     "Not yet" : {
+
+    },
+    "Nothing to clean" : {
 
     },
     "Nothing was removed." : {
@@ -418,6 +559,9 @@
 
     },
     "Part of RoomForMac's engine couldn't run. macOS may have blocked it, or the app is damaged." : {
+
+    },
+    "Partly selected" : {
 
     },
     "Permissions" : {
@@ -534,7 +678,40 @@
     "Safety rules keep this item." : {
 
     },
+    "Scan" : {
+
+    },
+    "Scan again" : {
+
+    },
+    "Scan progress" : {
+
+    },
+    "Scan stopped. Nothing was removed." : {
+
+    },
+    "Scanning" : {
+
+    },
+    "Scans and previews stay free." : {
+
+    },
     "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
+
+    },
+    "Select all" : {
+
+    },
+    "Select items to clean" : {
+
+    },
+    "Select none" : {
+
+    },
+    "Selected" : {
+
+    },
+    "Selection exceeds your free %@" : {
 
     },
     "Share anonymous usage data" : {
@@ -543,7 +720,16 @@
     "Show details" : {
 
     },
+    "Show items" : {
+
+    },
     "Signal %lld" : {
+
+    },
+    "Size check stopped. Nothing was removed, and the sizes are from your last scan." : {
+
+    },
+    "Size unknown" : {
 
     },
     "Skip" : {
@@ -552,10 +738,19 @@
     "Smart Clean" : {
 
     },
+    "Smart Clean found no caches, logs or leftovers to remove right now." : {
+
+    },
+    "Smart Clean isn't ready yet" : {
+
+    },
     "Some apps can't be moved to the Trash when you uninstall them." : {
 
     },
     "Some files RoomForMac needs are missing or damaged." : {
+
+    },
+    "Some folders can't be measured or cleaned without it." : {
 
     },
     "Some sizes couldn't be measured, so totals are at least what's shown. Full Disk Access gives more complete results." : {
@@ -598,7 +793,13 @@
         }
       }
     },
+    "Stop" : {
+
+    },
     "Stopped" : {
+
+    },
+    "Stopping…" : {
 
     },
     "System" : {
@@ -620,6 +821,9 @@
 
     },
     "That setup finished, and which approvals you gave, as yes or no." : {
+
+    },
+    "The app list and previews stay free." : {
 
     },
     "The cleaner reported: %@" : {
@@ -656,6 +860,12 @@
 
     },
     "The scan stopped early. Showing what it found." : {
+
+    },
+    "These apps exceed your free %@" : {
+
+    },
+    "These files are removed permanently; apps recreate caches as needed." : {
 
     },
     "This document is missing" : {
@@ -716,6 +926,9 @@
     "Wait for the uninstall to finish." : {
 
     },
+    "Waiting" : {
+
+    },
     "What we collect" : {
 
     },
@@ -746,7 +959,25 @@
     "Your Trash shows as empty, even when it isn't." : {
 
     },
+    "Your free cleanup is used up" : {
+
+    },
+    "Your results are a while old, so Smart Clean is checking your selection's sizes again." : {
+
+    },
+    "and %lld more" : {
+
+    },
     "at least %@" : {
+
+    },
+    "found" : {
+
+    },
+    "freed" : {
+
+    },
+    "freed so far" : {
 
     },
     "iOS software update" : {
@@ -759,6 +990,9 @@
 
     },
     "macOS asks whether RoomForMac may send notifications when you continue." : {
+
+    },
+    "macOS blocked some items. Turn on Full Disk Access, then clean again." : {
 
     },
     "macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again." : {
