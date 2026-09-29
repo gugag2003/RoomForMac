@@ -129,6 +129,9 @@
     "Another copy of RoomForMac is already open in %@. Quit it, then try again." : {
 
     },
+    "Another open app has the same name" : {
+
+    },
     "App %@" : {
 
     },
@@ -142,6 +145,9 @@
 
     },
     "Apple silicon updates" : {
+
+    },
+    "Application" : {
 
     },
     "Application Support" : {
@@ -174,10 +180,26 @@
     "Caches" : {
 
     },
+    "Can't be removed here" : {
+
+    },
     "Cancel" : {
 
     },
     "Checking RoomForMac…" : {
+
+    },
+    "Checking apps %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Checking apps %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Checking what these apps left behind…" : {
 
     },
     "Checks which apps are running before a cleanup, and removes the login items of apps you uninstall." : {
@@ -187,6 +209,9 @@
 
     },
     "Choose fewer items to clean within it. Scans and previews stay free." : {
+
+    },
+    "Choose what to do with them to continue." : {
 
     },
     "Clang module cache" : {
@@ -258,6 +283,9 @@
     "Copy diagnostics" : {
 
     },
+    "Couldn't be moved" : {
+
+    },
     "Couldn't delete the simulator" : {
 
     },
@@ -307,6 +335,9 @@
 
     },
     "Duration: %@ s" : {
+
+    },
+    "Empty the Trash to free up this space." : {
 
     },
     "Engine" : {
@@ -367,6 +398,9 @@
     "Finder & System Events" : {
 
     },
+    "Finding your apps…" : {
+
+    },
     "Finds caches, logs and leftovers that are safe to remove." : {
 
     },
@@ -374,6 +408,9 @@
 
     },
     "Finish setting up RoomForMac, then scan again." : {
+
+    },
+    "Force Quit" : {
 
     },
     "Found: %@" : {
@@ -416,13 +453,25 @@
     "Getting ready…" : {
 
     },
+    "Helper" : {
+
+    },
     "Here's where your approvals stand. You can change them any time in Settings." : {
 
     },
     "Hide items" : {
 
     },
+    "Homebrew" : {
+
+    },
     "Homebrew couldn't remove it" : {
+
+    },
+    "In a folder only an administrator can change" : {
+
+    },
+    "Included above" : {
 
     },
     "Included in %@ (%@)" : {
@@ -435,7 +484,16 @@
         }
       }
     },
+    "Installed with Homebrew" : {
+
+    },
+    "It didn't quit, so it was left alone. Quit it, then try again." : {
+
+    },
     "It matches a rule in your protected-files list (~/.config/mole/whitelist)." : {
+
+    },
+    "It stayed where it was." : {
 
     },
     "It stopped with error code %lld." : {
@@ -486,7 +544,16 @@
     "Last used" : {
 
     },
+    "Last used %@" : {
+
+    },
+    "Last used: Unknown" : {
+
+    },
     "Left in place" : {
+
+    },
+    "Left in place:" : {
 
     },
     "Lets RoomForMac see caches, logs and leftovers in every folder, so scans are complete." : {
@@ -516,10 +583,28 @@
     "Move and relaunch" : {
 
     },
+    "Move to Trash" : {
+
+    },
+    "Moved %@ to the Trash" : {
+
+    },
+    "Moved to the Trash" : {
+
+    },
     "Moves apps to the Trash if the usual way fails." : {
 
     },
+    "Moving %@ to the Trash" : {
+
+    },
+    "Moving to the Trash" : {
+
+    },
     "Name" : {
+
+    },
+    "Name or bundle ID" : {
 
     },
     "Needs administrator access" : {
@@ -534,10 +619,25 @@
     "No account, no card." : {
 
     },
+    "No apps match “%@”" : {
+
+    },
+    "No apps to remove" : {
+
+    },
+    "No apps to show" : {
+
+    },
     "Not cleaned: cleaning stopped first" : {
 
     },
     "Not cleaned: ran out of time" : {
+
+    },
+    "Not finished" : {
+
+    },
+    "Not found, or protected by macOS" : {
 
     },
     "Not needed" : {
@@ -552,7 +652,13 @@
     "Not yet" : {
 
     },
+    "Nothing here can be moved to the Trash" : {
+
+    },
     "Nothing to clean" : {
+
+    },
+    "Nothing was moved to the Trash" : {
 
     },
     "Nothing was removed." : {
@@ -573,10 +679,22 @@
     "Only an administrator can remove it, and RoomForMac doesn't ask for your password yet." : {
 
     },
+    "Open" : {
+
+    },
+    "Open App Management" : {
+
+    },
     "Open RoomForMac at login" : {
 
     },
     "Open Settings" : {
+
+    },
+    "Open Trash" : {
+
+    },
+    "Open apps are asked to quit first. Save your work in them before you continue." : {
 
     },
     "Open at login" : {
@@ -606,6 +724,9 @@
     "Preferences" : {
 
     },
+    "Progress" : {
+
+    },
     "Project artifacts" : {
 
     },
@@ -618,6 +739,28 @@
     "Quit the app it belongs to, then clean again." : {
 
     },
+    "Quitting %lld apps…" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Quitting %lld app…"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Quitting %lld apps…"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Reinstall RoomForMac" : {
 
     },
@@ -627,7 +770,16 @@
     "Remove it with Homebrew in Terminal." : {
 
     },
+    "Remove it yourself in Finder" : {
+
+    },
     "Removed" : {
+
+    },
+    "Removing these apps needs administrator access, which comes in a later update." : {
+
+    },
+    "Removing this app needs administrator access, which comes in a later update." : {
 
     },
     "Reveal in Finder" : {
@@ -640,6 +792,9 @@
 
     },
     "RoomForMac adds itself to your login items when you continue. If macOS asks, approve it in System Settings." : {
+
+    },
+    "RoomForMac asks each app to quit, as if you chose Quit in it. Save your work if an app asks." : {
 
     },
     "RoomForMac can open at login once it is in your Applications folder." : {
@@ -678,6 +833,9 @@
     "RoomForMac diagnostics" : {
 
     },
+    "RoomForMac found no apps it can move to the Trash." : {
+
+    },
     "RoomForMac is built on the open-source Mole engine by tw93 (GPL-3.0)." : {
 
     },
@@ -691,6 +849,9 @@
 
     },
     "RoomForMac isn't allowed to add apps to %@." : {
+
+    },
+    "RoomForMac looks for each app's caches, preferences and other files. Nothing changes yet." : {
 
     },
     "RoomForMac may need App Management access in System Settings. You can also drag the app to the Trash in Finder." : {
@@ -747,6 +908,9 @@
     "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
 
     },
+    "Search apps" : {
+
+    },
     "Select all" : {
 
     },
@@ -789,6 +953,12 @@
     "Skip" : {
 
     },
+    "Skip These Apps" : {
+
+    },
+    "Skipped" : {
+
+    },
     "Smart Clean" : {
 
     },
@@ -799,6 +969,9 @@
 
     },
     "Some apps can't be moved to the Trash when you uninstall them." : {
+
+    },
+    "Some apps didn't quit" : {
 
     },
     "Some files RoomForMac needs are missing or damaged." : {
@@ -822,6 +995,9 @@
     "Something went wrong" : {
 
     },
+    "Sort by" : {
+
+    },
     "Standard error (end):" : {
 
     },
@@ -837,6 +1013,9 @@
     "Status" : {
 
     },
+    "Stays in place (needs administrator access)" : {
+
+    },
     "Step %lld of %lld" : {
       "localizations" : {
         "en" : {
@@ -846,6 +1025,9 @@
           }
         }
       }
+    },
+    "Still open" : {
+
     },
     "Stop" : {
 
@@ -883,6 +1065,9 @@
     "The app list and previews stay free." : {
 
     },
+    "The app went to the Trash, but its files may not have." : {
+
+    },
     "The cleaner reported: %@" : {
 
     },
@@ -913,6 +1098,9 @@
     "The engine was stopped before it finished." : {
 
     },
+    "The first time can take a few seconds." : {
+
+    },
     "The scan stopped early because a step took too long. Showing what it found." : {
 
     },
@@ -925,7 +1113,19 @@
     "These apps exceed your free %@" : {
 
     },
+    "These apps need your password or can't be removed here." : {
+
+    },
     "These files are removed permanently; apps recreate caches as needed." : {
+
+    },
+    "They may be showing a dialog or have unsaved changes. Force quitting closes them at once, and unsaved changes are lost." : {
+
+    },
+    "They stay in the Trash until you empty it." : {
+
+    },
+    "This can't be stopped once it starts." : {
 
     },
     "This document is missing" : {
@@ -938,6 +1138,9 @@
 
     },
     "Title: %@" : {
+
+    },
+    "To move to the Trash" : {
 
     },
     "Trash" : {
@@ -962,6 +1165,9 @@
 
     },
     "Upgrade once for unlimited cleanup — every future version included." : {
+
+    },
+    "Use the vendor's uninstaller" : {
 
     },
     "User essentials" : {

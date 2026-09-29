@@ -91,7 +91,6 @@ struct RootViewTests {
     @MainActor
     private static func placeholders() -> [(SidebarSection, AnyView)] {
         [
-            (.uninstaller, AnyView(UninstallerPlaceholderView())),
             (.status, AnyView(StatusPlaceholderView())),
         ]
     }

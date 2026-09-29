@@ -181,3 +181,31 @@ extension AccessibilityID {
         return slug
     }
 }
+
+// MARK: - Uninstaller (Plan 3 Task 15)
+
+extension AccessibilityID {
+    static let uninstallerList = "uninstaller.list"
+    static let uninstallerSearch = "uninstaller.search"
+    static let uninstallerSort = "uninstaller.sort"
+
+    /// An app's row: "uninstaller.row.<bundleId>".
+    static func uninstallerRow(_ bundleId: String) -> String {
+        "uninstaller.row.\(bundleId)"
+    }
+
+    static let uninstallerDrawer = "uninstaller.drawer"
+    /// **Move to Trash**.
+    static let uninstallerConfirm = "uninstaller.confirm"
+    static let uninstallerCancel = "uninstaller.cancel"
+    /// **Try again** after a preview failed.
+    static let uninstallerRetry = "uninstaller.retry"
+    static let uninstallerForceQuit = "uninstaller.forceQuit"
+    static let uninstallerSkipStillOpen = "uninstaller.skipStillOpen"
+    /// **Back** in the Force Quit sheet.
+    static let uninstallerForceQuitBack = "uninstaller.forceQuit.back"
+    static let uninstallerSummary = "uninstaller.summary"
+    static let uninstallerOpenTrash = "uninstaller.openTrash"
+    static let uninstallerOpenAppManagement = "uninstaller.openAppManagement"
+    static let uninstallerDone = "uninstaller.done"
+}

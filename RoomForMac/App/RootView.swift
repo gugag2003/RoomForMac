@@ -89,7 +89,7 @@ private struct MainSplitView: View {
         case .smartClean:
             SmartCleanView(appModel: model)
         case .uninstaller:
-            UninstallerPlaceholderView()
+            UninstallerView(appModel: model)
         case .status:
             StatusPlaceholderView()
         }
