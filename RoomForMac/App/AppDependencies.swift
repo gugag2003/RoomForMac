@@ -43,6 +43,10 @@ struct AppDependencies {
         CleanItemLabeler.label(for: item, home: NSHomeDirectory(), appName: { _ in nil })
     }
 
+    /// The running apps the Uninstaller quits before a removal. The default sees
+    /// nothing running and ends nothing; `live()` sees the Mac's real processes.
+    var runningApps: RunningApps = .none
+
     static func live(defaults: UserDefaults = .standard) -> AppDependencies {
         let openSettings: @MainActor @Sendable (URL) -> Void = { url in
             _ = NSWorkspace.shared.open(url)
@@ -78,7 +82,8 @@ struct AppDependencies {
                 CleanItemLabeler.label(
                     for: item, home: NSHomeDirectory(), appName: CleanItemLabeler.appName(bundleIdentifier:)
                 )
-            }
+            },
+            runningApps: .live
         )
     }
 

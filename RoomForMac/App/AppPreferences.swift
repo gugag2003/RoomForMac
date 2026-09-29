@@ -15,6 +15,7 @@ struct AppPreferences: @unchecked Sendable {
         static let analyticsEnabled = "analytics.enabled"
         static let notificationsWanted = "notifications.wanted"
         static let lastKnownStatePrefix = "permissions.lastKnown."
+        static let uninstallerSort = "uninstaller.sort"
         static let cleanSectionTimings = "clean.sectionTimings"
     }
 
@@ -90,6 +91,12 @@ struct AppPreferences: @unchecked Sendable {
                 defaults.set(kept, forKey: Key.cleanSectionTimings)
             }
         }
+    }
+
+    /// The Uninstaller's sort order, a raw `AppSortOrder`; nil when none is saved.
+    var uninstallerSort: String? {
+        get { defaults.string(forKey: Key.uninstallerSort) }
+        nonmutating set { store(newValue, forKey: Key.uninstallerSort) }
     }
 
     /// The last state stored for a permission (a `PermissionState.storageValue`),

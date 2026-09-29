@@ -114,6 +114,9 @@
     "Allow" : {
 
     },
+    "Allow RoomForMac under App Management in System Settings, then try again." : {
+
+    },
     "Allowed" : {
 
     },
@@ -130,6 +133,9 @@
 
     },
     "App caches" : {
+
+    },
+    "App data" : {
 
     },
     "App leftovers" : {
@@ -159,7 +165,13 @@
     "Back" : {
 
     },
+    "Background items" : {
+
+    },
     "Browsers" : {
+
+    },
+    "Caches" : {
 
     },
     "Cancel" : {
@@ -234,6 +246,9 @@
     "Command: %@" : {
 
     },
+    "Containers" : {
+
+    },
     "Continue" : {
 
     },
@@ -247,6 +262,9 @@
 
     },
     "Couldn't finish removing" : {
+
+    },
+    "Couldn't move it to the Trash" : {
 
     },
     "Couldn't remove" : {
@@ -404,6 +422,9 @@
     "Hide items" : {
 
     },
+    "Homebrew couldn't remove it" : {
+
+    },
     "Included in %@ (%@)" : {
       "localizations" : {
         "en" : {
@@ -462,6 +483,9 @@
     "Large files" : {
 
     },
+    "Last used" : {
+
+    },
     "Left in place" : {
 
     },
@@ -493,6 +517,9 @@
 
     },
     "Moves apps to the Trash if the usual way fails." : {
+
+    },
+    "Name" : {
 
     },
     "Needs administrator access" : {
@@ -558,6 +585,9 @@
     "Open download page" : {
 
     },
+    "Other files" : {
+
+    },
     "Part of RoomForMac's engine couldn't run. macOS may have blocked it, or the app is damaged." : {
 
     },
@@ -573,10 +603,16 @@
     "Pick what you like. Nothing changes until you finish setup." : {
 
     },
+    "Preferences" : {
+
+    },
     "Project artifacts" : {
 
     },
     "Protected by macOS" : {
+
+    },
+    "Protected from removal" : {
 
     },
     "Quit the app it belongs to, then clean again." : {
@@ -586,6 +622,9 @@
 
     },
     "Reinstall RoomForMac to restore it." : {
+
+    },
+    "Remove it with Homebrew in Terminal." : {
 
     },
     "Removed" : {
@@ -610,6 +649,9 @@
 
     },
     "RoomForMac couldn't clear the quarantine flag on %@." : {
+
+    },
+    "RoomForMac couldn't move it to the Trash" : {
 
     },
     "RoomForMac couldn't move itself." : {
@@ -651,6 +693,9 @@
     "RoomForMac isn't allowed to add apps to %@." : {
 
     },
+    "RoomForMac may need App Management access in System Settings. You can also drag the app to the Trash in Finder." : {
+
+    },
     "RoomForMac moving into the Applications folder" : {
 
     },
@@ -678,6 +723,9 @@
     "Safety rules keep this item." : {
 
     },
+    "Saved window state" : {
+
+    },
     "Scan" : {
 
     },
@@ -702,6 +750,9 @@
     "Select all" : {
 
     },
+    "Select it again to see what would be removed now." : {
+
+    },
     "Select items to clean" : {
 
     },
@@ -724,6 +775,9 @@
 
     },
     "Signal %lld" : {
+
+    },
+    "Size" : {
 
     },
     "Size check stopped. Nothing was removed, and the sizes are from your last scan." : {
@@ -823,6 +877,9 @@
     "That setup finished, and which approvals you gave, as yes or no." : {
 
     },
+    "The app changed after you reviewed it" : {
+
+    },
     "The app list and previews stay free." : {
 
     },
@@ -860,6 +917,9 @@
 
     },
     "The scan stopped early. Showing what it found." : {
+
+    },
+    "The uninstaller reported: %@" : {
 
     },
     "These apps exceed your free %@" : {
@@ -927,6 +987,9 @@
 
     },
     "Waiting" : {
+
+    },
+    "Website data" : {
 
     },
     "What we collect" : {
@@ -998,7 +1061,13 @@
     "macOS can't add this copy of RoomForMac to your login items. Open RoomForMac from your Applications folder and try again." : {
 
     },
+    "macOS didn't allow moving it to the Trash" : {
+
+    },
     "macOS ended it before it finished." : {
+
+    },
+    "macOS or a safety rule protects this app, so it stayed in place." : {
 
     },
     "macOS wants you to approve this in Login Items." : {
