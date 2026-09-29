@@ -30,6 +30,9 @@ struct AppDependencies {
     /// The running app bundle, which the Uninstaller never lists.
     var hostAppPath: String = ""
     var files: FileProbes = .live
+    /// What Status reads itself: GPU use, memory pressure, free space and whether there is
+    /// a battery (Task 16). The default reads nothing.
+    var sensors: StatusSensors = .unavailable
     /// Where each run's diagnostics are appended. The default keeps nothing.
     var logStore: EngineLogStore = EngineLogStore(directory: nil)
     var removalGate: any RemovalGate = UnlimitedRemovalGate()
@@ -77,6 +80,7 @@ struct AppDependencies {
             },
             protectedPaths: protectedPaths,
             hostAppPath: Bundle.main.bundlePath,
+            sensors: .live,
             logStore: EngineLogStore(directory: AppLogLocation.directory()),
             cleanItemLabel: { item in
                 CleanItemLabeler.label(
