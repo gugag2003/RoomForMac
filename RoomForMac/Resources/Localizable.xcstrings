@@ -4,14 +4,87 @@
     "%@" : {
 
     },
+    "%@ down" : {
+
+    },
+    "%@ free" : {
+
+    },
     "%@ is using a lot of CPU" : {
 
     },
     "%@ is using a lot of memory" : {
 
     },
+    "%@ to %@ over the last %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ to %2$@ over the last %3$@"
+          }
+        }
+      }
+    },
+    "%@ used" : {
+
+    },
+    "%@ used of %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ used of %2$@"
+          }
+        }
+      }
+    },
     "%@/s" : {
 
+    },
+    "%lld cores" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld core"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cores"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld cycles" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cycle"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cycles"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld items" : {
       "localizations" : {
@@ -132,6 +205,9 @@
     "Already gone" : {
 
     },
+    "Also reported: %@" : {
+
+    },
     "An app may have this database open, so it was left alone." : {
 
     },
@@ -198,6 +274,9 @@
     "Browsers" : {
 
     },
+    "Busiest: %@" : {
+
+    },
     "CPU" : {
 
     },
@@ -214,6 +293,12 @@
 
     },
     "Cancel" : {
+
+    },
+    "Charged" : {
+
+    },
+    "Charging" : {
 
     },
     "Checking RoomForMac…" : {
@@ -293,9 +378,6 @@
 
     },
     "Cloud & Office" : {
-
-    },
-    "Coming in the next update." : {
 
     },
     "Command: %@" : {
@@ -425,6 +507,9 @@
     "Events: %@" : {
 
     },
+    "Excellent" : {
+
+    },
     "Exit code %lld" : {
 
     },
@@ -438,6 +523,9 @@
 
     },
     "Extras" : {
+
+    },
+    "Fair" : {
 
     },
     "Finder" : {
@@ -456,6 +544,9 @@
 
     },
     "Finish setting up RoomForMac, then scan again." : {
+
+    },
+    "Finishing charge" : {
 
     },
     "Force Quit" : {
@@ -502,6 +593,9 @@
 
     },
     "Getting ready…" : {
+
+    },
+    "Good" : {
 
     },
     "Heavy disk activity" : {
@@ -625,6 +719,9 @@
     "Licenses and notices" : {
 
     },
+    "Load %@" : {
+
+    },
     "Logs" : {
 
     },
@@ -632,6 +729,9 @@
 
     },
     "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
+
+    },
+    "Maximum capacity %@" : {
 
     },
     "Memory" : {
@@ -682,6 +782,9 @@
     "Needs approval" : {
 
     },
+    "Needs attention" : {
+
+    },
     "Needs your password" : {
 
     },
@@ -698,6 +801,12 @@
 
     },
     "No apps to show" : {
+
+    },
+    "No swap used" : {
+
+    },
+    "Not charging" : {
 
     },
     "Not cleaned: cleaning stopped first" : {
@@ -748,6 +857,9 @@
     "Old Time Machine backups can only be deleted with your password, which RoomForMac doesn't do yet." : {
 
     },
+    "On battery" : {
+
+    },
     "Only an administrator can remove it, and RoomForMac doesn't ask for your password yet." : {
 
     },
@@ -796,6 +908,15 @@
     "Preferences" : {
 
     },
+    "Pressure: critical" : {
+
+    },
+    "Pressure: high" : {
+
+    },
+    "Pressure: normal" : {
+
+    },
     "Progress" : {
 
     },
@@ -829,6 +950,22 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "Reading your Mac…" : {
+
+    },
+    "Reads and writes" : {
+
+    },
+    "Reads and writes %@ to %@ over the last %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reads and writes %1$@ to %2$@ over the last %3$@"
           }
         }
       }
@@ -950,6 +1087,9 @@
     "RoomForMac stopped it after waiting too long. Try again." : {
 
     },
+    "RoomForMac tries again in a moment." : {
+
+    },
     "RoomForMac works best from your Applications folder. One click moves it there and opens it again." : {
 
     },
@@ -981,6 +1121,9 @@
 
     },
     "Scans can't see caches, logs and leftovers in protected folders, so they find less than there is." : {
+
+    },
+    "Score %lld" : {
 
     },
     "Search apps" : {
@@ -1091,6 +1234,9 @@
     "Status" : {
 
     },
+    "Status paused: %@" : {
+
+    },
     "Stays in place (needs administrator access)" : {
 
     },
@@ -1114,6 +1260,9 @@
 
     },
     "Stopping…" : {
+
+    },
+    "Swap %@" : {
 
     },
     "System" : {
@@ -1242,7 +1391,13 @@
     "Unlimited scans and previews" : {
 
     },
+    "Up %@" : {
+
+    },
     "Upgrade once for unlimited cleanup — every future version included." : {
+
+    },
+    "Usage unavailable" : {
 
     },
     "Use the vendor's uninstaller" : {
@@ -1324,7 +1479,13 @@
     "at least %@" : {
 
     },
+    "down" : {
+
+    },
     "found" : {
+
+    },
+    "free" : {
 
     },
     "freed" : {
@@ -1361,6 +1522,9 @@
 
     },
     "macOS wants you to approve this in Login Items." : {
+
+    },
+    "of %@" : {
 
     }
   },

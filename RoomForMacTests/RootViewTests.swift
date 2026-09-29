@@ -6,10 +6,12 @@ import Testing
 
 @Suite("Root view")
 struct RootViewTests {
+    private let temporary: TemporaryDefaults
     private let directory: TemporaryDirectory
     private let installation: EngineInstallation
 
     init() throws {
+        temporary = try TemporaryDefaults()
         directory = try TemporaryDirectory()
         let root = try EngineLayout.make(in: directory.url, version: [
             "mole_tag": "V1.56.0",
@@ -34,8 +36,6 @@ struct RootViewTests {
         #expect(AccessibilityID.sidebar == "sidebar")
         #expect(SidebarSection.allCases.map(AccessibilityID.sidebarRow)
             == ["sidebar.smartClean", "sidebar.uninstaller", "sidebar.status"])
-        #expect(SidebarSection.allCases.map(AccessibilityID.placeholder)
-            == ["placeholder.smartClean", "placeholder.uninstaller", "placeholder.status"])
         #expect(AccessibilityID.checkingEngine == "engine.checking")
         #expect(AccessibilityID.engineProblemCard == "engineProblem.card")
         #expect(AccessibilityID.engineProblemDetails == "engineProblem.details")
@@ -43,64 +43,43 @@ struct RootViewTests {
         #expect(AccessibilityID.engineProblemDownload == "engineProblem.download")
     }
 
-    /// Each placeholder draws its own section's card, not an empty frame, and no two
-    /// sections look alike, so a wrong title or symbol shows here.
+    /// Each section's detail is its own feature's view and no other one. The detail
+    /// holds only the view of the case it switched to, so a section wired to the wrong
+    /// feature, or back to a placeholder, fails here.
     @MainActor
-    @Test(arguments: [ColorScheme.light, .dark])
-    func placeholdersRender(colorScheme: ColorScheme) throws {
-        let sections = SidebarSection.allCases
-        let empty = try Self.render(Color.clear, in: colorScheme)
-        let references = try sections.map { try Self.render(SectionPlaceholderView(section: $0), in: colorScheme) }
-        var renders: [(section: SidebarSection, pixels: RenderedPixels)] = []
-        for (section, view) in Self.placeholders() {
-            let render = try Self.render(view, in: colorScheme)
-            let blank = render.differingPixels(from: empty)
-            #expect(blank >= Self.minimumDifference, "\(section): only \(blank) pixels differ from an empty frame")
-            let distances = references.map { render.differingPixels(from: $0) }
-            let closest = try #require(zip(sections, distances).min { $0.1 < $1.1 }).0
-            #expect(closest == section, "\(section)'s view draws the \(closest) card (pixels differing: \(distances))")
-            renders.append((section, render))
-        }
-        for first in renders.indices {
-            for second in renders.indices where second > first {
-                let (one, other) = (renders[first], renders[second])
-                let difference = one.pixels.differingPixels(from: other.pixels)
-                #expect(difference >= Self.minimumDifference, "\(one.section) and \(other.section): only \(difference) pixels differ")
-            }
-        }
+    @Test(arguments: SidebarSection.allCases)
+    func eachSectionShowsItsFeature(section: SidebarSection) {
+        let installation = installation
+        let model = AppModel(dependencies: AppDependencies(
+            preferences: temporary.preferences,
+            engineCheck: { .success(installation) },
+            openURL: { _ in }
+        ))
+        let detail = SectionDetail(section: section, model: model).body
+        #expect(ViewTypeSearch.contains(SmartCleanView.self, in: detail) == (section == .smartClean))
+        #expect(ViewTypeSearch.contains(UninstallerView.self, in: detail) == (section == .uninstaller))
+        #expect(ViewTypeSearch.contains(StatusView.self, in: detail) == (section == .status))
     }
+}
 
-    @MainActor
-    @Test func placeholdersFollowTheColorScheme() throws {
-        for (section, view) in Self.placeholders() {
-            let light = try Self.render(view, in: .light)
-            let dark = try Self.render(view, in: .dark)
-            let difference = light.differingPixels(from: dark)
-            #expect(difference >= Self.minimumDifference, "\(section): only \(difference) pixels differ between light and dark")
+/// Finds a view type inside a view value by walking its stored properties with
+/// `Mirror`: through `_ConditionalContent`'s storage, `ModifiedContent` and other
+/// structs, enums, tuples and optionals. It never enters a class instance, such as
+/// the app model, so it cannot wander through an object graph.
+private enum ViewTypeSearch {
+    static func contains<Target>(_ type: Target.Type, in value: Any, depth: Int = 8) -> Bool {
+        if value is Target {
+            return true
         }
-    }
-
-    /// Fewer differing pixels than this means two renders show the same thing. Two
-    /// renders of one placeholder differ in about a hundred pixels at most; another
-    /// section's card differs in several thousand, and the other appearance or an
-    /// empty frame in tens of thousands.
-    private static let minimumDifference = 1_000
-
-    /// The placeholders still shipping, each through its own view type. Smart Clean's went
-    /// with Plan 3 Task 12; Tasks 15 and 18 remove the other two.
-    @MainActor
-    private static func placeholders() -> [(SidebarSection, AnyView)] {
-        [
-            (.status, AnyView(StatusPlaceholderView())),
-        ]
-    }
-
-    /// Renders `view` in a 600 × 400 frame at scale 1.
-    @MainActor
-    private static func render(_ view: some View, in scheme: ColorScheme) throws -> RenderedPixels {
-        let image = try #require(RenderCheck.image(of: view, scheme: scheme, size: CGSize(width: 600, height: 400)))
-        #expect(image.width == 600)
-        #expect(image.height == 400)
-        return try RenderedPixels(image)
+        guard depth > 0 else {
+            return false
+        }
+        let mirror = Mirror(reflecting: value)
+        switch mirror.displayStyle {
+        case .struct, .enum, .tuple, .optional:
+            return mirror.children.contains { contains(type, in: $0.value, depth: depth - 1) }
+        default:
+            return false
+        }
     }
 }

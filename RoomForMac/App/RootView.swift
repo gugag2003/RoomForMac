@@ -74,7 +74,7 @@ private struct MainSplitView: View {
             .accessibilityIdentifier(AccessibilityID.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
-            detail
+            SectionDetail(section: model.selection, model: model)
         }
         .background {
             BackdropView(scene: model.selection.backdrop)
@@ -82,38 +82,22 @@ private struct MainSplitView: View {
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
+}
 
-    @ViewBuilder
-    private var detail: some View {
-        switch model.selection {
+/// The feature a sidebar section shows in the main window's detail column. Every
+/// section has its feature now, so Plan 2's placeholders are gone (Plan 3 Ruling 24).
+struct SectionDetail: View {
+    let section: SidebarSection
+    let model: AppModel
+
+    var body: some View {
+        switch section {
         case .smartClean:
             SmartCleanView(appModel: model)
         case .uninstaller:
             UninstallerView(appModel: model)
         case .status:
-            StatusPlaceholderView()
+            StatusView(appModel: model)
         }
-    }
-}
-
-/// The detail of a section whose feature has not shipped yet: its title and
-/// symbol on a glass card. Plan 3 replaces each use with the real feature.
-struct SectionPlaceholderView: View {
-    let section: SidebarSection
-
-    var body: some View {
-        GlassCard {
-            ContentUnavailableView(
-                section.title,
-                systemImage: section.systemImage,
-                description: Text("Coming in the next update.")
-            )
-            .foregroundStyle(Palette.text, Palette.textSecondary)
-        }
-        .frame(maxWidth: 420)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(AccessibilityID.placeholder(section))
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

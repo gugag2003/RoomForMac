@@ -214,8 +214,6 @@ struct UITestIdentifierTests {
         #expect(AccessibilityID.sidebar == "sidebar")
         #expect(SidebarSection.allCases.map(AccessibilityID.sidebarRow)
             == ["sidebar.smartClean", "sidebar.uninstaller", "sidebar.status"])
-        #expect(SidebarSection.allCases.map(AccessibilityID.placeholder)
-            == ["placeholder.smartClean", "placeholder.uninstaller", "placeholder.status"])
         #expect(AccessibilityID.engineProblemCard == "engineProblem.card")
         #expect(AccessibilityID.engineProblemCopy == "engineProblem.copy")
     }

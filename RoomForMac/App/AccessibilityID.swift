@@ -9,11 +9,6 @@ enum AccessibilityID {
         "sidebar.\(section.rawValue)"
     }
 
-    /// A section's placeholder detail: "placeholder.<rawValue>".
-    static func placeholder(_ section: SidebarSection) -> String {
-        "placeholder.\(section.rawValue)"
-    }
-
     // Engine problem card (Task 3)
     static let engineProblemCard = "engineProblem.card"
     static let engineProblemDetails = "engineProblem.details"
@@ -208,4 +203,20 @@ extension AccessibilityID {
     static let uninstallerOpenTrash = "uninstaller.openTrash"
     static let uninstallerOpenAppManagement = "uninstaller.openAppManagement"
     static let uninstallerDone = "uninstaller.done"
+}
+
+// MARK: - Status (Plan 3 Task 18)
+
+extension AccessibilityID {
+    /// A Status card: "status.card.<rawValue>".
+    static func statusCard(_ kind: StatusCardKind) -> String {
+        "status.card.\(kind.rawValue)"
+    }
+
+    /// The health line above the cards.
+    static let statusHealth = "status.health"
+    /// "Reading your Mac…", before the first reading.
+    static let statusWaiting = "status.waiting"
+    /// "Status paused: …", while the monitor retries the engine.
+    static let statusFailure = "status.failure"
 }
