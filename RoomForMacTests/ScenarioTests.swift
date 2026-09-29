@@ -330,7 +330,6 @@ struct ScenarioDependenciesTests {
     func theScenarioDefaultsAreInert(scenario: UITestScenario) {
         let dependencies = dependencies(scenario)
         #expect(dependencies.logStore.directory == nil)
-        #expect(dependencies.protectedPaths == ProtectedPaths.none)
         #expect(dependencies.hostAppPath.isEmpty)
         #expect(dependencies.removalGate is UnlimitedRemovalGate)
         #expect(dependencies.removalRecorder is NoOpRemovalRecorder)

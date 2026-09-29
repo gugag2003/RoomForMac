@@ -19,14 +19,14 @@ struct AppDependencies {
     /// Settings need its `disable()`, which `PermissionCenter` does not offer.
     var loginItem: LoginItemChecker? = nil
 
-    // Plan 3. Every default is inert (Ruling 25): no engine run, no protected
-    // paths, no log folder, an unlimited gate and reporters that keep nothing.
-    // Only `live()` connects the real ones.
+    // Plan 3. Every default is inert (Ruling 25): no engine run, no log folder,
+    // an unlimited gate and reporters that keep nothing. Only `live()` connects
+    // the real ones.
 
-    /// The engine services for a ready installation. The default never spawns.
+    /// The engine services for a ready installation. The default never spawns;
+    /// `live()` passes `liveServices()`, whose clean service protects RoomForMac's
+    /// own data (Ruling 13).
     var makeServices: @Sendable (EngineInstallation) -> EngineServices = { _ in .unavailable }
-    /// RoomForMac's own data, which Smart Clean never offers (Ruling 13).
-    var protectedPaths: ProtectedPaths = .none
     /// The running app bundle, which the Uninstaller never lists.
     var hostAppPath: String = ""
     var files: FileProbes = .live
@@ -73,7 +73,6 @@ struct AppDependencies {
             NotificationChecker.live(),
             loginItem,
         ]
-        let protectedPaths = ProtectedPaths.live()
         return AppDependencies(
             preferences: AppPreferences(defaults: defaults),
             engineCheck: { await EngineHealthCheck().run() },
@@ -81,10 +80,7 @@ struct AppDependencies {
             permissionCheckers: checkers,
             needsMoveStep: !bypass && AppLocation.current() != .installed,
             loginItem: loginItem,
-            makeServices: { installation in
-                EngineServices.live(installation: installation, protectedPaths: protectedPaths)
-            },
-            protectedPaths: protectedPaths,
+            makeServices: liveServices(),
             hostAppPath: Bundle.main.bundlePath,
             sensors: .live,
             logStore: EngineLogStore(directory: AppLogLocation.directory()),
@@ -96,6 +92,17 @@ struct AppDependencies {
             },
             runningApps: .live
         )
+    }
+
+    /// The real MoleEngine services `live()` connects. Smart Clean never previews or sends
+    /// `ownData`, RoomForMac's own data (Ruling 13); a test checks that the clean service
+    /// receives it (final review F17).
+    nonisolated static func liveServices(
+        ownData: ProtectedPaths = .live()
+    ) -> @Sendable (EngineInstallation) -> EngineServices {
+        { installation in
+            EngineServices.live(installation: installation, protectedPaths: ownData)
+        }
     }
 
     /// The Move to Applications checker, for the reason a move failed. It shares

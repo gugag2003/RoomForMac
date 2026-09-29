@@ -68,6 +68,31 @@ struct EngineServicesTests {
             #expect(services.status is StatusService)
         }
     }
+
+    /// Final review F17: the services `live()` connects give Smart Clean RoomForMac's own
+    /// data to protect (Ruling 13), so a refactor that drops it fails here.
+    @Test func theLiveCleanServiceProtectsRoomForMacsOwnData() throws {
+        let directory = try TemporaryDirectory()
+        try withExtendedLifetime(directory) {
+            let root = try EngineLayout.make(in: directory.url, version: EngineLayout.version(for: .expected))
+            let installation = try EngineInstallation(root: root)
+            let services = AppDependencies.liveServices()(installation)
+            let clean = try #require(services.clean as? CleanService)
+            #expect(clean.protectedPaths == ProtectedPaths.live())
+            #expect(clean.protectedPaths != ProtectedPaths.none)
+            let home = NSHomeDirectory()
+            #expect(clean.protectedPaths.protects("\(home)/Library/Application Support/RoomForMac/state.json"))
+            #expect(clean.protectedPaths.protects("\(home)/Library/Logs/RoomForMac"))
+            #expect(clean.protectedPaths.protects(Bundle.main.bundlePath))
+            #expect(!clean.protectedPaths.protects("\(home)/Library/Caches/com.example.alpha"))
+
+            let fake = ProtectedPaths.roomForMac(
+                home: "/Users/test", bundleIdentifier: "com.roomformac.RoomForMac", bundlePath: "/Applications/RoomForMac.app"
+            )
+            let given = try #require(AppDependencies.liveServices(ownData: fake)(installation).clean as? CleanService)
+            #expect(given.protectedPaths == fake)
+        }
+    }
 }
 
 @MainActor
@@ -92,7 +117,6 @@ struct AppModelServicesTests {
 
     @Test func theDefaultsAreInert() async {
         let dependencies = makeDependencies { .failure(.installationInvalid("unused")) }
-        #expect(dependencies.protectedPaths == ProtectedPaths.none)
         #expect(dependencies.hostAppPath.isEmpty)
         #expect(dependencies.logStore.directory == nil)
         #expect(dependencies.removalGate is UnlimitedRemovalGate)

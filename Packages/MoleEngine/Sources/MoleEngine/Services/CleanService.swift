@@ -33,7 +33,9 @@ public struct CleanTimeouts: Sendable, Equatable {
 public struct CleanService: CleanServicing {
     let run: EventRun
     let timeouts: CleanTimeouts
-    let protectedPaths: ProtectedPaths
+    /// The paths this service drops from previews and never sends. Public so a
+    /// host can check what it wired in.
+    public let protectedPaths: ProtectedPaths
 
     public init(
         installation: EngineInstallation,
