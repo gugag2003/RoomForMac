@@ -196,12 +196,17 @@ struct AppDelegateTests {
         model.statusMonitor?.stop()
     }
 
-    @Test func aDockClickWithNoWindowOpensIt() {
+    /// Final review F5: AppKit may count the menu-bar extra's status window as visible, so
+    /// a Dock click shows the main window whatever `hasVisibleWindows` says. On a window
+    /// already on screen that only brings it forward, as a Dock click does anyway.
+    @Test func aDockClickAlwaysShowsTheMainWindow() {
         let router = WindowRouter()
         let delegate = AppDelegate(model: model(), router: router)
 
         #expect(delegate.handleReopen(hasVisibleWindows: true))
-        #expect(router.pending == nil)
+        #expect(router.take() == WindowRouter.Request(section: nil, quickScan: false))
+        #expect(delegate.applicationShouldHandleReopen(NSApplication.shared, hasVisibleWindows: true))
+        #expect(router.take() == WindowRouter.Request(section: nil, quickScan: false))
         #expect(delegate.applicationShouldHandleReopen(NSApplication.shared, hasVisibleWindows: false))
         #expect(router.take() == WindowRouter.Request(section: nil, quickScan: false))
         #expect(delegate.handleReopen(hasVisibleWindows: false))

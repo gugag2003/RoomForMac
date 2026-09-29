@@ -114,12 +114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A Dock click with no window on screen opens the main window. SwiftUI does not reopen a
-    /// suppressed `Window` by itself (research §9, finding 7).
+    /// A Dock click shows the main window. SwiftUI does not reopen a suppressed `Window` by
+    /// itself (research §9, finding 7). `hasVisibleWindows` is ignored: AppKit may count the
+    /// menu-bar extra's status window, so it can be true with no app window on screen (final
+    /// review F5). On a main window already on screen, this only brings it forward, as a Dock
+    /// click does anyway.
     func handleReopen(hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows {
-            router.showMain()
-        }
+        router.showMain()
         return true
     }
 

@@ -331,7 +331,10 @@ only the menu-bar extra is shown with its panel closed, because the extra's labe
 numbers. A faster cadence applies at once; a pause waits 30 s. After 5 minutes paused the
 process is stopped, and the next demand starts a new one, so at most one runs at a time.
 `StatusMonitor` also supports a 10 s background cadence (resume, take one snapshot, suspend),
-which `StatusCadence.resolve` does not use in M2.
+which `StatusCadence.resolve` does not use in M2. RoomForMac reads free space itself
+(`volumeAvailableCapacityForImportantUsage`): when the Status section appears or the panel opens,
+every 60 s (with a few seconds' tolerance) while either of them shows it, and after every run; it
+never runs a timer for the menu-bar icon alone (Ruling 16 as revised in the final review).
 
 **Timing** (measured on macOS 27 with `--interval 2s`):
 - The first line arrives about 0.13 s after the start. It is a *fast* collect and is not
@@ -349,6 +352,8 @@ which `StatusCadence.resolve` does not use in M2.
   full collect in which every step succeeded refreshes that copy; until one has, every tick is a
   full collect.
 - After `SIGCONT`, the next line arrives within about 0.5 s, and its rates cover the paused time.
+  RoomForMac therefore keeps the rates of the first line after a pause longer than 2.5 s out of
+  its history, as it does for a new process's first line.
 - A collect step that fails writes `status: collect failed: …` to stderr; the snapshot is still
   written.
 

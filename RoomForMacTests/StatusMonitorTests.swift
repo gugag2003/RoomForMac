@@ -218,10 +218,14 @@ struct StatusMonitorTests {
         monitor.setAllowed(true)
         monitor.setDemand(.menuBarInserted, true)
         #expect(monitor.cadence == .paused)
-        await advance(.seconds(600), sleepers: 1)   // the free-space timer
+        await settle()
+        // The icon shows no value, so not even the free-space timer runs (final review F6).
+        #expect(clock.sleeperCount == 0)
+        await clock.advance(by: .seconds(600))
         await settle()
         #expect(monitor.cadence == .paused)
         #expect(source.openCount == 0)
+        #expect(sensors.freeSpaceReads.value == 0)
     }
 
     // MARK: Cadence
@@ -241,8 +245,8 @@ struct StatusMonitorTests {
         #expect(source.suspendCount == 0)
         #expect(source.stopCount == 0)
         #expect(!source.isSuspended)
-        // Live without the extra runs no timer at all.
-        #expect(clock.sleeperCount == 0)
+        // Live runs no timer but the free-space one while the panel shows the value.
+        #expect(clock.sleeperCount == 1)
     }
 
     @Test func backgroundSuspendsAfterEachSnapshotAndResumesEveryTenSeconds() async {
@@ -257,7 +261,7 @@ struct StatusMonitorTests {
         #expect(await until { source.suspendCount == 1 })
         #expect(source.isSuspended)
         #expect(source.resumeCount == 0)
-        await advance(.seconds(9), sleepers: 2)   // the free-space and background timers
+        await advance(.seconds(9), sleepers: 1)   // the background timer
         await settle()
         #expect(source.resumeCount == 0)
         await clock.advance(by: .seconds(1))
@@ -266,7 +270,7 @@ struct StatusMonitorTests {
 
         source.emit(Lines.full(10))
         #expect(await until { source.suspendCount == 2 })
-        await advance(.seconds(10), sleepers: 2)
+        await advance(.seconds(10), sleepers: 1)
         #expect(await until { source.resumeCount == 2 })
         source.emit(Lines.full(20))
         #expect(await until { source.suspendCount == 3 })
@@ -333,7 +337,7 @@ struct StatusMonitorTests {
         #expect(source.suspendCount == 0)
 
         monitor.setDemand(.menuBarPanel, false)
-        await advance(.seconds(14), sleepers: 2)   // the free-space timer and the grace
+        await advance(.seconds(14), sleepers: 1)   // the grace
         await settle()
         #expect(monitor.cadence == .live)
         await clock.advance(by: .seconds(1))
@@ -365,7 +369,7 @@ struct StatusMonitorTests {
         #expect(await until { monitor.history.count == 1 })
 
         monitor.setDemand(.menuBarPanel, false)
-        await advance(.seconds(13), sleepers: 2)   // the free-space timer and the grace
+        await advance(.seconds(13), sleepers: 1)   // the grace
         source.emit(Lines.full(13))
         #expect(await until { monitor.history.count == 2 })
         await clock.advance(by: .seconds(2))
@@ -375,7 +379,7 @@ struct StatusMonitorTests {
         #expect(source.suspendCount == 1)
         #expect(monitor.history.count == 2)
 
-        await advance(.seconds(10), sleepers: 2)   // the free-space and background timers
+        await advance(.seconds(10), sleepers: 1)   // the background timer
         #expect(await until { source.resumeCount == 1 })
         source.emit(Lines.full(25))
         #expect(await until { source.suspendCount == 2 })
@@ -440,6 +444,36 @@ struct StatusMonitorTests {
 
     // MARK: Samples
 
+    /// Final review F7: after a pause longer than `liveStaleness`, the resumed process's
+    /// first snapshot averages its disk and network rates over the pause, so they stay out
+    /// of the history; the next snapshot's count again.
+    @Test func aResumeAfterALongPauseAddsNoRatesFromItsFirstSnapshot() async throws {
+        let monitor = makeMonitor()
+        monitor.setAllowed(true)
+        monitor.setDemand(.menuBarPanel, true)
+        source.emit(Lines.fast(0))
+        #expect(await until { monitor.history.count == 1 })
+        source.emit(Lines.full(2))
+        #expect(await until { monitor.history.count == 2 })
+
+        monitor.setDemand(.menuBarPanel, false)
+        await advance(.seconds(30), sleepers: 1)   // the grace
+        #expect(await until { monitor.cadence == .paused })
+        await advance(.seconds(60), sleepers: 1)   // a minute into the idle shutdown
+        monitor.setDemand(.menuBarPanel, true)
+        #expect(source.resumeCount == 1)
+
+        source.emit(Lines.full(94))
+        #expect(await until { monitor.history.count == 3 })
+        let resumed = try #require(monitor.latest)
+        #expect(Fixture.hasRates(resumed))
+        #expect(monitor.history.last == StatusSample.make(reading: resumed, includeRates: false))
+
+        source.emit(Lines.full(96))
+        #expect(await until { monitor.history.count == 4 })
+        #expect(monitor.history.last == StatusSample.make(reading: try #require(monitor.latest), includeRates: true))
+    }
+
     @Test func aReopenedFeedAddsNoRatesFromItsFirstSnapshot() async throws {
         let monitor = makeMonitor()
         monitor.setAllowed(true)
@@ -490,7 +524,7 @@ struct StatusMonitorTests {
 
         // status-go starts again, and its first snapshot has no hardware, GPU or batteries yet.
         source.fail(.terminatedBySignal(9, stderrTail: ""))
-        await advance(.seconds(1), sleepers: 1)   // the retry
+        await advance(.seconds(1), sleepers: 2)   // the retry and the free-space timer
         #expect(await until { source.openCount == 2 })
         source.emit(Lines.fast(5))
         #expect(await until { monitor.history.count == 2 })
@@ -573,7 +607,7 @@ struct StatusMonitorTests {
         for seconds in [1, 2, 5, 15, 60, 60] as [Int64] {
             source.fail(crash)
             #expect(await until { monitor.failure == .engineStopped(ErrorPresentation(crash)) })
-            await advance(.seconds(seconds) - .milliseconds(1), sleepers: 1)   // the retry
+            await advance(.seconds(seconds) - .milliseconds(1), sleepers: 2)   // the retry and the free-space timer
             await settle()
             #expect(source.openCount == opened, "retried before \(seconds) s")
             await clock.advance(by: .milliseconds(1))
@@ -591,7 +625,7 @@ struct StatusMonitorTests {
         // An end without an error is a failure too.
         source.end()
         #expect(await until { monitor.failure == .engineStopped(ErrorPresentation(EngineError.cancelled)) })
-        await advance(.milliseconds(999), sleepers: 1)
+        await advance(.milliseconds(999), sleepers: 2)   // the retry and the free-space timer
         await settle()
         #expect(source.openCount == opened)
         await clock.advance(by: .milliseconds(1))
@@ -642,9 +676,17 @@ struct StatusMonitorTests {
         #expect(await until { monitor.freeSpace == Fixture.moreSpace })
     }
 
-    @Test func theFreeSpaceTimerRunsOnlyWhileTheExtraIsInTheMenuBar() async {
+    /// Revised Ruling 16 (final review F6): the timer runs only while something shows the
+    /// value, the Status section or the menu-bar panel, never for the icon alone.
+    @Test func theFreeSpaceTimerRunsOnlyWhileStatusIsShown() async {
         let monitor = makeMonitor()
         monitor.setDemand(.menuBarInserted, true)
+        await settle()
+        #expect(clock.sleeperCount == 0)
+        #expect(sensors.freeSpaceReads.value == 0)
+
+        // The Status section reads it as it appears, then every minute while it shows.
+        monitor.setDemand(.statusSection, true)
         #expect(await until { sensors.freeSpaceReads.value == 1 })
         await advance(.seconds(59), sleepers: 1)
         await settle()
@@ -653,15 +695,21 @@ struct StatusMonitorTests {
         #expect(await until { sensors.freeSpaceReads.value == 2 })
         await advance(.seconds(60), sleepers: 1)
         #expect(await until { sensors.freeSpaceReads.value == 3 })
+        // A few seconds' tolerance lets macOS coalesce the wake-ups.
+        #expect(clock.sleepTolerances.allSatisfy { $0 == .seconds(5) })
 
-        monitor.setDemand(.menuBarInserted, false)
+        monitor.setDemand(.statusSection, false)
+        #expect(await until { clock.sleeperCount == 0 })
         await clock.advance(by: .seconds(600))
         await settle()
         #expect(sensors.freeSpaceReads.value == 3)
 
-        // The Status section reads it once when it appears, with no timer.
-        monitor.setDemand(.statusSection, true)
+        // The open panel keeps it fresh too; it reads once itself as it opens.
+        monitor.setDemand(.menuBarPanel, true)
+        await advance(.seconds(60), sleepers: 1)
         #expect(await until { sensors.freeSpaceReads.value == 4 })
+        monitor.setDemand(.menuBarPanel, false)
+        await settle()
         await clock.advance(by: .seconds(600))
         await settle()
         #expect(sensors.freeSpaceReads.value == 4)
@@ -689,10 +737,11 @@ struct StatusMonitorTests {
         let monitor = makeMonitor()
         monitor.setAllowed(true)
         monitor.setDemand(.menuBarInserted, true)
+        monitor.setDemand(.statusSection, true)
         monitor.setDemand(.menuBarPanel, true)
         source.emit(Lines.fast(0))
         #expect(await until { monitor.history.count == 1 && sensors.freeSpaceReads.value == 1 })
-        // A pending pause, and the free-space timer.
+        // The free-space timer runs while the section shows.
         monitor.setDemand(.menuBarPanel, false)
 
         monitor.stop()
@@ -709,6 +758,24 @@ struct StatusMonitorTests {
         await settle()
         #expect(source.openCount == 1)
         #expect(sensors.freeSpaceReads.value == 1)
+    }
+
+    @Test func stopDropsAPendingPause() async {
+        let monitor = makeMonitor()
+        monitor.setAllowed(true)
+        monitor.setDemand(.menuBarPanel, true)
+        source.emit(Lines.fast(0))
+        #expect(await until { monitor.history.count == 1 })
+        // A pending pause.
+        monitor.setDemand(.menuBarPanel, false)
+        #expect(await until { clock.sleeperCount == 1 })
+
+        monitor.stop()
+        #expect(source.stopCount == 1)
+        await clock.advance(by: .seconds(3600))
+        await settle()
+        #expect(source.suspendCount == 0)
+        #expect(monitor.cadence == .paused)
     }
 }
 

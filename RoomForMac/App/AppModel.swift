@@ -188,9 +188,10 @@ final class AppModel {
         return link
     }
 
-    /// Keeps the monitor's `.menuBarInserted` demand equal to `menuBarInserted`; the demand
-    /// runs its free-space timer (Ruling 16). Called once `start()` has made the monitor, when
-    /// onboarding completes and when the switch changes.
+    /// Keeps the monitor's `.menuBarInserted` demand equal to `menuBarInserted`. In M2 the
+    /// demand alone runs nothing, neither the collector nor the free-space timer (Ruling 16 as
+    /// revised); it is where background polling would come back. Called once `start()` has
+    /// made the monitor, when onboarding completes and when the switch changes.
     private func syncMenuBarDemand() {
         guard let statusMonitor else {
             return

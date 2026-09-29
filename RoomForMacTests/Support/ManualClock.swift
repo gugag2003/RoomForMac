@@ -64,6 +64,7 @@ final class ManualClock: Clock, @unchecked Sendable {
         /// Sleeps and waits whose task was cancelled before they were registered.
         var cancelled: Set<UInt64> = []
         var resumed: [Instant] = []
+        var tolerances: [Swift.Duration?] = []
 
         mutating func makeID() -> UInt64 {
             nextID += 1
@@ -106,6 +107,11 @@ final class ManualClock: Clock, @unchecked Sendable {
         state.withLock { $0.sleepers.count }
     }
 
+    /// The tolerance of every sleep, in the order the sleeps began.
+    var sleepTolerances: [Swift.Duration?] {
+        state.withLock { $0.tolerances }
+    }
+
     /// The deadline of every sleeper `advance(by:)` has resumed, in the order it resumed
     /// them. Cancelled sleepers and sleeps that returned at once are not listed.
     var resumedDeadlines: [Instant] {
@@ -114,7 +120,10 @@ final class ManualClock: Clock, @unchecked Sendable {
 
     func sleep(until deadline: Instant, tolerance: Swift.Duration? = nil) async throws {
         try Task.checkCancellation()
-        let id = state.withLock { $0.makeID() }
+        let id = state.withLock { state in
+            state.tolerances.append(tolerance)
+            return state.makeID()
+        }
         defer { _ = state.withLock { $0.cancelled.remove(id) } }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in

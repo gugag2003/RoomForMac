@@ -17,9 +17,11 @@ import Observation
 ///   and a faster demand in the meantime cancels it.
 /// - No feed opens before `setAllowed(true)` (Plan 2 Ruling 10). `AppModel` allows
 ///   the monitor once onboarding is complete.
-/// - Free space is the app's own reading: every `freeSpaceInterval` while the extra
-///   is in the menu bar, once when the Status section appears, and on
-///   `refreshFreeSpace()`.
+/// - Free space is the app's own reading: once when the Status section appears,
+///   every `freeSpaceInterval` while the section or the menu-bar panel shows it,
+///   and on `refreshFreeSpace()` (the panel calls it as it opens, a run as it
+///   ends). The menu-bar icon alone shows no value, so it reads nothing (revised
+///   Ruling 16, final review F6).
 @MainActor
 @Observable
 final class StatusMonitor {
@@ -30,6 +32,8 @@ final class StatusMonitor {
         var idleShutdown: Duration = .seconds(300)
         var retryBackoff: [Duration] = [.seconds(1), .seconds(2), .seconds(5), .seconds(15), .seconds(60)]
         var freeSpaceInterval: Duration = .seconds(60)
+        /// How late the free-space timer may fire, so macOS can coalesce its wake-ups.
+        var freeSpaceTolerance: Duration = .seconds(5)
         var liveStaleness: Duration = .milliseconds(2500)
     }
 
@@ -77,8 +81,12 @@ final class StatusMonitor {
     /// Tells the open feed from closed ones, whose late output is ignored.
     @ObservationIgnored private var feedID = 0
     @ObservationIgnored private var feedSuspended = false
-    /// True until the open feed's first snapshot, whose rates cover almost no time.
+    /// True until the open feed's first snapshot, whose rates cover almost no time, and
+    /// again after a resume from a suspension longer than `liveStaleness`, whose first
+    /// rates average over the pause (final review F7).
     @ObservationIgnored private var awaitingFirstSnapshot = false
+    /// The time since the open feed was suspended, on `clock`; nil while it runs.
+    @ObservationIgnored private var sinceSuspended: (@Sendable () -> Duration)?
     /// The time since the open feed's last snapshot, on `clock`.
     @ObservationIgnored private var sinceLastSnapshot: (@Sendable () -> Duration)?
     /// The open feed's last `collected_at`.
@@ -127,14 +135,16 @@ final class StatusMonitor {
         }
         switch demand {
         case .menuBarInserted:
-            updateFreeSpaceTimer()
+            break
         case .statusSection:
             // The disk card shows the app's free space even with the extra off.
             if active {
                 refreshFreeSpace()
             }
+            updateFreeSpaceTimer()
         case .menuBarPanel:
-            break
+            // The panel reads it once itself as it opens (`MenuBarPanel`).
+            updateFreeSpaceTimer()
         }
         reconcile()
     }
@@ -249,7 +259,7 @@ final class StatusMonitor {
             // However old `latest` is, the next snapshot replaces it: nothing is
             // synthesized in between.
             openFeedIfWanted()
-            resumeFeed()
+            resumeFeed(discardingPausedRates: true)
         case .background:
             if let age = sinceLastSnapshot?(), age <= timing.liveStaleness {
                 // The open feed has just delivered: that snapshot is this cycle's.
@@ -328,14 +338,23 @@ final class StatusMonitor {
             return
         }
         feedSuspended = true
+        sinceSuspended = clock.statusStopwatch()
         feed.suspend()
     }
 
-    private func resumeFeed() {
+    /// Resumes the open feed. With `discardingPausedRates`, a suspension longer than
+    /// `liveStaleness` keeps the next snapshot's rates out of the history: `status-go`
+    /// divides its disk and network byte counts by the time since its last collect,
+    /// pause included, which would draw a false dip (final review F7).
+    private func resumeFeed(discardingPausedRates: Bool = false) {
         guard let feed, feedSuspended else {
             return
         }
+        if discardingPausedRates, let paused = sinceSuspended?(), paused > timing.liveStaleness {
+            awaitingFirstSnapshot = true
+        }
         feedSuspended = false
+        sinceSuspended = nil
         feed.resume()
     }
 
@@ -354,6 +373,7 @@ final class StatusMonitor {
         feedTask?.cancel()
         feedTask = nil
         feedSuspended = false
+        sinceSuspended = nil
         awaitingFirstSnapshot = false
         sinceLastSnapshot = nil
         lastCollectedAt = nil
@@ -402,7 +422,8 @@ final class StatusMonitor {
         }
         latest = reading
         // A new process's first snapshot has zero disk I/O and a network rate over
-        // about 0.1 s, so its rates stay out of the sparklines.
+        // about 0.1 s, and the first after a long pause averages over the pause, so
+        // their rates stay out of the sparklines.
         history.append(StatusSample.make(reading: reading, includeRates: !isFirst))
     }
 
@@ -444,10 +465,13 @@ final class StatusMonitor {
 
     // MARK: Free space
 
+    /// Runs the free-space timer while the Status section or the menu-bar panel shows
+    /// the value, and only then (final review F6). Each shows a fresh reading as it
+    /// appears, so the timer's first read comes one interval later.
     private func updateFreeSpaceTimer() {
-        if demands.contains(.menuBarInserted) {
+        if demands.contains(.statusSection) || demands.contains(.menuBarPanel) {
             if freeSpaceTimer == nil {
-                freeSpaceTick()
+                scheduleFreeSpaceTick()
             }
         } else {
             freeSpaceTimer?.cancel()
@@ -455,10 +479,10 @@ final class StatusMonitor {
         }
     }
 
-    private func freeSpaceTick() {
-        refreshFreeSpace()
-        freeSpaceTimer = schedule(after: timing.freeSpaceInterval) { monitor in
-            monitor.freeSpaceTick()
+    private func scheduleFreeSpaceTick() {
+        freeSpaceTimer = schedule(after: timing.freeSpaceInterval, tolerance: timing.freeSpaceTolerance) { monitor in
+            monitor.refreshFreeSpace()
+            monitor.scheduleFreeSpaceTick()
         }
     }
 
@@ -482,9 +506,10 @@ final class StatusMonitor {
     /// task is cancelled first or the monitor stopped. The deadline is taken now.
     private func schedule(
         after delay: Duration,
+        tolerance: Duration? = nil,
         _ fire: @escaping @MainActor @Sendable (StatusMonitor) -> Void
     ) -> Task<Void, Never> {
-        clock.statusTimer(after: delay) { [weak self] in
+        clock.statusTimer(after: delay, tolerance: tolerance) { [weak self] in
             guard let self, !self.isStopped else {
                 return
             }
@@ -498,12 +523,13 @@ extension Clock where Duration == Swift.Duration {
     /// first. The deadline is taken when this is called, not when the task starts.
     fileprivate func statusTimer(
         after delay: Swift.Duration,
+        tolerance: Swift.Duration?,
         _ fire: @escaping @MainActor @Sendable () -> Void
     ) -> Task<Void, Never> {
         let deadline = now.advanced(by: delay)
         return Task { @MainActor in
             do {
-                try await self.sleep(until: deadline, tolerance: nil)
+                try await self.sleep(until: deadline, tolerance: tolerance)
             } catch {
                 return
             }
