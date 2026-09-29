@@ -10,12 +10,30 @@ enum UIID {
     static let onboardingPrimary = "onboarding.primary"
     static let readyStartScan = "onboarding.ready.startScan"
 
+    // Smart Clean
+    static let smartCleanScan = "smartClean.scan"
+    static let smartCleanProgress = "smartClean.progress"
+    static let smartCleanResults = "smartClean.results"
+    static let smartCleanClean = "smartClean.clean"
+    static let smartCleanConfirm = "smartClean.confirm"
+    static let smartCleanSummary = "smartClean.summary"
+    static let smartCleanScanAgain = "smartClean.scanAgain"
+    static let smartCleanEmpty = "smartClean.empty"
+
+    // Uninstaller
+    static let uninstallerList = "uninstaller.list"
+    static let uninstallerDrawer = "uninstaller.drawer"
+    static let uninstallerConfirm = "uninstaller.confirm"
+    static let uninstallerSummary = "uninstaller.summary"
+    static let uninstallerOpenTrash = "uninstaller.openTrash"
+    static let uninstallerDone = "uninstaller.done"
+
+    // Status
+    static let statusHealth = "status.health"
+    static let statusWaiting = "status.waiting"
+
     static func sidebarRow(_ section: String) -> String {
         "sidebar.\(section)"
-    }
-
-    static func placeholder(_ section: String) -> String {
-        "placeholder.\(section)"
     }
 
     static func onboardingStep(_ step: String) -> String {
@@ -33,13 +51,41 @@ enum UIID {
     static func summaryChip(_ permission: String) -> String {
         "onboarding.summary.\(permission)"
     }
+
+    /// A Smart Clean results section, by the slug of its engine name.
+    static func smartCleanSection(_ slug: String) -> String {
+        "smartClean.section.\(slug)"
+    }
+
+    /// An Uninstaller row, by the app's bundle identifier.
+    static func uninstallerRow(_ bundleID: String) -> String {
+        "uninstaller.row.\(bundleID)"
+    }
+
+    /// A Status card, by the raw value of its kind.
+    static func statusCard(_ kind: String) -> String {
+        "status.card.\(kind)"
+    }
+}
+
+/// What the scripted Mac of the DEBUG scenarios holds (`ScenarioFixtures` in the app).
+/// `UITestIdentifierTests` pins every value against the fixtures.
+enum UIFixture {
+    /// The slugs of the three sections the scripted scan walks.
+    static let cleanSections = ["user-essentials", "browsers", "developer-tools"]
+    /// Atlas Maps, which runs with a helper and quits when asked.
+    static let runningAppBundleID = "com.example.atlasmaps"
+    /// Pixel Forge, a Homebrew cask, so it needs a password and cannot be selected.
+    static let caskBundleID = "com.example.pixelforge"
+    /// Every Status card: the scripted Mac has a battery, so all six show.
+    static let statusCards = ["cpu", "gpu", "memory", "disk", "network", "battery"]
 }
 
 /// How long the smoke tests wait, in seconds. Generous, because CI runners are slow.
 enum UIWait {
     /// From launch to the first screen. The app first locates its bundled engine.
     static let launch: TimeInterval = 20
-    /// For the app to react to a click.
+    /// For the app to react to a click. Every scripted run finishes well within it.
     static let reaction: TimeInterval = 10
 }
 
@@ -57,6 +103,14 @@ extension XCUIApplication {
     func element(_ identifier: String) -> XCUIElement {
         descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == %@", identifier))
+            .firstMatch
+    }
+
+    /// The first element of any type whose identifier is one of `identifiers`: for a screen
+    /// that may already have moved on to its next state by the time the test looks.
+    func anyElement(_ identifiers: [String]) -> XCUIElement {
+        descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier IN %@", identifiers))
             .firstMatch
     }
 }

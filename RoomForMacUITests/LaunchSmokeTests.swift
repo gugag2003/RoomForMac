@@ -1,6 +1,7 @@
 import XCTest
 
-/// The `onboarded` scenario: onboarding is complete, so the app opens on the sidebar.
+/// The `onboarded` scenario: onboarding is complete, so the app opens on the sidebar, with
+/// every feature running on the scripted Mac.
 ///
 /// UI tests need Automation Mode. Without it, xcodebuild fails with "Timed out while enabling
 /// automation mode", an environment limit rather than a code failure.
@@ -16,22 +17,31 @@ final class LaunchSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testEverySidebarRowShowsItsPlaceholder() throws {
+    func testEverySidebarRowShowsItsSection() throws {
         let app = XCUIApplication.launched(scenario: "onboarded")
         XCTAssertTrue(app.element(UIID.sidebar).waitForExistence(timeout: UIWait.launch))
-        XCTAssertTrue(app.element(UIID.placeholder("smartClean")).waitForExistence(timeout: UIWait.reaction))
+
+        // What each section shows first: Smart Clean's Scan button, the app list, and a Status
+        // card, or the note that waits for the first reading.
+        let smartClean = app.element(UIID.smartCleanScan)
+        let sections: [(row: String, shows: XCUIElement)] = [
+            ("uninstaller", app.element(UIID.uninstallerList)),
+            ("status", app.anyElement([UIID.statusWaiting, UIID.statusCard("cpu")])),
+            ("smartClean", smartClean),
+        ]
 
         // Smart Clean is selected at launch, so it comes last, after the other two.
-        var shown = "smartClean"
-        for section in ["uninstaller", "status", "smartClean"] {
-            app.element(UIID.sidebarRow(section)).click()
+        XCTAssertTrue(smartClean.waitForExistence(timeout: UIWait.reaction))
+        var shown = (row: "smartClean", shows: smartClean)
+        for section in sections {
+            app.element(UIID.sidebarRow(section.row)).click()
             XCTAssertTrue(
-                app.element(UIID.placeholder(section)).waitForExistence(timeout: UIWait.reaction),
-                "Clicking \(section) did not show its placeholder"
+                section.shows.waitForExistence(timeout: UIWait.reaction),
+                "Clicking \(section.row) did not show its section"
             )
             XCTAssertTrue(
-                app.element(UIID.placeholder(shown)).waitForNonExistence(timeout: UIWait.reaction),
-                "The \(shown) placeholder stayed after clicking \(section)"
+                shown.shows.waitForNonExistence(timeout: UIWait.reaction),
+                "The \(shown.row) section stayed after clicking \(section.row)"
             )
             shown = section
         }

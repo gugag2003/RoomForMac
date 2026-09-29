@@ -139,9 +139,15 @@ struct AppDependencies {
     /// - Every scenario gets scripted approvals, so neither onboarding nor Settings ever
     ///   reaches TCC, Apple events, notifications or login items. There is no Move step and
     ///   no login item to disable, and links are not opened.
+    /// - Every scenario runs on a fresh scripted Mac (`ScenarioWorld`). The engine services,
+    ///   file probes, running apps, Status sensors and Smart Clean's row labels all answer
+    ///   from it, so no engine command, `status-go`, IOKit read or real process is involved.
+    ///   Nothing is logged or notified, and the menu-bar extra stays off, so a UI test never
+    ///   adds an item to the menu bar or hides the window at launch.
     static func forScenario(_ scenario: UITestScenario, defaults: UserDefaults) -> AppDependencies {
         let preferences = AppPreferences(defaults: defaults)
         preferences.onboardingCompleted = scenario == .onboarded
+        preferences.menuBarEnabled = false
 
         let engineCheck: @Sendable () async -> Result<EngineInstallation, EngineProblem>
         switch scenario {
@@ -153,7 +159,7 @@ struct AppDependencies {
             let problem = EngineProblem.versionMismatch(expected: .expected, found: found)
             engineCheck = { .failure(problem) }
         }
-        return AppDependencies(
+        var dependencies = AppDependencies(
             preferences: preferences,
             engineCheck: engineCheck,
             openURL: { _ in },
@@ -161,6 +167,16 @@ struct AppDependencies {
             needsMoveStep: false,
             loginItem: nil
         )
+        let world = ScenarioWorld()
+        let services = ScenarioServices.make(world: world)
+        dependencies.makeServices = { _ in services }
+        dependencies.files = world.files
+        dependencies.runningApps = world.runningApps
+        dependencies.sensors = ScenarioServices.sensors
+        dependencies.cleanItemLabel = { item in ScenarioFixtures.label(for: item) }
+        dependencies.notifications = .none
+        dependencies.logStore = EngineLogStore(directory: nil)
+        return dependencies
     }
 
     /// New scripted checkers for every approval, in `live()`'s order. Each request grants at

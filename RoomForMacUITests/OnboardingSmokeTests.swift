@@ -2,7 +2,8 @@ import XCTest
 
 /// Walks the whole onboarding in the `onboarding` scenario: empty preferences, the bundled
 /// engine, and scripted approvals that grant the moment they are requested, so no system
-/// prompt ever appears.
+/// prompt ever appears. The first scan then runs on the scripted Mac, so no engine command
+/// starts either.
 ///
 /// UI tests need Automation Mode. Without it, xcodebuild fails with "Timed out while enabling
 /// automation mode", an environment limit rather than a code failure.
@@ -23,7 +24,7 @@ final class OnboardingSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testOnboardingWalksEveryStepToSmartClean() throws {
+    func testOnboardingWalksEveryStepToTheFirstScan() throws {
         let app = XCUIApplication.launched(scenario: "onboarding")
 
         for (step, approvals) in walk {
@@ -65,6 +66,15 @@ final class OnboardingSmokeTests: XCTestCase {
         startScan.click()
 
         XCTAssertTrue(app.element(UIID.sidebar).waitForExistence(timeout: UIWait.reaction))
-        XCTAssertTrue(app.element(UIID.placeholder("smartClean")).waitForExistence(timeout: UIWait.reaction))
+        // The first scan starts at once. The scripted scan takes about a second, so Smart Clean
+        // may already show its results when the test first looks.
+        XCTAssertTrue(
+            app.anyElement([UIID.smartCleanProgress, UIID.smartCleanResults]).waitForExistence(timeout: UIWait.reaction),
+            "Smart Clean did not start the first scan"
+        )
+        XCTAssertTrue(
+            app.element(UIID.smartCleanResults).waitForExistence(timeout: UIWait.reaction),
+            "The first scan showed no results"
+        )
     }
 }
