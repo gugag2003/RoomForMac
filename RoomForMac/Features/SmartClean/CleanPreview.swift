@@ -169,6 +169,17 @@ struct CleanPreview: Equatable, Sendable {
 
     var selectedHasUnknownSizes: Bool { planItems.contains { !$0.sizeKnown } }
 
+    /// What **Select all** would clean, whatever is selected now: `totalBytes` without the
+    /// rows that need a password, which M2 can never clean (Ruling 11). The scan report, its
+    /// notification and the results hero use it (final review F10).
+    var cleanableBytes: Int64 { everythingSelectable.selectedBytes }
+
+    /// How many paths **Select all** would send to the engine.
+    var cleanableCount: Int { everythingSelectable.selectedCount }
+
+    /// Whether a size **Select all** would clean is unknown, so `cleanableBytes` is a floor.
+    var cleanableHasUnknownSizes: Bool { everythingSelectable.selectedHasUnknownSizes }
+
     func item(_ id: CleanItemID) -> PreviewItem? { rows[id] }
 
     /// Whether the row's checkbox shows checked: it was chosen, or a chosen ancestor covers it.
@@ -292,6 +303,13 @@ struct CleanPreview: Equatable, Sendable {
     }
 
     // MARK: - Internals
+
+    /// This preview with every selectable row chosen.
+    private var everythingSelectable: CleanPreview {
+        var all = self
+        all.selectAll()
+        return all
+    }
 
     /// The chosen rows, in display order.
     private var planItems: [CleanItem] {

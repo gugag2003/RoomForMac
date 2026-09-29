@@ -35,8 +35,9 @@ struct CleanResultsView: View {
     }
 
     /// The Clean button's title: "Clean 4.2 GB", "Clean at least 4.2 GB" when a selected size
-    /// is unknown, "Select items to clean" with nothing selected, and the other run's wait
-    /// message while it holds the destructive-run lease (Ruling 12).
+    /// is unknown, "Clean 3 items" when every selected size is unknown (final review F11),
+    /// "Select items to clean" with nothing selected, and the other run's wait message while
+    /// it holds the destructive-run lease (Ruling 12).
     static func cleanTitle(
         selectedCount: Int,
         selectedBytes: Int64,
@@ -49,8 +50,32 @@ struct CleanResultsView: View {
         guard selectedCount > 0 else {
             return "Select items to clean"
         }
+        if hasUnknownSizes && selectedBytes == 0 {
+            return "Clean \(selectedCount) items"
+        }
         let size = ByteText.string(selectedBytes)
         return hasUnknownSizes ? "Clean at least \(size)" : "Clean \(size)"
+    }
+
+    /// The hero numeral: what **Select all** can clean (`cleanableBytes`), or "Size unknown"
+    /// when every such size is unknown (final review F10, F11).
+    static func heroText(_ preview: CleanPreview) -> String {
+        preview.cleanableHasUnknownSizes && preview.cleanableBytes == 0
+            ? String(localized: "Size unknown")
+            : ByteText.string(preview.cleanableBytes)
+    }
+
+    /// "Found 52 GB, including items that need your password" when the scan found more than
+    /// can be cleaned; nil otherwise (final review F10).
+    static func foundText(_ preview: CleanPreview) -> LocalizedStringResource? {
+        guard preview.totalBytes > preview.cleanableBytes else { return nil }
+        return "Found \(ByteText.string(preview.totalBytes)), including items that need your password"
+    }
+
+    /// A section's size: "4.2 GB", "at least 4.2 GB", or "Size unknown" when every size it
+    /// counts is unknown (final review F11).
+    static func sectionSizeText(_ section: PreviewSection) -> String {
+        ByteText.total(section.bytes, hasUnknownSizes: section.hasUnknownSizes) ?? String(localized: "Size unknown")
     }
 
     /// Clean needs a selection, and no other destructive run in progress.
@@ -58,10 +83,10 @@ struct CleanResultsView: View {
         selectedCount > 0 && blockedBy == nil
     }
 
-    /// True when a section's total leaves out a size the engine could not measure, so the
-    /// found total is a lower bound.
+    /// True when the cleanable total leaves out a size the engine could not measure, so the
+    /// hero is a lower bound.
     static func hasUnknownSizes(_ preview: CleanPreview) -> Bool {
-        preview.sections.contains { $0.hasUnknownSizes }
+        preview.cleanableHasUnknownSizes
     }
 
     var body: some View {
@@ -104,14 +129,19 @@ struct CleanResultsView: View {
     private var header: some View {
         HStack(alignment: .bottom, spacing: 24) {
             VStack(alignment: .leading, spacing: 4) {
-                if Self.hasUnknownSizes(preview) {
+                if Self.hasUnknownSizes(preview) && preview.cleanableBytes > 0 {
                     Text("At least")
                         .font(.headline)
                         .foregroundStyle(Palette.textSecondary)
                 }
-                Text(verbatim: ByteText.string(preview.totalBytes))
+                Text(verbatim: Self.heroText(preview))
                     .font(Typography.hero())
                     .foregroundStyle(Palette.grass)
+                if let found = Self.foundText(preview) {
+                    Text(found)
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                }
                 Text("\(preview.selectedCount) selected")
                     .foregroundStyle(Palette.textSecondary)
             }
@@ -253,7 +283,7 @@ private struct SectionCard: View {
     var body: some View {
         let state = preview.sectionSelection(section.id)
         let selectable = section.items.contains { $0.access == .selectable }
-        let size = section.hasUnknownSizes ? ByteText.atLeast(section.bytes) : ByteText.string(section.bytes)
+        let size = CleanResultsView.sectionSizeText(section)
         GlassCard(cornerRadius: 16, padding: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
@@ -265,6 +295,7 @@ private struct SectionCard: View {
                             Image(systemName: CleanSectionCatalog.systemImage(section.id))
                                 .foregroundStyle(Palette.action)
                                 .frame(width: 22)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(CleanSectionCatalog.title(section.id))
                                     .font(.headline)

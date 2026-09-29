@@ -242,6 +242,49 @@ struct SmartCleanViewLogicTests {
         #expect(!CleanResultsView.canClean(selectedCount: 3, blockedBy: .uninstaller))
     }
 
+    /// Final review F11: a total made only of unknown sizes never reads "at least Zero KB".
+    @Test func aTotalOfOnlyUnknownSizesSaysSoInsteadOfZero() throws {
+        #expect(ByteText.total(0, hasUnknownSizes: true) == nil)
+        #expect(ByteText.total(0, hasUnknownSizes: false) == ByteText.string(0))
+        #expect(ByteText.total(4_200_000_000, hasUnknownSizes: true) == ByteText.atLeast(4_200_000_000))
+        #expect(ByteText.total(4_200_000_000, hasUnknownSizes: false) == ByteText.string(4_200_000_000))
+
+        #expect(String(localized: CleanResultsView.cleanTitle(
+            selectedCount: 2, selectedBytes: 0, hasUnknownSizes: true, blockedBy: nil
+        )) == "Clean 2 items")
+        #expect(String(localized: CleanResultsView.cleanTitle(
+            selectedCount: 1, selectedBytes: 0, hasUnknownSizes: true, blockedBy: nil
+        )) == "Clean 1 item")
+
+        let unknownOnly = Fixture.preview([Fixture.editorCache])
+        let section = try #require(unknownOnly.sections.first)
+        #expect(CleanResultsView.sectionSizeText(section) == "Size unknown")
+        #expect(CleanResultsView.heroText(unknownOnly) == "Size unknown")
+        let plan = unknownOnly.makePlan(id: Fixture.runID, now: Fixture.date)
+        #expect(CleanConfirmSheet.totalText(plan) == "Size unknown")
+
+        let measured = Fixture.measuredPreview
+        #expect(CleanResultsView.sectionSizeText(try #require(measured.sections.first))
+            == ByteText.string(try #require(measured.sections.first).bytes))
+    }
+
+    /// Final review F10: the hero shows what can be cleaned; rows that need a password are
+    /// only in the found total beside it.
+    @Test func theHeroShowsWhatCanBeCleaned() {
+        let preview = Fixture.preview()
+        #expect(CleanResultsView.heroText(preview) == ByteText.string(preview.cleanableBytes))
+        #expect(preview.cleanableBytes == preview.totalBytes - Fixture.backup.sizeBytes)
+        #expect(CleanResultsView.foundText(preview).map { String(localized: $0) }
+            == "Found \(ByteText.string(preview.totalBytes)), including items that need your password")
+        #expect(CleanResultsView.foundText(Fixture.measuredPreview) == nil)
+    }
+
+    /// Final review F14: scanning stays free while the Uninstaller runs; only cleaning waits.
+    @Test func theHeroSaysScanningStaysFreeDuringAnUninstall() {
+        #expect(String(localized: SmartCleanHero.blockedText(.uninstaller))
+            == "You can scan now. Cleaning can start once the uninstall finishes.")
+    }
+
     @Test func theGateNoticeNamesTheRefusal() {
         func english(_ resource: LocalizedStringResource?) -> String? {
             resource.map { String(localized: $0) }
@@ -349,6 +392,11 @@ struct SmartCleanViewLogicTests {
         #expect(String(localized: SmartCleanText.note(.scanStopped)) == "Scan stopped. Nothing was removed.")
         #expect(String(localized: SmartCleanText.note(.recheckStopped))
             == "Size check stopped. Nothing was removed, and the sizes are from your last scan.")
+        // Final review F15.
+        #expect(String(localized: SmartCleanText.note(.itemsGone(count: 1)))
+            == "1 item you selected is gone, so it was taken out of the selection.")
+        #expect(String(localized: SmartCleanText.note(.itemsGone(count: 3)))
+            == "3 items you selected are gone, so they were taken out of the selection.")
     }
 
     @Test func cleaningRowsSayWhereEachSectionIs() {

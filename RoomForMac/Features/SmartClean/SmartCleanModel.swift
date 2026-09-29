@@ -31,6 +31,10 @@ enum SmartCleanNote: Sendable, Equatable {
     case scanStopped
     /// The size recheck before a clean was stopped; the preview's sizes may be out of date.
     case recheckStopped
+    /// The size recheck no longer found `count` of the selected items, so they left the
+    /// selection (final review F15). It stays through the confirmation and after it is
+    /// cancelled.
+    case itemsGone(count: Int)
 }
 
 enum SmartCleanFailure: Sendable, Equatable {
@@ -65,7 +69,8 @@ final class SmartCleanModel {
     /// The last gate decision that was not `.allow`. A selection change, an allowed request
     /// and a new scan clear it.
     private(set) var gateDecision: RemovalGateDecision?
-    /// `.recheckStopped` while `results` follows a stopped size recheck; nil otherwise.
+    /// `.recheckStopped` while `results` follows a stopped size recheck, `.itemsGone` while
+    /// `results` or `confirming` follows a recheck that dropped selected items; nil otherwise.
     private(set) var resultsNote: SmartCleanNote?
     /// What the scan ring is weighted by: the stored timings, reloaded when a scan starts
     /// and updated when one completes.
@@ -262,7 +267,7 @@ final class SmartCleanModel {
         guard case .results(let latest) = phase, latest == current else { return }
         if decision == .allow {
             gateDecision = nil
-            show(.confirming(current, plan))
+            show(.confirming(current, plan), note: resultsNote)
         } else {
             gateDecision = decision
         }
@@ -270,7 +275,7 @@ final class SmartCleanModel {
 
     func cancelConfirmation() {
         guard case .confirming(let preview, _) = phase else { return }
-        show(.results(preview))
+        show(.results(preview), note: resultsNote)
     }
 
     /// Confirmed in the sheet: take the lease, then remove exactly the plan's items.
@@ -418,9 +423,9 @@ final class SmartCleanModel {
         switch completion {
         case .completed:
             var updated = preview
-            _ = updated.refresh(with: output.items)
+            let dropped = updated.refresh(with: output.items)
             lastRecheck = Recheck(at: dependencies.now(), ids: Set(plan.items.map { CleanItemID($0) }))
-            show(.results(updated))
+            show(.results(updated), note: dropped.isEmpty ? nil : .itemsGone(count: dropped.count))
             refreshed = control.isStopRequested ? nil : updated
         case .cancelled:
             show(.results(preview), note: .recheckStopped)
@@ -514,12 +519,12 @@ final class SmartCleanModel {
     }
 
     private func scanReport(for preview: CleanPreview, startedAt: Date, endedAt: Date) -> ScanReport {
+        // Only what can be cleaned: rows that need a password never can in M2, so the
+        // notification never promises them (final review F10).
         ScanReport(
             feature: .smartClean,
-            foundBytes: preview.totalBytes,
-            itemCount: preview.sections.reduce(0) { count, section in
-                count + section.items.filter { $0.coveredBy == nil }.count
-            },
+            foundBytes: preview.cleanableBytes,
+            itemCount: preview.cleanableCount,
             duration: .seconds(max(0, endedAt.timeIntervalSince(startedAt))),
             partial: preview.partial || preview.stoppedEarly
         )

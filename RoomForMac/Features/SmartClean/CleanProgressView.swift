@@ -119,12 +119,15 @@ private struct SectionRunRow: View {
         GlassCard(cornerRadius: 16, padding: 14) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
+                    // Decorative: the state text says the same (final review F13).
                     Image(systemName: statusSymbol)
                         .foregroundStyle(statusTint)
                         .frame(width: 20)
+                        .accessibilityHidden(true)
                     Image(systemName: CleanSectionCatalog.systemImage(section))
                         .foregroundStyle(Palette.action)
                         .frame(width: 20)
+                        .accessibilityHidden(true)
                     Text(CleanSectionCatalog.title(section))
                         .font(.headline)
                         .foregroundStyle(Palette.text)
@@ -146,6 +149,7 @@ private struct SectionRunRow: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: "exclamationmark.circle")
                             .foregroundStyle(Palette.grass)
+                            .accessibilityHidden(true)
                         Text(verbatim: entry.label)
                             .foregroundStyle(Palette.text)
                             .lineLimit(1)

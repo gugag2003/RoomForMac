@@ -25,9 +25,10 @@ struct CleanConfirmSheet: View {
         self.cancel = cancel
     }
 
-    /// "4.2 GB", or "at least 4.2 GB" when a size in the plan is unknown.
+    /// "4.2 GB", "at least 4.2 GB" when a size in the plan is unknown, or "Size unknown" when
+    /// every size is (final review F11); the item count follows it.
     static func totalText(_ plan: CleanPlan) -> String {
-        plan.hasUnknownSizes ? ByteText.atLeast(plan.bytes) : ByteText.string(plan.bytes)
+        ByteText.total(plan.bytes, hasUnknownSizes: plan.hasUnknownSizes) ?? String(localized: "Size unknown")
     }
 
     /// The engine paths per section, in the plan's section order. They add up to
@@ -71,6 +72,7 @@ struct CleanConfirmSheet: View {
                         Image(systemName: CleanSectionCatalog.systemImage(entry.section))
                             .foregroundStyle(Palette.action)
                             .frame(width: 20)
+                            .accessibilityHidden(true)
                         Text(CleanSectionCatalog.title(entry.section))
                             .foregroundStyle(Palette.text)
                         Spacer(minLength: 12)

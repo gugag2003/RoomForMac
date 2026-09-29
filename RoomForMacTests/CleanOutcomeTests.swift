@@ -57,7 +57,8 @@ struct CleanOutcomeTests {
     @Test func theCopyReadsAsWritten() {
         let whitelist = CleanOutcomeCopy.copy(for: .skipped(detail: "whitelist"))
         #expect(english(whitelist.title) == "Kept: on your protected list")
-        #expect(english(whitelist.explanation) == "It matches a rule in your protected-files list (~/.config/mole/whitelist).")
+        // Final review F16: no engine config path in the copy.
+        #expect(english(whitelist.explanation) == "It matches a rule in your protected-files list.")
         let denied = CleanOutcomeCopy.copy(for: .failed(detail: "permission denied"))
         #expect(english(denied.title) == "Couldn't remove: macOS blocked it")
         #expect(english(denied.explanation)
@@ -74,6 +75,9 @@ struct CleanOutcomeTests {
             == "It was in use or protected when cleaning reached it. Quit apps you aren't using and clean again.")
         #expect(english(CleanOutcomeCopy.copy(for: .alreadyGone).title) == "Already gone")
         #expect(english(CleanOutcomeCopy.copy(for: .notReached).title) == "Not cleaned: cleaning stopped first")
+        // Final review F9: an item the run was working on when it ended may be partly gone.
+        #expect(english(CleanOutcomeCopy.copy(for: .interrupted).title) == "Stopped while cleaning: part of it may be gone")
+        #expect(CleanOutcomeCopy.copy(for: .interrupted).explanation == nil)
     }
 
     @Test func anUnknownDetailIsShownAsData() {
@@ -95,7 +99,7 @@ struct CleanOutcomeTests {
     @Test func onlyPermissionDeniedSuggestsFullDiskAccess() {
         let outcomes: [ItemOutcome] = [
             .removed(bytes: 1), .skipped(detail: "protected"), .failed(detail: "error"),
-            .failed(detail: "tmutil delete"), .leftInPlace, .alreadyGone, .notReached,
+            .failed(detail: "tmutil delete"), .leftInPlace, .alreadyGone, .notReached, .interrupted,
         ]
         #expect(outcomes.allSatisfy { !CleanOutcomeCopy.copy(for: $0).suggestsFullDiskAccess })
         #expect(CleanOutcomeCopy.copy(for: .failed(detail: "permission denied")).suggestsFullDiskAccess)
@@ -104,7 +108,7 @@ struct CleanOutcomeTests {
 
     @Test func onlyRemovedIsRemoved() {
         #expect(ItemOutcome.removed(bytes: 0).isRemoved)
-        let others: [ItemOutcome] = [.skipped(detail: ""), .failed(detail: ""), .leftInPlace, .alreadyGone, .notReached]
+        let others: [ItemOutcome] = [.skipped(detail: ""), .failed(detail: ""), .leftInPlace, .alreadyGone, .notReached, .interrupted]
         #expect(others.allSatisfy { !$0.isRemoved })
     }
 
@@ -113,7 +117,7 @@ struct CleanOutcomeTests {
                      expected: "Freed \(ByteText.string(freed)) · 2 items removed"),
         CleanHeadlineCase(completion: .completed(summary(exit: 0)), removedCount: 0, expected: "Nothing was removed."),
         CleanHeadlineCase(completion: .cancelled(nil), removedCount: 1,
-                     expected: "Cleaning stopped. Freed \(ByteText.string(freed)) before stopping; nothing else was touched."),
+                     expected: "Cleaning stopped. Freed \(ByteText.string(freed)) before stopping; items it hadn't reached were left alone."),
         CleanHeadlineCase(completion: .cancelled(summary(exit: 143)), removedCount: 0,
                      expected: "Cleaning stopped before anything was removed."),
         CleanHeadlineCase(completion: .stoppedEarly(summary(exit: 124), .nonZeroExit(code: 124, stderrTail: "")), removedCount: 1,

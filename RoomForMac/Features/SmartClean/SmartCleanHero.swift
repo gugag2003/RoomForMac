@@ -42,6 +42,16 @@ struct SmartCleanHero: View {
         !state.isGranted && state != .notDetermined
     }
 
+    /// The line under the Scan button while another feature holds the destructive-run lease.
+    /// Scanning never takes the lease, so the hero says scanning is free and only cleaning
+    /// waits (final review F14). Smart Clean's own lease never blocks its hero.
+    static func blockedText(_ kind: DestructiveRunKind) -> LocalizedStringResource {
+        switch kind {
+        case .uninstaller: "You can scan now. Cleaning can start once the uninstall finishes."
+        case .smartClean: kind.waitMessage
+        }
+    }
+
     var body: some View {
         VStack(spacing: 24) {
             VStack(spacing: 8) {
@@ -66,7 +76,7 @@ struct SmartCleanHero: View {
 
             if let blockedBy {
                 Label {
-                    Text(blockedBy.waitMessage)
+                    Text(Self.blockedText(blockedBy))
                 } icon: {
                     Image(systemName: "hourglass")
                 }

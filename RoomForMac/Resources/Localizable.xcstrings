@@ -155,6 +155,28 @@
         }
       }
     },
+    "%lld items you selected are gone, so they were taken out of the selection." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item you selected is gone, so it was taken out of the selection."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items you selected are gone, so they were taken out of the selection."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld of %lld" : {
       "localizations" : {
         "en" : {
@@ -369,6 +391,28 @@
     "Clean %@" : {
 
     },
+    "Clean %lld items" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Clean %lld item"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Clean %lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Clean at least %@" : {
 
     },
@@ -402,7 +446,7 @@
     "Cleaning stopped early because a step took too long." : {
 
     },
-    "Cleaning stopped. Freed %@ before stopping; nothing else was touched." : {
+    "Cleaning stopped. Freed %@ before stopping; items it hadn't reached were left alone." : {
 
     },
     "Cleaning took too long and was stopped." : {
@@ -595,6 +639,9 @@
     "Force Quit" : {
 
     },
+    "Found %@, including items that need your password" : {
+
+    },
     "Found: %@" : {
 
     },
@@ -712,7 +759,7 @@
     "It didn't quit, so it was left alone. Quit it, then try again." : {
 
     },
-    "It matches a rule in your protected-files list (~/.config/mole/whitelist)." : {
+    "It matches a rule in your protected-files list." : {
 
     },
     "It stayed where it was." : {
@@ -794,6 +841,9 @@
 
     },
     "Logs" : {
+
+    },
+    "Logs · %@" : {
 
     },
     "Looks for files Smart Clean can remove. Nothing is removed until you confirm." : {
@@ -1400,6 +1450,9 @@
     "Stopped" : {
 
     },
+    "Stopped while cleaning: part of it may be gone" : {
+
+    },
     "Stopping…" : {
 
     },
@@ -1514,6 +1567,9 @@
     "Trash" : {
 
     },
+    "Trash · %@" : {
+
+    },
     "Try again" : {
 
     },
@@ -1606,6 +1662,9 @@
 
     },
     "Xcode's simulator service didn't answer. Open Xcode once, then try again." : {
+
+    },
+    "You can scan now. Cleaning can start once the uninstall finishes." : {
 
     },
     "Your Mac is running hot" : {

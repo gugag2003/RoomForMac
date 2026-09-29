@@ -77,8 +77,9 @@ struct CleanProgress: Sendable, Equatable {
     ///
     /// Items without an outcome: after a `.completed` run, or in a section that finished, they
     /// are `.leftInPlace` or `.alreadyGone`. In the section that was running when an unfinished
-    /// run ended they are `.notReached`, or `.alreadyGone` when the path is missing. In a section
-    /// that never started they are `.notReached`.
+    /// run ended they are `.interrupted`, present or not: the run may have removed them, whole
+    /// or in part, before it could say so (final review F9). In a section that never started
+    /// they are `.notReached`.
     func report(completion: RunCompletion, diagnostics: RunDiagnostics?, fileExists: (String) -> Bool) -> CleanReport {
         let ranToTheEnd: Bool
         if case .completed = completion {
@@ -93,7 +94,7 @@ struct CleanProgress: Sendable, Equatable {
             if ranToTheEnd || finishedSections.contains(item.section) {
                 final[id] = fileExists(id.path) ? .leftInPlace : .alreadyGone
             } else if item.section == current {
-                final[id] = fileExists(id.path) ? .notReached : .alreadyGone
+                final[id] = .interrupted
             } else {
                 final[id] = .notReached
             }

@@ -15,6 +15,11 @@ enum ItemOutcome: Sendable, Equatable {
     case alreadyGone
     /// The run ended before cleaning reached it.
     case notReached
+    /// The run ended, without a result for it, while its section was being cleaned. A stop
+    /// ends the whole process group, so a removal in progress may have been cut off partway,
+    /// or finished before its result was written: part or all of it may be gone. It is not
+    /// counted (final review F9).
+    case interrupted
 
     var isRemoved: Bool {
         if case .removed = self { true } else { false }
@@ -52,6 +57,8 @@ enum CleanOutcomeCopy {
             copy("Already gone", "Something else removed it first. It isn't counted.")
         case .notReached:
             copy("Not cleaned: cleaning stopped first")
+        case .interrupted:
+            copy("Stopped while cleaning: part of it may be gone")
         }
     }
 
@@ -91,7 +98,9 @@ enum CleanOutcomeCopy {
     private static func skippedCopy(_ detail: String) -> OutcomeCopy {
         switch detail {
         case "whitelist":
-            copy("Kept: on your protected list", "It matches a rule in your protected-files list (~/.config/mole/whitelist).")
+            // The engine's config path stays out of the copy (final review F16); the log has
+            // the engine's own "whitelist" detail.
+            copy("Kept: on your protected list", "It matches a rule in your protected-files list.")
         case "protected":
             copy("Kept: protected", "Safety rules keep this item.")
         case "compiled model cache":
@@ -187,7 +196,9 @@ enum CleanRunCopy {
             return "Nothing was removed."
         case .cancelled:
             if removedCount > 0 {
-                return "Cleaning stopped. Freed \(ByteText.string(freedBytes)) before stopping; nothing else was touched."
+                // A stop can cut off the removal in progress, so the copy promises nothing
+                // about it, only about the items cleaning had not reached (final review F9).
+                return "Cleaning stopped. Freed \(ByteText.string(freedBytes)) before stopping; items it hadn't reached were left alone."
             }
             return "Cleaning stopped before anything was removed."
         case .stoppedEarly(let summary, _):

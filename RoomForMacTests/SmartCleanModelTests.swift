@@ -284,6 +284,23 @@ struct SmartCleanModelTests {
         )])
     }
 
+    /// Final review F10: rows that need a password can never be cleaned in M2, so the scan
+    /// report (and its notification) counts only what Select all can reach.
+    @Test func theScanReportCountsOnlyWhatCanBeCleaned() async throws {
+        let backup = CleanItem(
+            section: "Time Machine", path: "/Volumes/Backup/Backups.backupdb/Mac/2026-01-01-000000.inProgress",
+            sizeBytes: 48_000_000_000, sizeKnown: true
+        )
+        let items = [Fixture.alpha, Fixture.google, Fixture.derived, backup]
+        let harness = makeHarness(ScriptedCleanService(scan: Fixture.dryRun(items)))
+        let preview = try await scanToResults(harness)
+        #expect(preview.totalBytes == 4_591_616 + 48_000_000_000)
+
+        let report = try #require(harness.reporter.scans.first)
+        #expect(report.foundBytes == 4_591_616)
+        #expect(report.itemCount == 3)
+    }
+
     @Test func aScanThatStopsEarlyShowsItsRowsWithoutStoringTimings() async throws {
         let steps = Fixture.dryRun(exitCode: 124) + [.fail(.nonZeroExit(code: 124, stderrTail: "step timed out"))]
         let harness = makeHarness(ScriptedCleanService(scan: steps))
@@ -690,6 +707,29 @@ struct SmartCleanModelTests {
         #expect(harness.model.phase.preview != nil)
         #expect(harness.gate.requests.isEmpty)
         #expect(harness.service.calls.count == 2)
+        // Final review F15: the results say why Clean did nothing.
+        #expect(harness.model.resultsNote == .itemsGone(count: 3))
+    }
+
+    /// Final review F15: items the recheck no longer finds leave the selection, and the
+    /// results say so, through the confirmation and after it is cancelled.
+    @Test func aRecheckThatDropsItemsSaysSo() async throws {
+        let rescanned = [Fixture.google, Fixture.derived]
+        let rescan: [Step] = [.event(.section("User essentials"))] + rescanned.map { .event(.item($0)) } + [
+            .event(.summary(RunSummary(command: "clean", dryRun: true, items: 2, sizeBytes: 2_494_464, partial: false, exitCode: 0))),
+        ]
+        let items = [Fixture.alpha, Fixture.google, Fixture.derived]
+        let harness = makeHarness(ScriptedCleanService(scan: Fixture.dryRun(items), rescan: rescan))
+        _ = try await scanToResults(harness)
+        clock.mutate { $0 += 901 }
+        await harness.model.requestClean()
+
+        let confirmation = try #require(harness.model.phase.confirmation)
+        #expect(confirmation.plan.items.map(\.path) == [Fixture.google.path, Fixture.derived.path])
+        #expect(harness.model.resultsNote == .itemsGone(count: 1))
+        harness.model.cancelConfirmation()
+        #expect(harness.model.phase.preview != nil)
+        #expect(harness.model.resultsNote == .itemsGone(count: 1))
     }
 
     // MARK: Fix round 1

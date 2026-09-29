@@ -10,6 +10,9 @@ enum CleanItemLabeler {
 
     /// The first rule that matches names the row: the Trash, an iOS software update, Xcode
     /// build data, the clang module cache, an app's cache folder, logs; otherwise the path.
+    /// A row inside the Trash or the Logs folder adds the name of the first folder or file below
+    /// it, or its app's name when that is a bundle identifier: "Logs · DiagnosticReports",
+    /// "Trash · Old Project" (final review F12).
     ///
     /// - Parameters:
     ///   - home: the home folder the engine ran with.
@@ -18,7 +21,9 @@ enum CleanItemLabeler {
         let path = CleanSelection.normalize(item.path)
         let inHome = components(of: path, under: CleanSelection.normalize(home))
         if let inHome, inHome.first == ".Trash" {
-            return String(localized: "Trash")
+            guard inHome.count > 1 else { return String(localized: "Trash") }
+            let name = entryName(inHome[1], appName: appName)
+            return String(localized: "Trash · \(name)")
         }
         if (path as NSString).pathExtension.lowercased() == "ipsw" {
             return String(localized: "iOS software update")
@@ -36,7 +41,9 @@ enum CleanItemLabeler {
             return name
         }
         if let inHome, inHome.starts(with: ["Library", "Logs"]) {
-            return String(localized: "Logs")
+            guard inHome.count > 2 else { return String(localized: "Logs") }
+            let name = entryName(inHome[2], appName: appName)
+            return String(localized: "Logs · \(name)")
         }
         return truncated(inHome.map { (["~"] + $0).joined(separator: "/") } ?? path)
     }
@@ -60,6 +67,15 @@ enum CleanItemLabeler {
         }
         guard home != "/", path.hasPrefix(home + "/") else { return nil }
         return path.dropFirst(home.count + 1).split(separator: "/").map(String.init)
+    }
+
+    /// A folder or file name under the Trash or Logs: its app's name when it is a bundle
+    /// identifier an app has, otherwise the name itself, middle-truncated.
+    private static func entryName(_ name: String, appName: (String) -> String?) -> String {
+        if isBundleIdentifier(name), let app = appName(name) {
+            return app
+        }
+        return truncated(name)
     }
 
     /// "MyApp-dxqzfhvdzbkfoyewpnhemvbhzjom" gives "MyApp": Xcode appends "-" and a hash.

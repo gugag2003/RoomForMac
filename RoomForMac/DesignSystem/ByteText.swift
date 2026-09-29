@@ -13,6 +13,16 @@ enum ByteText {
         atLeast(bytes, locale: .autoupdatingCurrent)
     }
 
+    /// A total: "4.2 GB", "at least 4.2 GB" when it leaves out sizes that are unknown, or nil
+    /// when it is made only of unknown sizes, which "at least Zero KB" would not describe. The
+    /// caller then says "Size unknown" or counts the items instead (final review F11).
+    static func total(_ bytes: Int64, hasUnknownSizes: Bool) -> String? {
+        guard hasUnknownSizes else {
+            return string(bytes)
+        }
+        return bytes > 0 ? atLeast(bytes) : nil
+    }
+
     /// "1.5 MB/s" for 1.5 MiB per second. Negative and NaN rates read as 0.
     static func perSecond(mebibytes: Double) -> String {
         perSecond(mebibytes: mebibytes, locale: .autoupdatingCurrent)

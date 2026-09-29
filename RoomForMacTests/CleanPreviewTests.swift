@@ -109,6 +109,25 @@ struct CleanPreviewTests {
         #expect(preview.isLocked(CleanItemID(path: "/not/in/the/preview")))
     }
 
+    /// Final review F10: what Select all can reach, whatever is selected now. Rows that need a
+    /// password never count; a selectable row under one does.
+    @Test func theCleanableTotalLeavesOutRowsThatNeedAPassword() {
+        var preview = Scan.preview()
+        let cleanable = [Scan.google, Scan.yarn, Scan.alpha, Scan.mystery, Scan.beta, Scan.clang, Scan.derived]
+        #expect(preview.cleanableBytes == cleanable.reduce(0) { $0 + $1.sizeBytes })
+        #expect(preview.cleanableBytes == preview.totalBytes - Scan.backup.sizeBytes)
+        #expect(preview.cleanableCount == 7)
+        #expect(preview.cleanableHasUnknownSizes)
+        preview.selectNone()
+        #expect(preview.cleanableCount == 7)
+
+        let locked = Scan.preview(readOnlyFolders: ["/Users/test/Library/Caches"])
+        let reachable = [Scan.mystery, Scan.chrome, Scan.yarnV6, Scan.clang, Scan.derived]
+        #expect(locked.cleanableBytes == reachable.reduce(0) { $0 + $1.sizeBytes })
+        #expect(locked.cleanableCount == 5)
+        #expect(!locked.cleanableHasUnknownSizes)
+    }
+
     @Test func aParentFolderThatIsNotWritableNeedsAPassword() {
         var preview = Scan.preview(readOnlyFolders: ["/Users/test/Library/Caches"])
         for row in [Scan.google, Scan.yarn, Scan.alpha, Scan.beta] {

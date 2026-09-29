@@ -113,7 +113,7 @@ struct CleanProgressTests {
         let report = progress.report(completion: .cancelled(nil), diagnostics: diagnostics, fileExists: exists)
         #expect(report.outcomes[Run.id(Run.a2)] == .leftInPlace)       // its section finished
         #expect(report.outcomes[Run.id(Run.a3)] == .alreadyGone)
-        #expect(report.outcomes[Run.id(Run.b2)] == .notReached)        // its section was running
+        #expect(report.outcomes[Run.id(Run.b2)] == .interrupted)       // its section was running (final review F9)
         #expect(report.outcomes[Run.id(Run.c1)] == .notReached)        // never started
         #expect(report.outcomes[Run.id(Run.d1)] == .notReached)
         #expect(report.outcomes.count == Run.plan.items.count)
@@ -126,8 +126,10 @@ struct CleanProgressTests {
         var progress = CleanProgress(plan: Run.plan)
         progress.sectionStarted("Browsers", fileExists: exists)
         let report = progress.report(completion: .failed(.timedOut, summary: nil), diagnostics: nil, fileExists: exists)
-        #expect(report.outcomes[Run.id(Run.b1)] == .notReached)
-        #expect(report.outcomes[Run.id(Run.b2)] == .alreadyGone)
+        // Final review F9: the run may have removed either, in whole or in part, before it
+        // could report it, so neither reads as untouched or as removed by something else.
+        #expect(report.outcomes[Run.id(Run.b1)] == .interrupted)
+        #expect(report.outcomes[Run.id(Run.b2)] == .interrupted)
     }
 
     @Test func aCompletedRunFinishesEverySection() {

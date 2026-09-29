@@ -139,6 +139,8 @@ enum SmartCleanText {
             "Scan stopped. Nothing was removed."
         case .recheckStopped:
             "Size check stopped. Nothing was removed, and the sizes are from your last scan."
+        case .itemsGone(let count):
+            "\(count) items you selected are gone, so they were taken out of the selection."
         }
     }
 }
