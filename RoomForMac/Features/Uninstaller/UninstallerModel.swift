@@ -329,8 +329,8 @@ final class UninstallerModel {
     /// removed before step 1 allows it (critique B1):
     /// 1. `RemovalGate`: anything but `.allow` sets `gateDecision` and stays in `review`;
     /// 2. the `DestructiveRunQueue` lease: a refusal stays in `review`;
-    /// 3. apps whose executable name another open process shares, or that is a pattern to
-    ///    the engine's `pkill -x`, are held back;
+    /// 3. apps whose executable name another open process matches as the engine's `pkill -x`
+    ///    would are held back;
     /// 4. the other apps' main instances are asked to quit, then each app's nested helpers
     ///    once its main instances are gone.
     ///
@@ -414,28 +414,22 @@ final class UninstallerModel {
         }
     }
 
-    /// Holds back the removable apps the engine's `pkill -x` could not end alone. The engine
-    /// ends an app with `pkill -x <CFBundleExecutable>`, or its name when it has none, and
-    /// `pkill` reads that name as a regular expression (Ruling 14, final review F2):
-    /// - a name with pattern characters could match other processes, now or by the time the
-    ///   engine runs, so that app is held back as `.nameIsAPattern`;
-    /// - an app whose name another process matches, RoomForMac's own included, is held back
-    ///   as `.sharesNameWithOpenApp`.
+    /// Holds back, as `.sharesNameWithOpenApp`, the removable apps whose name another
+    /// running process matches the way the engine's `pkill -x` would, RoomForMac's own
+    /// process included (`RunningApps.sameNameProcesses`). The engine ends an app with
+    /// `pkill -x <CFBundleExecutable>`, or its name when it has none, which would end that
+    /// process too (Ruling 14). `pkill` reads the name as a regular expression, so "zoom.us"
+    /// also matches a process named "zoomXus"; with no such process the app is removable
+    /// (final review F2, as amended).
     private func holdBackNameClashes(in plan: inout UninstallPlan) {
         let running = dependencies.running
-        var patterns: Set<String> = []
         var clashing: Set<String> = []
         for app in plan.removable {
             let path = app.preview.path
             let executable = running.executableName(path).flatMap { $0.isEmpty ? nil : $0 } ?? app.preview.name
-            if RunningApps.isPattern(executable) {
-                patterns.insert(path)
-            } else if !executable.isEmpty, !running.sameNameProcesses(executable, path).isEmpty {
+            if !executable.isEmpty, !running.sameNameProcesses(executable, path).isEmpty {
                 clashing.insert(path)
             }
-        }
-        if !patterns.isEmpty {
-            plan.holdBack(patterns, reason: .nameIsAPattern)
         }
         if !clashing.isEmpty {
             plan.holdBack(clashing, reason: .sharesNameWithOpenApp)

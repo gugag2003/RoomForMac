@@ -133,13 +133,10 @@ struct PlannedApp: Sendable, Equatable, Identifiable {
 enum HeldBackReason: Sendable, Equatable {
     /// It was still open after the quit steps (and any Force Quit).
     case stillOpen
-    /// Another open process has the same executable name, and the engine's
-    /// `pkill -x` would end that process too (Ruling 14).
+    /// Another open process has the same executable name, or one that name
+    /// matches as a pattern, and the engine's `pkill -x` would end that
+    /// process too (Ruling 14, final review F2).
     case sharesNameWithOpenApp
-    /// Its executable name holds regular-expression characters ("zoom.us"), so the
-    /// engine's `pkill -x`, which reads the name as a pattern, could end other
-    /// processes too. Held back whether or not one runs now.
-    case nameIsAPattern
 }
 
 struct HeldBackApp: Sendable, Equatable {

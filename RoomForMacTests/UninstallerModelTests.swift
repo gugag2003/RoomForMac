@@ -975,13 +975,37 @@ struct UninstallerModelTests {
         #expect(running.terminated.isEmpty, "the held-back app was asked to quit")
     }
 
-    /// Final review F2: the engine's `pkill -x` reads an executable name with pattern
-    /// characters as a regular expression, so such an app is held back even when no other
-    /// process matches it now.
-    @Test func anAppWhoseExecutableNameIsAPatternIsHeldBackAndNotSent() async throws {
+    /// Final review F2, as amended: a name with pattern characters ("zoom.us") holds its
+    /// app back only when another process matches it the way `pkill -x` would. With none,
+    /// the app is quit and removed like any other.
+    @Test func anAppWhoseExecutableNameIsAPatternIsRemovableWhenNothingElseMatchesIt() async throws {
         let running = FakeRunningApps()
         running.launch(Fixture.alphaMain, of: Fixture.alphaPath)
         running.setExecutable("alpha.us", for: Fixture.alphaPath)
+        let service = Fixture.service(uninstall: [
+            Fixture.scanned(Fixture.alphaPreview), Fixture.removed(Fixture.alphaPreview, bytes: 120_000_000),
+        ])
+        let harness = makeHarness(service, running: running)
+        _ = try await review(harness, selecting: [Fixture.alphaPath])
+
+        await harness.model.confirm()
+        await harness.model.waitForWork()
+
+        let summary = try #require(harness.model.drawer.shownSummary)
+        #expect(summary.heldBack.isEmpty)
+        #expect(summary.removed.map(\.path) == [Fixture.alphaPath])
+        #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.alphaPath)"])
+        #expect(running.terminated == [Fixture.alphaMain.pid])
+        #expect(running.calls.contains(.sameNameProcesses("alpha.us", Fixture.alphaPath)))
+    }
+
+    /// Final review F2, as amended: another process that the pattern matches ("zoomXus" for
+    /// "zoom.us", which `RunningApps.sameNameProcesses` finds) holds the app back.
+    @Test func anAppWhosePatternMatchesAnotherProcessIsHeldBackAndNotSent() async throws {
+        let running = FakeRunningApps()
+        running.launch(Fixture.alphaMain, of: Fixture.alphaPath)
+        running.setExecutable("alpha.us", for: Fixture.alphaPath)
+        running.addSameNameProcess(4_242, executable: "alpha.us")
         let service = Fixture.service(uninstall: [
             Fixture.scanned(Fixture.betaPreview), Fixture.removed(Fixture.betaPreview, bytes: 60_000_000),
         ])
@@ -992,7 +1016,7 @@ struct UninstallerModelTests {
         await harness.model.waitForWork()
 
         let summary = try #require(harness.model.drawer.shownSummary)
-        #expect(summary.heldBack == [HeldBackApp(preview: Fixture.alphaPreview, reason: .nameIsAPattern)])
+        #expect(summary.heldBack == [HeldBackApp(preview: Fixture.alphaPreview, reason: .sharesNameWithOpenApp)])
         #expect(summary.removed.map(\.path) == [Fixture.betaPath])
         #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.betaPath)"])
         #expect(running.terminated.isEmpty, "the held-back app was asked to quit")

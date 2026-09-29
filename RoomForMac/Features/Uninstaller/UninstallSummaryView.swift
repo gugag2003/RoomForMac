@@ -145,20 +145,12 @@ extension UninstallSummaryView {
                         }
                     }
                 }
-                let sharesName = UninstallSummaryView.heldBack(summary, reason: .sharesNameWithOpenApp)
-                let pattern = UninstallSummaryView.heldBack(summary, reason: .nameIsAPattern)
-                if !sharesName.isEmpty || !pattern.isEmpty {
+                let skipped = UninstallSummaryView.heldBack(summary, reason: .sharesNameWithOpenApp)
+                if !skipped.isEmpty {
                     group("Skipped", systemImage: "arrow.uturn.right") {
-                        ForEach(sharesName) { app in
+                        ForEach(skipped) { app in
                             UninstallDrawer.NameLine(
                                 name: app.name, detail: "Another open app has the same name", trailing: nil
-                            )
-                        }
-                        ForEach(pattern) { app in
-                            UninstallDrawer.NameLine(
-                                name: app.name,
-                                detail: "Its name could also match other apps, so RoomForMac couldn't close it safely",
-                                trailing: nil
                             )
                         }
                     }

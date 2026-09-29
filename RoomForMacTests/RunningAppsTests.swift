@@ -151,6 +151,19 @@ struct RunningAppsTests {
             RunningApps.sameNameProcesses(executable: executable, canonicalAppPath: Path.foo, among: processes, ownPid: 42)
         }
         #expect(clashes("zoom.us") == [1])
+        // Final review F2, as amended: "zoom.us" with nothing else that matches is no clash.
+        #expect(RunningApps.sameNameProcesses(
+            executable: "zoom.us", canonicalAppPath: "/nonexistent/Applications/zoom.us.app",
+            among: [
+                RunningApps.ProcessEntry(
+                    pid: 7, path: "/nonexistent/Applications/zoom.us.app/Contents/MacOS/zoom.us",
+                    name: "zoom.us", comm: "zoom.us", argumentName: "zoom.us"
+                ),
+                RunningApps.ProcessEntry(pid: 8, path: "/nonexistent/bin/zoom", name: "zoom", argumentName: "zoom"),
+                RunningApps.ProcessEntry(pid: 9, path: "/nonexistent/bin/zoomus", name: "zoomus"),
+            ],
+            ownPid: 42
+        ).isEmpty)
         #expect(clashes("LongProcessNameH") == [2])
         #expect(clashes("Foo") == [3])
         #expect(clashes("Foo(") == [5])
@@ -166,17 +179,6 @@ struct RunningAppsTests {
         ]
         #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes, ownPid: 8) == [8])
         #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes, ownPid: 42).isEmpty)
-    }
-
-    @Test(arguments: ["zoom.us", "Notepad++", "What?", "a|b", "(x)", "[x]", "x{2}", "^x", "x$", #"a\b"#, "a*"])
-    func aNameWithPatternCharactersIsAPattern(_ name: String) {
-        #expect(RunningApps.isPattern(name))
-    }
-
-    @Test func plainNamesAreNoPattern() {
-        for name in ["Foo", "Microsoft Word", "Visual Studio Code", "zoom_us", "My-App", "Äpp 2", ""] {
-            #expect(!RunningApps.isPattern(name), "\(name)")
-        }
     }
 
     @Test func theSameBundleIsFoundThroughALinkOrAnotherSpelling() throws {

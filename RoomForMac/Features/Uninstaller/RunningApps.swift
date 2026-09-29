@@ -192,14 +192,6 @@ extension RunningApps {
         }
     }
 
-    /// Whether `executable` holds a character that a POSIX extended regular
-    /// expression treats specially (`. [ ] ( ) * + ? { } | ^ $ \`). The engine's
-    /// `pkill -x` then matches other names too ("zoom.us" also matches
-    /// "zoomXus"), so such an app is always held back (final review F2).
-    static func isPattern(_ executable: String) -> Bool {
-        executable.contains { #".[]()*+?{}|^$\"#.contains($0) }
-    }
-
     /// Whether `path` is the bundle at `hostPath`: the same real path
     /// (`canonicalPath`, so a link or another spelling of the path counts), or
     /// the same file (`.fileResourceIdentifierKey`). The Uninstaller hides the
