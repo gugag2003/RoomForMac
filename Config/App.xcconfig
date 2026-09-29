@@ -1,0 +1,8 @@
+// The base configuration of every RoomForMac build (project.yml's configFiles).
+// The order matters: the distribution identifiers first, then the signing
+// settings, whose file ends by including the per-developer Local.xcconfig, so a
+// developer's override always comes last.
+// Set nothing here: scripts/tests/distribution.bats keeps this file to the two
+// includes.
+#include "Distribution.xcconfig"
+#include "Signing.xcconfig"

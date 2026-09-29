@@ -1,0 +1,37 @@
+// RoomForMac's distribution identifiers. Xcode reads this file through
+// Config/App.xcconfig; scripts, bats tests and workflows read it through
+// scripts/lib/distribution.sh, the only other parser of it. Public values
+// only: no secret ever goes in this file.
+//
+// Xcode reads "//" as the start of a comment, even inside a URL, so a URL
+// writes ":/$()/": Xcode expands $() to nothing, and distribution_value removes
+// every $() the same way. A value that holds "//" for another reason (a base64
+// key can) writes it "/$()/". A bare "//" on a value line starts a comment for
+// Xcode, so a value never contains one.
+//
+// Two of these are fixed for life once the first release is public, because
+// every installed copy carries them: RFM_FEED_URL (compiled into Info.plist as
+// SUFeedURL) and RFM_DMG_VOLUME_NAME (the disk image layout names it).
+// scripts/tests/distribution.bats pins every value, so changing one takes a
+// deliberate test edit.
+
+// The GitHub repository that hosts the releases. GitHub redirects the feed
+// after a rename; docs/releasing.md says what else a move touches.
+RFM_REPOSITORY = gugag2003/RoomForMac
+
+// The update feed: a release asset read through latest/download, so it stays
+// HTTPS end to end and does not change when the site gets a domain (Plan 6,
+// Ruling 2).
+RFM_FEED_URL = https:/$()/github.com/gugag2003/RoomForMac/releases/latest/download/appcast.xml
+
+// The site, without a trailing slash. Installed copies keep this address as
+// their download page (RFMSiteURL). Adding a domain later changes only this.
+RFM_SITE_URL = https:/$()/gugag2003.github.io/RoomForMac
+
+// The disk image's volume name. Never a version.
+RFM_DMG_VOLUME_NAME = RoomForMac
+
+// Sparkle's EdDSA public key, 44 characters of base64. It stays empty until the
+// owner runs scripts/make-update-keys.sh (Plan 6 owner step A4), which writes
+// it here once; builds without a key leave the updater off.
+RFM_SPARKLE_PUBLIC_KEY =

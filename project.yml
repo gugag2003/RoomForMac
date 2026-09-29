@@ -2,9 +2,11 @@
 # RoomForMac.xcodeproj, RoomForMac/Info.plist and RoomForMac/RoomForMac.entitlements
 # are generated from this file and git-ignored.
 #
-# Signing lives only in Config/Signing.xcconfig. Add no signing or team settings
-# here, at project or target level: they would silently override that file and
-# the per-developer Config/Local.xcconfig it includes.
+# Both configurations use Config/App.xcconfig, which includes
+# Config/Distribution.xcconfig (the distribution identifiers) and then
+# Config/Signing.xcconfig. Signing lives only in Signing.xcconfig. Add no
+# signing or team settings here, at project or target level: they would silently
+# override that file and the per-developer Config/Local.xcconfig it includes.
 name: RoomForMac
 options:
   bundleIdPrefix: com.roomformac
@@ -14,8 +16,8 @@ options:
   developmentLanguage: en
 
 configFiles:
-  Debug: Config/Signing.xcconfig
-  Release: Config/Signing.xcconfig
+  Debug: Config/App.xcconfig
+  Release: Config/App.xcconfig
 
 settings:
   base:
@@ -26,6 +28,9 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     SWIFT_EMIT_LOC_STRINGS: YES
+    # Info.plist's RFMSkipQuarantineCleanup. Only the update rehearsal builds a
+    # copy with YES; every release carries NO.
+    RFM_SKIP_QUARANTINE_CLEANUP: NO
 
 packages:
   MoleEngine:
@@ -72,6 +77,14 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: com.roomformac.RoomForMac
             CFBundleURLSchemes: [roomformac]
+        # Distribution values from Config/Distribution.xcconfig. Sparkle's other
+        # keys stay at its defaults and are never set here.
+        SUFeedURL: $(RFM_FEED_URL)
+        SUPublicEDKey: $(RFM_SPARKLE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
+        RFMSiteURL: $(RFM_SITE_URL)
+        # For update rehearsal V6 only; releases must carry NO.
+        RFMSkipQuarantineCleanup: $(RFM_SKIP_QUARANTINE_CLEANUP)
     entitlements:
       path: RoomForMac/RoomForMac.entitlements
       properties: {}
