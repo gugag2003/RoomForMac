@@ -488,6 +488,12 @@ final class UninstallerModel {
     /// The instances still running once all have exited or `deadline` has passed; nil when
     /// quitting was cancelled or left behind. Each round reads the clock once and sleeps
     /// until a deadline derived from that reading, so a clock that jumps ends the wait.
+    ///
+    /// A round that asks a helper to quit for the first time gets one more `interval`
+    /// before the deadline can end the wait, even when `deadline` has already passed:
+    /// otherwise a helper asked in what would have been the last round gets ~0 s to
+    /// respond and is reported a survivor for no reason (fix round 1 finding 2). The
+    /// grace is granted once per call, not renewed by a later round.
     private func poll<C: Clock<Duration>>(
         _ instances: [RunningInstance],
         helpers: inout HelperRequests?,
@@ -496,12 +502,15 @@ final class UninstallerModel {
         clock: C
     ) async -> [RunningInstance]? {
         let running = dependencies.running
+        var grace: C.Instant?
         while true {
             guard !Task.isCancelled, case .quitting(let plan, let shown) = drawer else { return nil }
             let now = clock.now
             let open = instances.filter { running.isRunning($0.pid) }
+            var justAsked: [RunningInstance] = []
             if var requests = helpers {
-                for helper in requests.due(among: open) {
+                justAsked = requests.due(among: open)
+                for helper in justAsked {
                     _ = running.terminate(helper.pid)
                 }
                 helpers = requests
@@ -509,11 +518,18 @@ final class UninstallerModel {
             if shown != open {
                 drawer = .quitting(plan, waitingFor: open)
             }
-            if open.isEmpty || now >= deadline {
+            if open.isEmpty {
+                return open
+            }
+            if !justAsked.isEmpty, grace == nil {
+                grace = now.advanced(by: interval)
+            }
+            let roundDeadline = grace.map { max($0, deadline) } ?? deadline
+            if now >= roundDeadline {
                 return open
             }
             do {
-                try await clock.sleep(until: min(now.advanced(by: interval), deadline), tolerance: nil)
+                try await clock.sleep(until: min(now.advanced(by: interval), roundDeadline), tolerance: nil)
             } catch {
                 return nil
             }
@@ -547,7 +563,18 @@ final class UninstallerModel {
 
     /// Sends `plan.enginePaths` to the engine (nothing when every app was held back),
     /// records each confirmed removal as it arrives, then shows the summary.
+    ///
+    /// The clash check runs again here, right before the engine starts: the quit wait
+    /// can take up to `quitTimeout`, or longer at the Force Quit question, so an
+    /// unrelated process sharing an app's executable name can appear after `confirm()`'s
+    /// own check and before the engine would otherwise be asked to `pkill -x` it
+    /// (Review Focus 3, fix round 1 finding 1).
     private func remove(_ plan: UninstallPlan) async {
+        var plan = plan
+        let clashing = sameNameClashes(in: plan)
+        if !clashing.isEmpty {
+            plan.holdBack(clashing, reason: .sharesNameWithOpenApp)
+        }
         guard !plan.removable.isEmpty else {
             await finishRun(plan: plan, summary: showSummaryWithoutRun(plan), diagnostics: nil)
             return

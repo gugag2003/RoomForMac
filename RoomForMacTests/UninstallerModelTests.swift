@@ -700,6 +700,11 @@ struct UninstallerModelTests {
 
         await harness.model.confirm()
         await harness.clock.advance(by: .seconds(10))
+        // The helper is asked for the first time in this same round (both main instances
+        // quit at once, by the fake's default), so it gets one more poll interval before
+        // being reported a survivor (fix round 1 finding 2); it never quits, so it still
+        // ends up held back.
+        await harness.clock.advance(by: .milliseconds(100))
         await harness.model.waitForWork()
         #expect(harness.model.drawer == .confirmForceQuit(plan, stillOpen: [Fixture.alphaHelper]))
         #expect(running.terminated == [Fixture.alphaMain.pid, Fixture.betaMain.pid, Fixture.alphaHelper.pid])
@@ -742,6 +747,47 @@ struct UninstallerModelTests {
         await harness.model.waitForWork()
         #expect(harness.model.drawer.shownSummary?.removed.map(\.path) == [Fixture.alphaPath])
         #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.alphaPath)"])
+    }
+
+    /// Fix round 1 finding 2: a helper asked to quit for the first time in what would
+    /// otherwise be the poll's last round gets one more interval to respond, instead of
+    /// being reported a survivor with ~0 s to quit.
+    @Test func aHelperAskedJustBeforeTheDeadlineGetsOneMoreIntervalBeforeForceQuit() async throws {
+        let running = FakeRunningApps()
+        running.launch(Fixture.alphaMain, of: Fixture.alphaPath, quitsOnTerminate: false)
+        running.launch(Fixture.alphaHelper, of: Fixture.alphaPath, quitsOnTerminate: false)
+        let service = Fixture.service(uninstall: [
+            Fixture.scanned(Fixture.alphaPreview), Fixture.removed(Fixture.alphaPreview, bytes: 126_000_000),
+        ])
+        let harness = makeHarness(service, running: running)
+        let plan = try await review(harness, selecting: [Fixture.alphaPath])
+
+        await harness.model.confirm()
+        #expect(harness.model.drawer == .quitting(plan, waitingFor: [Fixture.alphaMain, Fixture.alphaHelper]))
+        await harness.clock.waitForSleepers(2)            // the re-list and the first poll
+        #expect(running.terminated == [Fixture.alphaMain.pid], "the helper was asked while its app was still open")
+
+        // Advance to just before the 10 s quit deadline, with the main instance still open.
+        await harness.clock.advance(by: .milliseconds(9_900))
+        await harness.clock.waitForSleepers(2)
+        #expect(harness.model.drawer == .quitting(plan, waitingFor: [Fixture.alphaMain, Fixture.alphaHelper]))
+
+        // The main instance exits right at the deadline: the helper is asked for the
+        // first time in what would otherwise be the poll's last round. (Without the
+        // grace fix, the poll returns here and there is no further sleeper to wait on,
+        // so this step does not wait for one — it only checks the call log.)
+        running.quit(Fixture.alphaMain.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        #expect(running.terminated == [Fixture.alphaMain.pid, Fixture.alphaHelper.pid])
+
+        // The helper quits within the one extra poll interval it should be granted: no
+        // Force Quit question should follow. (Harmless if the poll already ended above.)
+        running.quit(Fixture.alphaHelper.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        await harness.model.waitForWork()
+        #expect(harness.model.drawer.shownSummary?.removed.map(\.path) == [Fixture.alphaPath])
+        #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.alphaPath)"])
+        #expect(running.forceTerminated.isEmpty, "the helper was force-quit without confirmation")
     }
 
     @Test func appsStillOpenAfterForceQuitAreHeldBack() async throws {
@@ -839,6 +885,35 @@ struct UninstallerModelTests {
         #expect(running.calls.contains(.sameNameProcesses("Beta", Fixture.betaPath)), "no CFBundleExecutable: the app's name")
         #expect(!running.calls.contains(.instances(Fixture.alphaPath)))
         #expect(running.terminated.isEmpty, "the held-back app was asked to quit")
+    }
+
+    /// Fix round 1 finding 1: the clash check in `confirm()` runs once, before quitting;
+    /// the quit wait can then run up to `quitTimeout`, or longer at the Force Quit
+    /// question, so a clash that only appears meanwhile must be caught again before the
+    /// engine is asked to `pkill -x` the app.
+    @Test func aClashThatAppearsOnlyAfterQuittingStartsIsHeldBackAndNotSent() async throws {
+        let running = FakeRunningApps()
+        running.launch(Fixture.alphaMain, of: Fixture.alphaPath, quitsOnTerminate: false)
+        let harness = makeHarness(Fixture.service(), running: running)
+        let plan = try await review(harness, selecting: [Fixture.alphaPath])
+
+        await harness.model.confirm()
+        #expect(harness.model.drawer == .quitting(plan, waitingFor: [Fixture.alphaMain]))
+        await harness.clock.waitForSleepers(2)           // the re-list and the first poll
+
+        // An unrelated process using Alpha's executable name starts while Alpha is still
+        // being asked to quit: confirm()'s own check could not have seen it.
+        running.addSameNameProcess(9_999, executable: "Alpha")
+        running.quit(Fixture.alphaMain.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        await harness.model.waitForWork()
+
+        let summary = try #require(harness.model.drawer.shownSummary)
+        #expect(summary.heldBack == [HeldBackApp(preview: Fixture.alphaPreview, reason: .sharesNameWithOpenApp)])
+        #expect(summary.removed.isEmpty)
+        #expect(uninstallCalls(harness).isEmpty, "an app with a clash found after quitting was sent to the engine")
+        #expect(running.forceTerminated.isEmpty)
+        #expect(harness.queue.active == nil)
     }
 
     @Test func whenEveryAppIsHeldBackTheEngineDoesNotRun() async throws {
