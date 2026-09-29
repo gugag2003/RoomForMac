@@ -118,6 +118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Quits at once without a lease. With one, asks first: **Cancel** keeps the app running;
     /// otherwise the run is asked to stop when it can be, and the app quits once the lease
     /// ends (`.terminateLater`).
+    ///
+    /// An uninstall can stop at **Force Quit**, a sheet on the Uninstaller section, which only
+    /// the user can answer; a Smart Clean run can likewise be mid-confirmation. Before waiting,
+    /// this brings the section that holds the lease to the front, so a quit started from the
+    /// menu-bar panel or another section does not leave the app stuck on a question no one can
+    /// see.
     func terminationReply() -> NSApplication.TerminateReply {
         let queue = model.runQueue
         switch TerminationDecision.decide(active: queue.active, canStop: queue.canStopActive) {
@@ -130,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if prompt == .stopCleaning {
                 queue.stopActive()
             }
+            router.showMain(section: prompt.section)
             let reply = replyToTermination
             terminationTask = Task {
                 await queue.waitUntilIdle()
@@ -197,6 +204,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if recognized {
             router.showMain()
+        }
+    }
+}
+
+extension TerminationPrompt {
+    /// The section that holds the lease this prompt asks about, so `terminationReply` can bring
+    /// it to the front: the user answers **Force Quit** (Smart Clean's confirmation, or the
+    /// Uninstaller's) on screen, not blind, whichever section was showing at quit.
+    var section: SidebarSection {
+        switch self {
+        case .stopCleaning: .smartClean
+        case .waitForUninstall: .uninstaller
         }
     }
 }

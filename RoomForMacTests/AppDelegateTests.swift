@@ -248,12 +248,17 @@ struct AppDelegateTests {
         #expect(delegate.terminationTask == nil)
     }
 
+    /// A "Force Quit" question, if the run reaches one, is a sheet on its own section, so
+    /// `terminationReply` must bring that section forward before waiting: otherwise a quit
+    /// started from the menu-bar panel or another section leaves the app stuck on a question
+    /// no one can see.
     @Test func stopAndQuitStopsTheCleanThenQuitsWhenItEnds() async throws {
         let model = model()
         let asked = Locked<[TerminationPrompt]>([])
         let replies = Locked<[Bool]>([])
         let stops = Locked(0)
-        let delegate = AppDelegate(model: model, router: WindowRouter(), ask: { prompt in
+        let router = WindowRouter()
+        let delegate = AppDelegate(model: model, router: router, ask: { prompt in
             asked.append(prompt)
             return true
         })
@@ -263,6 +268,7 @@ struct AppDelegateTests {
         #expect(delegate.terminationReply() == .terminateLater)
         #expect(asked.value == [.stopCleaning])
         #expect(stops.value == 1)
+        #expect(router.pending == WindowRouter.Request(section: .smartClean, quickScan: false))
         while model.runQueue.pendingWaiters == 0 {
             await Task.yield()
         }
@@ -277,7 +283,8 @@ struct AppDelegateTests {
         let model = model()
         let asked = Locked<[TerminationPrompt]>([])
         let replies = Locked<[Bool]>([])
-        let delegate = AppDelegate(model: model, router: WindowRouter(), ask: { prompt in
+        let router = WindowRouter()
+        let delegate = AppDelegate(model: model, router: router, ask: { prompt in
             asked.append(prompt)
             return true
         })
@@ -286,6 +293,7 @@ struct AppDelegateTests {
 
         #expect(delegate.terminationReply() == .terminateLater)
         #expect(asked.value == [.waitForUninstall])
+        #expect(router.pending == WindowRouter.Request(section: .uninstaller, quickScan: false))
         while model.runQueue.pendingWaiters == 0 {
             await Task.yield()
         }
