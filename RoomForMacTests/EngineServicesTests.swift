@@ -154,6 +154,10 @@ struct AppModelServicesTests {
         #expect(model.runQueue.isBusy == false)
 
         await model.start()
-        #expect((model.reporter as? RecordingRunReporter) === reporter)
+        // Once the features exist, the reporter is a composite that still reaches the
+        // dependencies' reporter (Task 17 adds the Status monitor after it).
+        let report = ScanReport(feature: .smartClean, foundBytes: 1_024, itemCount: 1, duration: .seconds(1), partial: false)
+        await model.reporter.scanCompleted(report)
+        #expect(reporter.scans == [report])
     }
 }

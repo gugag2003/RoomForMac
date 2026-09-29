@@ -43,6 +43,11 @@ final class AppModel {
     /// `dependencies.runReporter`; `makeFeatures` sets the final one.
     private(set) var reporter: any RunReporter
 
+    /// Live Status readings for the Status section and the menu-bar extra, built by
+    /// `makeFeatures(_:)` once the engine is ready. It opens no collector until
+    /// onboarding is complete (Ruling 10), and one collector serves both (Ruling 16).
+    private(set) var statusMonitor: StatusMonitor?
+
     /// Smart Clean, built by `makeFeatures(_:)` once the engine is ready. It refuses to
     /// start engine commands until onboarding is complete.
     private(set) var smartClean: SmartCleanModel?
@@ -95,7 +100,14 @@ final class AppModel {
     /// of `dependencies.runReporter`, the notifier and the monitor, then Smart
     /// Clean (Task 11) and the Uninstaller (Task 14), which both report to it.
     func makeFeatures(_ services: EngineServices) {
-        reporter = dependencies.runReporter
+        let statusMonitor = StatusMonitor(
+            source: LiveStatusSource(service: services.status),
+            sensors: dependencies.sensors,
+            now: dependencies.now
+        )
+        statusMonitor.setAllowed(isOnboarded)
+        self.statusMonitor = statusMonitor
+        reporter = CompositeRunReporter([dependencies.runReporter, statusMonitor])
         smartClean = SmartCleanModel(dependencies: smartCleanDependencies(service: services.clean))
         uninstaller = UninstallerModel(dependencies: uninstallerDependencies(service: services.uninstall))
     }
@@ -153,5 +165,6 @@ final class AppModel {
         onboardingFlow = nil
         selection = .smartClean
         pendingFirstScan = startFirstScan
+        statusMonitor?.setAllowed(true)
     }
 }

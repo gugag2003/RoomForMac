@@ -737,3 +737,88 @@ struct LiveStatusSourceTests {
         #expect(service.intervals == [.seconds(2), .seconds(10)])
     }
 }
+
+@MainActor
+@Suite("Status monitor in the app model", .timeLimit(.minutes(1)))
+struct StatusMonitorWiringTests {
+    private let temporary: TemporaryDefaults
+    private let directory: TemporaryDirectory
+    private let installation: EngineInstallation
+    private let service = RecordingStatusService()
+    private let sensors = FakeSensors(freeSpace: StatusFixtures.freeSpace)
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+        directory = try TemporaryDirectory()
+        let root = try EngineLayout.make(in: directory.url, version: EngineLayout.version(for: .expected))
+        installation = try EngineInstallation(root: root)
+    }
+
+    private func makeModel(
+        onboarded: Bool,
+        reporter: any RunReporter = NoOpRunReporter(),
+        engine: Result<EngineInstallation, EngineProblem>? = nil
+    ) -> AppModel {
+        let preferences = temporary.preferences
+        preferences.onboardingCompleted = onboarded
+        let check = engine ?? .success(installation)
+        var dependencies = AppDependencies(preferences: preferences, engineCheck: { check }, openURL: { _ in })
+        let service = service
+        let unavailable = EngineServices.unavailable
+        dependencies.makeServices = { _ in
+            EngineServices(clean: unavailable.clean, uninstall: unavailable.uninstall, status: service)
+        }
+        dependencies.sensors = sensors.sensors
+        dependencies.runReporter = reporter
+        return AppModel(dependencies: dependencies)
+    }
+
+    @Test func theMonitorWaitsForOnboardingBeforeItStartsACollector() async throws {
+        let model = makeModel(onboarded: false)
+        #expect(model.statusMonitor == nil)
+        await model.start()
+        let monitor = try #require(model.statusMonitor)
+        #expect(!monitor.isAllowed)
+        monitor.setDemand(.statusSection, true)
+        #expect(monitor.cadence == .paused)
+        #expect(service.intervals.isEmpty)
+
+        model.completeOnboarding(startFirstScan: false)
+        #expect(monitor.isAllowed)
+        #expect(monitor.cadence == .live)
+        #expect(service.intervals == [.seconds(2)])
+        #expect(monitor.feedOpenCount == 1)
+    }
+
+    @Test func anOnboardedLaunchAllowsTheMonitorAtOnce() async throws {
+        let model = makeModel(onboarded: true)
+        await model.start()
+        let monitor = try #require(model.statusMonitor)
+        #expect(monitor.isAllowed)
+        // Nothing is on screen yet, so nothing runs.
+        #expect(monitor.cadence == .paused)
+        #expect(service.intervals.isEmpty)
+
+        monitor.setDemand(.menuBarPanel, true)
+        #expect(service.intervals == [.seconds(2)])
+    }
+
+    @Test func aFinishedCleanupReachesTheAppsReporterAndTheMonitor() async throws {
+        let reporter = RecordingRunReporter()
+        let model = makeModel(onboarded: true, reporter: reporter)
+        await model.start()
+        let monitor = try #require(model.statusMonitor)
+
+        await model.reporter.cleanupFinished(Fixture.cleanup)
+        #expect(reporter.cleanups == [Fixture.cleanup])
+        #expect(await until { monitor.freeSpace == StatusFixtures.freeSpace })
+        #expect(sensors.freeSpaceReads.value == 1)
+    }
+
+    @Test func aBrokenEngineGetsNoMonitor() async {
+        let model = makeModel(onboarded: true, engine: .failure(.installationInvalid("missing bin/status-go")))
+        await model.start()
+        #expect(model.statusMonitor == nil)
+        #expect(service.intervals.isEmpty)
+    }
+}
