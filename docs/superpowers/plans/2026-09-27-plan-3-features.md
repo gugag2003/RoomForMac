@@ -36,7 +36,7 @@ Every destructive run passes one gate and one recorder seam, and Plan 5's allowa
 
 The research behind this plan (Smart Clean, Uninstaller and Status/menu-bar investigations run against a fake home, plus a completeness critique) is summarised in the Rulings.
 
-**Status:** Written 2026-09-27 from the skeleton by one author per task, cross-checked in six groups, and checked mechanically (every file assembled in order, Find blocks matched once, the MoleEngine package, the app and the unit tests type-checked together). Not yet executed.
+**Status:** Done. Executed on the branch `plan3/features` (`92c4fb5`..`872e3aa`: Tasks 1–22 in order, each with its own review, four fix rounds along the way (Tasks 4, 11, 14 ×2, 19), a final whole-branch review by four area reviewers, one fix wave settling all 20 findings (`49ba954`..`5afe314`), and a controller amendment narrowing one of those findings (`872e3aa`)) and merged into `main` by fast-forward. 923 unit tests pass in 109 suites, MoleEngine's package tests pass 194 unit + 16 integration, `bats scripts/tests` is 60/60, and `app_bundle.bats` against a signed Release build is 13/13. The UI smoke tests are built but not run: they need Automation Mode, which is on the owner's manual list. This text was updated afterwards to match what was built. Code blocks show the files as the tasks' briefs wrote them; "As built" notes at the top of each task name its commit range, its fix rounds, and later changes from the final fix wave. "Execution rulings (as built)" (after the Rulings section) lists the decisions taken while executing the plan, and "Known deferred items" what the reviews left open.
 
 The plan starts once Plan 2 merges, on a branch `plan3/features` taken from the merged `main`. Plan 2's execution rulings apply, including the bundle ID `com.roomformac.RoomForMac` and the Finder copy that says Finder is only the Trash fallback.
 
@@ -289,6 +289,49 @@ Plan 1's and Plan 2's Global Constraints hold, except where revised below.
 
     *If wrong:* none.
 
+## Execution rulings (as built)
+
+Decisions the controller took while executing this plan, from the execution ledger (`.superpowers/sdd/2026-09-27-plan-3-features/progress.md`), in the order they were taken. Each lists what it costs if wrong.
+
+**Preflight scan** (before Task 1, applied while replaying the plan against `main` at `92c4fb5`):
+
+- **PS1.** Status cadence, with only the menu-bar extra shown, is paused rather than polling every 10 s in the background (revises skeleton Ruling 16). The label shows no live numbers, and a resumed `status-go` answers within about 0.5 s of the panel opening; this saves about 3% of a core all day. *If wrong:* one line in `StatusCadence.resolve` re-enables background polling (spec §4.4 literally says 10 s); recorded as a spec erratum in Task 22. (Revised again by the final review — see FW2 below.)
+- **PS2.** `RemovalGateNotice` is feature-aware (`RemovalGateNotice(decision:feature:)`, defaulting to `.smartClean`; identifiers `smartClean.gateNotice`/`uninstaller.gateNotice`), so the Uninstaller reuses Smart Clean's copy and identifier instead of writing its own. *If wrong:* none — invisible in M2, since the gate always allows.
+- **PS3.** Quitting stops Smart Clean's and the Uninstaller's read-only engine runs (scan/refresh, list/preview) in `applicationWillTerminate`, after the Status monitor stops; otherwise they keep running, unattended, as orphaned process groups. *If wrong:* a run that would have finished harmlessly is cut short at quit.
+- **PS4.** Task 2's Interface issue — items sized by `safe_clean`'s own step arrive with `size_kb` 0 when that measurement fails — is left as documented, not patched: about 20 call sites share the pattern, and the gap under-charges, which favours the user. *If wrong:* a few unmeasurable items are charged 0 bytes against Plan 5's allowance.
+- **PS5.** The menu-bar item also shows while the launch's engine check is still running or has failed (`AppModel.menuBarItemShown`, Task 19); otherwise a suppressed-window login launch with a broken engine would show nothing at all. *If wrong:* a menu-bar item that only ever says "Starting…" or "needs to be reinstalled".
+- **PS6.** Implementers ran on Sonnet 5, and task reviewers on Sonnet 5 except Tasks 4, 11, 14, 17 and 19 (runner/state-machine/lifecycle concurrency), which ran on Opus, as did fix rounds 4 and 5 — the plan text already contains complete code, and Opus session limits were hit four times during authoring. *If wrong:* more fix rounds.
+
+**During execution:**
+
+- **X1** (Task 1, standing for every later task). Subagent commits carry the Co-Authored-By trailer of the model that actually wrote them (Claude Sonnet 5), per the harness's attribution instruction to that agent, not the brief's or `environment.md`'s literal "Claude Opus 5.5" line. Every task report flags this as its one procedural deviation from the brief. *If wrong:* cosmetic trailer text only.
+- **X2** (Task 4, fix round 1). `EngineRunControl.detach` takes the `ProcessControl` it is detaching and only clears the phase when it is still that process, instead of unconditionally; a regression test reuses one control across two runs and proves the stop still reaches the second. The brief explicitly allows reusing a control. *If wrong:* none.
+- **X3** (Task 11, fix round 1). Three Task 11 minors were promoted into one fix round: `requestClean()` re-checks the phase after the recheck returns (a Clean press must never silently do nothing); `isFresh` treats a preview dated in the future as stale (Ruling 7, under a clock change); `gateDecision` is cleared on any transition outside `.results`. Each is a small correctness gap in a state machine later tasks build on. *If wrong:* one fix round (already spent).
+- **X4** (Task 14, fix rounds 1–2). Two Task 14 minors were promoted into fix round 1: `remove()` re-checks same-name clashes immediately before calling `uninstall` and holds back any new clash (Review Focus 3: the engine's `pkill -x` must never hit an unrelated process); a helper asked for the first time in the poll's final round gets one more `pollInterval` before being reported a survivor. The re-review found the second fix incomplete — the grace was a single value fixed by the first app's helper, so a second app's helper asked at the deadline could still get ~0 s — and fix round 2 made it extend per newly-asked helper, bounded by the helper count. *If wrong:* one more fix round (already spent).
+- **X5** (Task 19, fix round 1). Before `AppDelegate.terminationReply()` returns `.terminateLater`, it brings the main window forward on the section holding the lease (`.uninstaller` for `waitForUninstall`, `.smartClean` for `stopCleaning`) via `router.showMain(section:)`; a test pins `router.pending`. A quit must never wait on a question the user cannot see. *If wrong:* the window pops up during a quit that would otherwise finish unattended.
+
+**Final whole-branch review** (four area reviewers; one fix wave `49ba954..5afe314`, then a controller amendment `872e3aa`):
+
+- **FW1.** One final fix wave covers 20 of the review's 24 findings (all but 4 minors): each is small, several are user-visible copy or accessibility errors, and three are safety issues (self-uninstall through a symlink, pkill name matching, dead `protectedPaths` wiring). *If wrong:* a larger single fix diff for the same total amount of work.
+- **FW2.** Revises PS1/Ruling 16: the free-space timer runs only while Status is live — the section on screen or the menu-bar panel open — not merely while the menu-bar icon shows. Nothing displays the value while only the icon shows, and the disk card needs a fresh read once the section (or panel) does. *If wrong:* the menu-bar panel shows free space as of its last open until it refreshes on appear, which it still does.
+- **FW3.** Revises the final wave's own pkill ruling (F2 in `final-fix-report.md`): an app whose executable name contains regex metacharacters is held back only when another running process actually matches it the way `pkill -x` would (the full `argv[0]` name, as a regex), not unconditionally — "always" made apps such as Zoom (`zoom.us`) impossible to uninstall from RoomForMac. *If wrong:* an exotic pattern could still reach an unrelated process if the matcher misses a case. (Commit `872e3aa`, after the final wave; see Tasks 13–15's As-built notes.)
+- **FW4.** The live `RunningApps` test reads its own process's `argv[0]` with a read-only `sysctl(KERN_PROCARGS2)` call: read-only, and only about this process. The Global Constraints' "no sysctl readers in tests" rule targets the Status sensors, not this. *If wrong:* none.
+- **FW5.** F17 (dead `protectedPaths`) was resolved by deleting the unused `AppDependencies.protectedPaths` — the live services already build `ProtectedPaths.live()` themselves — and pinning, with a test, that the live clean service actually carries RoomForMac's own paths. *If wrong:* none.
+
+## Known deferred items
+
+Minor findings the task reviews and the final review left open, by area, plus the owner's manual checks the ledger added. None blocks Plan 5, Terrain (Plan 4) or admin cleanup (Plan 7).
+
+- **Engine (Mole patches):** `_batch_measure_leftovers` is O(n²) in the leftover count (Task 1, brief-prescribed; lists stay small).
+- **MoleEngine — Runner and diagnostics:** `isSuspended` stays true after a cancellation/timeout stop until `detach()`; `ProcessControl.suspend()` ignores `kill()`'s result; a microsecond window between the `waitpid` reap and `markExited`; `stoppedReturnsWhenItsTaskIsCancelled` uses a 100 ms sleep to order registration; a command's timeout keeps counting while suspended (documented, not fixed); no control+timeout test (all Task 4). `RunFiles`'s partial-failure branch — the `stdoutLog` create failing after `events` succeeded — has no dedicated test (Task 5).
+- **MoleEngine — Clean/Uninstall/Status services:** no `ProtectedPaths` regression guard for `/`, and `docs/engine-protocol.md`'s Smart Clean host notes partly repeat the Clean events section (Task 6). `rootDiskPrefersTheStartupVolume` uses `try #require(SystemSnapshot.decode(...))` on a call that cannot throw — four compiler notes, left as the brief mandated (Task 8).
+- **Uninstaller — running-app matching (parked from the final review):** `PkillPattern` matches in the C locale while the engine's own `pkill` runs under `en_US.UTF-8`; a `.`/bracket pattern that happens to line up with a non-ASCII character in another process's name could be missed. Fix later with `regcomp_l`/`regexec_l` under a UTF-8 locale (count a match in either). *Cost if wrong:* an unrelated process with an unusual non-ASCII name could be ended by an uninstall. `liveProcesses()` reads `argv[0]` (a 1 MiB buffer, `KERN_PROCARGS2`) for every process on the Mac, per removable app, on the main actor — 11–25 ms per enumeration, about 0.5 s for 20 apps; acceptable for M2, enumerate once per `holdBackNameClashes` call later. *Cost if wrong:* a brief stall when confirming a large uninstall.
+- **Uninstaller — model and list:** Step 10's RED was not independently observed (session stalls; mutation checks substitute instead — see Task 13's As-built note); `FailureReason.other` suppresses any explanation containing "mole" as a substring, even inside another word (Task 13, brief-mandated). A stale-preview regression test busy-waits with `Task.yield()`, bounded only by the suite's one-minute time limit (Task 14, brief-mandated). `AppListView` computes "last used" against `Date()` directly in the view body, not through an injectable clock; the `forceQuitRequest` binding's setter may call `cancel()` twice on one Escape press, which is idempotent (Task 15).
+- **Smart Clean:** `RunProblemCard`'s 2 s "Copied" reset has no dedicated test, the same pattern as Plan 2's deferred Copied-timer minor (Task 9). The live item labeler asks Launch Services on the main actor once per row while building a preview — memoize by bundle ID later; coverage gaps in a recheck completing despite a Stop, fallback diagnostics for `unexpectedRemovals`, a stale gate answer surviving a selection change, no double-click guard, and the clean-ending order (log → reporter → lease end) untested directly (Task 11). `heroRendersWithAndWithoutFullDiskAccess` varies Full Disk Access, `blockedBy` and the note together, so its pixel difference is not isolated to the Full Disk Access card alone (Task 12). A lost background re-list if it fires while quitting or removing, and the zero-removed stop headline "Cleaning stopped before anything was removed." can sit next to `.interrupted` rows that say part of an item may be gone — parked, deferred to the next Smart Clean touch: drop the claim when any outcome is `.interrupted` (final review). *Cost if wrong:* a confusing summary after a Stop that lands mid-deletion, which is rare.
+- **Status and the menu-bar extra:** `HealthSummary`'s step-8 guard has a `!issues.isEmpty` disjunct that is dead in practice, because the pressure case is already caught at step 3 (Task 16). `stopEndsTheFeedAndEveryTimer` does not assert `sleeperCount == 0` after `stop()`; no test closes the gate while a timer is pending; a dropped (duplicate or out-of-order) snapshot still completes a background cycle and clears a failure, though background is unused in M2; the failure check in the backoff loop is vacuous after the first retry (Task 17). Panel-visibility reports can arrive out of order and leave the live demand on (an owner U-check); two busy-waits on `pendingWaiters` are bounded only by the suite's time limit; the quit test does not assert that Status stopped or that previews were cancelled; URLs are parsed twice in `application(_:open:)` (Task 19 — its Dock-reopen minor, relying on `hasVisibleWindows`, was since fixed outright by the final wave's F5). `RunNotifier`'s cleanup and uninstall title/body helpers are near-identical switch pairs differing only in their literals (Task 20, plan-mandated). The window may never open at a suppressed launch if the menu-bar label itself never appears (an owner U-check), and `PanelWindowObserver`'s first report is synchronous (final review).
+- **Testing and CI:** the RED step for Task 21's DEBUG scenarios was not captured on its own, since every file was a mechanical transcription compiled together; GREEN evidence (905, then more, passing tests) is solid. A `-configuration Release clean` was found to also remove Debug intermediates on this toolchain — no functional impact, noted for later tasks.
+- **Owner's manual list:** Task 19's review added three checks, which Task 22 folded into `docs/superpowers/plans/2026-09-26-mvp-handoff.md`'s "Manual checks for Plan 3": a Dock click, with the main window closed and the menu-bar extra shown, reopens the window; starting an uninstall, letting it reach its Force Quit question, closing the window and quitting from the menu-bar panel brings the Uninstaller forward again with the question still visible; opening and closing the menu-bar panel turns Status live and back to paused, independently of whether the window's Status section is on screen. Those checks, U1–U7 and the rest of the owner's list, still need a signed build, a real App Store app, a login, a second account or Automation Mode — none of which an agent can raise or drive.
+
 ## Review Focus
 
 1. **A stop, quit or crash in the middle of a destructive run.**
@@ -414,6 +457,8 @@ The task text below is the requirements contract. The **Interfaces** blocks are 
 
 ### Task 1: Engine — amend patch 0004 (leftover items, exit 0 when everything is blocked)
 
+**As built** (`92c4fb5..5ff3c0d`: `5ff3c0d`; review clean). Built as written. Patch 0005 was re-exported with only its context line numbers shifted (no functional change).
+
 **Files:**
 - Modify (Mole, in `build/mole-work`):
   - `lib/uninstall/batch.sh`: a new `_batch_measure_leftovers`; the leftover sizing in `_batch_scan_app_details`; the host-mode exit status in `batch_uninstall_applications`.
@@ -485,7 +530,7 @@ The task text below is the requirements contract. The **Interfaces** blocks are 
 - **The timeout test uses `MOLE_TIMEOUT_DISK_VERIFY_SEC=2`, not 1.** `get_path_size_kb` turns its budget into a whole-second `SECONDS` deadline and re-reads `SECONDS` a subshell later. With 1, a clock tick in between gives a *fast* path a zero budget and a 124, so the test would flake about once in a hundred runs. With 2 the slow stub still times out (after 1–2 s) and no fast path can.
 - **Three end-to-end tests replace discovery through `OVERRIDES`.** They replace `find_app_files`, which gives a deterministic nested leftover and odd path names (discovery never lists a nested pair for a plain fixture). They also replace `uninstall_live_bundle_has_other_install` with "no sibling": an unreadable path in that machine-wide scan (TCC, a slow receipt walk) turns on the sibling guard, which skips leftover discovery entirely. The scan itself (identity checks, blocking, sizing, events, exit status) runs unchanged.
 
-- [ ] **Step 1: Open the patch queue**
+- [x] **Step 1: Open the patch queue**
 
 Run:
 ```bash
@@ -507,7 +552,7 @@ scripts/mole-patches.sh start
 ```
 Expected: `Ready: <repo>/build/mole-work (branch roomformac, 5 patches applied)`.
 
-- [ ] **Step 2: Write the failing tests** — `build/mole-work/tests/uninstall_host_mode.bats`
+- [x] **Step 2: Write the failing tests** — `build/mole-work/tests/uninstall_host_mode.bats`
 
 In `run_host_uninstall`, find:
 ```bash
@@ -789,7 +834,7 @@ Notes on the tests:
 - The manual-removal test restores the folder's mode right after `run`, before any assertion. `run` never fails, so a later failing assertion cannot leave a 555 folder that would break the next test's `rm -rf` in `setup`.
 - The two single-quoted scripts carry the `SC2016` directive that Mole's test lint requires (patch 0005 added the same directive to the older tests).
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/uninstall_host_mode.bats`
 Expected: `14 tests, 8 failures` (as root, `14 tests, 7 failures, 1 skipped`). The five existing tests pass. Of the nine new tests:
@@ -799,7 +844,7 @@ Expected: `14 tests, 8 failures` (as root, `14 tests, 7 failures, 1 skipped`). T
 - `only an app that needs its official uninstaller…`, `a missing path plus…` and `an app in a folder the user cannot write…` fail at `[ "$status" -eq 0 ]`, because today's exit status is 1.
 - `a blocked app next to an app whose scan fails still exits non-zero` **passes** already. It guards the new exit 0 from reaching a failed scan, and must keep passing after Step 5.
 
-- [ ] **Step 4: Render leftover items in app events** — `build/mole-work/lib/core/host.sh`
+- [x] **Step 4: Render leftover items in app events** — `build/mole-work/lib/core/host.sh`
 
 Find:
 ```bash
@@ -851,7 +896,7 @@ mole_json_leftover_items() {
 
 `read` gives the last name (`path`) the rest of the line, separators included, so a path that itself contains `0x1f` still arrives whole. Such a path never appears as `covered_by` (see `_batch_measure_leftovers`).
 
-- [ ] **Step 5: Measure each leftover once, and answer an all-blocked host request with exit 0** — `build/mole-work/lib/uninstall/batch.sh`
+- [x] **Step 5: Measure each leftover once, and answer an all-blocked host request with exit 0** — `build/mole-work/lib/uninstall/batch.sh`
 
 (a) Add the two helpers above `_batch_scan_app_details`. Find:
 ```bash
@@ -1060,7 +1105,7 @@ Replace with:
 ```
 This point is reached only after `_batch_scan_app_details` returned 0, so a scan failure, a timeout or a signal has already returned non-zero above it. It runs before the preview-only return, so previews and real runs get the same answer.
 
-- [ ] **Step 6: Run the tests and neighbouring suites**
+- [x] **Step 6: Run the tests and neighbouring suites**
 
 Run:
 ```bash
@@ -1071,7 +1116,7 @@ scripts/mole-patches.sh test tests/uninstall.bats tests/uninstall_safety.bats te
 ```
 Expected: `14 tests, 0 failures` for the first command (as root, `an app in a folder the user cannot write…` reports a skip instead); every test in the second command passes. None of its uninstall suites sets `MOLE_JSON_EVENTS_FILE`, so they still exercise `calculate_total_size` (only `host_integration.bats` sets it, and it never runs the uninstall scan).
 
-- [ ] **Step 7: Lint and Mole's audits**
+- [x] **Step 7: Lint and Mole's audits**
 
 Run:
 ```bash
@@ -1083,7 +1128,7 @@ scripts/mole-patches.sh lint lib/core/host.sh lib/uninstall/batch.sh
 ```
 Expected: no output from the lint; then `bats-assertion-audit-ok files=1`, a `function-duplication-ok …` line, and the timeout audit's success line. The new functions compare against 124 only through `mole_rc_timeout`.
 
-- [ ] **Step 8: Fold the change into patch 0004**
+- [x] **Step 8: Fold the change into patch 0004**
 
 Run:
 ```bash
@@ -1111,7 +1156,7 @@ scripts/mole-patches.sh test tests/uninstall_host_mode.bats tests/host_integrati
 ```
 Expected: every test passes.
 
-- [ ] **Step 9: Export, rebuild and check the whole queue**
+- [x] **Step 9: Export, rebuild and check the whole queue**
 
 Run the commands one at a time (one engine build at a time, Global Constraints):
 ```bash
@@ -1135,7 +1180,7 @@ Expected:
 
 CI needs no change: its "Patch tests" step already runs `tests/uninstall_host_mode.bats`. The app's next build regenerates its engine expectation from the new `build/engine/VERSION` (`patches_sha256` changes; `patch_count` stays 5).
 
-- [ ] **Step 10: Document the change** — `docs/engine-protocol.md`, section "Uninstall (`bin/uninstall.sh`, patch 0004)"
+- [x] **Step 10: Document the change** — `docs/engine-protocol.md`, section "Uninstall (`bin/uninstall.sh`, patch 0004)"
 
 Find:
 ```markdown
@@ -1221,7 +1266,7 @@ Replace with:
   a batch whose apps were all blocked still exits 1, as in Mole `V1.56.0`.
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add patches/mole/0004-Add-a-host-driven-uninstall-mode.patch \
@@ -1256,6 +1301,8 @@ M  patches/mole/0005-Add-analyze-trash-list-for-GUI-front-ends.patch
 ```
 
 ### Task 2: Engine — patch 0006, removed sizes on clean results
+
+**As built** (`5ff3c0d..07cc282`: `07cc282`; review clean). Built as written.
 
 **Files:**
 - Modify (Mole):
@@ -1300,7 +1347,7 @@ M  patches/mole/0005-Add-analyze-trash-list-for-GUI-front-ends.patch
 
 **How the size travels:** a section measures its items (for the common `safe_clean` path, `_safe_clean_impl` sizes the whole batch with `get_cleanup_path_size_kb`), then calls `safe_remove PATH true SIZE …`. `safe_remove` uses that size, or measures the path itself with `get_path_size_kb` when no size was passed. Today it does either only while the operations log is on, and it throws the number away once the human-readable `detail` is made. After this task it keeps the number in `size_report_kb`, but only when it is a real measurement, and passes it through `log_operation` to `mole_json_event_result`. That function writes it on `removed` results. Nothing changes without the events file: the gate is `oplog_enabled || mole_json_events_enabled`, and `mole_json_event_result` returns at once when events are off.
 
-- [ ] **Step 1: Prepare the work tree**
+- [x] **Step 1: Prepare the work tree**
 
 Task 1 leaves `build/mole-work` holding the amended queue. Recreate it only when it is missing or stale:
 
@@ -1319,7 +1366,7 @@ Expected:
 
 If `git status --short patches/mole` lists changes, the work tree predates Task 1. Run `git checkout -- patches/mole`, then `rm -rf build/mole-work` and `scripts/mole-patches.sh start`, and repeat the checks.
 
-- [ ] **Step 2: Write the failing tests** — `build/mole-work/tests/clean_removed_sizes.bats`
+- [x] **Step 2: Write the failing tests** — `build/mole-work/tests/clean_removed_sizes.bats`
 
 The pipeline tests reuse `clean_selection.bats`'s seams: mocked toolchains, an `rm` guard that refuses paths outside the fake home, and `run_clean_json` with the host variables RoomForMac sets. The unit tests call `safe_remove` or `safe_sudo_remove` in a fresh shell, with fake `du` or `sudo` where a test needs one. A fake `du` has to be an executable on `PATH` (`mole_test_fake_command`), because `run_with_timeout` execs it and never sees shell functions. `_mole_bounded_sudo` calls a `sudo` shell function when one is defined, so the sudo test defines one.
 
@@ -1704,7 +1751,7 @@ EOF
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `scripts/mole-patches.sh test tests/clean_removed_sizes.bats`
 
@@ -1716,7 +1763,7 @@ Expected: `10 tests, 7 failures`. These fail because nothing carries a size yet:
 
 These already pass and must keep passing: `a size probe that fails leaves size_kb out`, `a size probe that times out leaves size_kb out` and `a dry run writes no result events`. They catch an implementation that reports `0` for an unmeasured item, or that writes results during a dry run.
 
-- [ ] **Step 4: Carry the size on removed results** — `lib/core/host.sh`
+- [x] **Step 4: Carry the size on removed results** — `lib/core/host.sh`
 
 Find:
 ```bash
@@ -1767,7 +1814,7 @@ mole_json_event_result() {
 }
 ```
 
-- [ ] **Step 5: Pass the size through `log_operation`** — `lib/core/log.sh`
+- [x] **Step 5: Pass the size through `log_operation`** — `lib/core/log.sh`
 
 Find:
 ```bash
@@ -1793,7 +1840,7 @@ Replace with:
     mole_json_event_result "${1:-unknown}" "${2:-UNKNOWN}" "${3:-}" "${4:-}" "${5:-}"
 ```
 
-- [ ] **Step 6: Measure for the event stream and report the size** — `lib/core/file_ops.sh`, `safe_remove`
+- [x] **Step 6: Measure for the event stream and report the size** — `lib/core/file_ops.sh`, `safe_remove`
 
 Find:
 ```bash
@@ -1865,7 +1912,7 @@ Replace with:
         return 0
 ```
 
-- [ ] **Step 7: The same for `safe_sudo_remove`** — `lib/core/file_ops.sh`
+- [x] **Step 7: The same for `safe_sudo_remove`** — `lib/core/file_ops.sh`
 
 Find (it ends in `else`, not `elif`, so it matches only in `safe_sudo_remove`):
 ```bash
@@ -1934,19 +1981,19 @@ Replace with:
 
 Verify: `grep -c 'size_report_kb' build/mole-work/lib/core/file_ops.sh` prints `10`, and `grep -c 'oplog_enabled || mole_json_events_enabled' build/mole-work/lib/core/file_ops.sh` prints `2`.
 
-- [ ] **Step 8: Check the existing whole-line result assertions**
+- [x] **Step 8: Check the existing whole-line result assertions**
 
 Run: `grep -n '"action":"removed"' build/mole-work/tests/clean_json_events.bats build/mole-work/tests/clean_selection.bats`
 
 Expected: one line, `tests/clean_json_events.bats:101`, in `log_operation mirrors outcomes as result events outside dry runs`. That test calls `log_operation "clean" "REMOVED" "/tmp/rfm/a" "1MB"` with no fifth argument, so its expected line has no `size_kb` and stays as it is. `clean_selection.bats` matches `removed` results by `.path` with `jq`, so an extra key cannot break it. Neither file changes.
 
-- [ ] **Step 9: Run the new tests and neighbouring suites**
+- [x] **Step 9: Run the new tests and neighbouring suites**
 
 Run: `scripts/mole-patches.sh test tests/clean_removed_sizes.bats tests/clean_json_events.bats tests/clean_selection.bats tests/host_integration.bats tests/core_safe_functions.bats tests/file_ops_mole_delete.bats tests/file_ops_safe_remove_symlink.bats tests/history.bats tests/optimize_summary.bats tests/clean_user_core.bats tests/uninstall_host_mode.bats`
 
 Expected: all PASS. `clean_removed_sizes.bats` reports `10 tests, 0 failures`.
 
-- [ ] **Step 10: Lint**
+- [x] **Step 10: Lint**
 
 Run:
 ```bash
@@ -1955,7 +2002,7 @@ scripts/mole-patches.sh lint lib/core/host.sh lib/core/log.sh lib/core/file_ops.
 ```
 Expected: `lint` prints nothing; the audit prints `bats-assertion-audit-ok files=1`.
 
-- [ ] **Step 11: Commit inside the work tree, export, rebuild**
+- [x] **Step 11: Commit inside the work tree, export, rebuild**
 
 ```bash
 git -C build/mole-work add lib/core/host.sh lib/core/log.sh lib/core/file_ops.sh tests/clean_removed_sizes.bats
@@ -1987,7 +2034,7 @@ Expected:
 - `build-engine.sh` ends with `Engine ready: …/build/engine (V1.56.0, 6 patches)`, and `grep` prints `patch_count=6`.
 - The test run on the freshly patched `build/engine-src` reports `10 tests, 0 failures`, so the exported patch reproduces the work tree.
 
-- [ ] **Step 12: Run Mole's full suite, the build checks and the integration suite**
+- [x] **Step 12: Run Mole's full suite, the build checks and the integration suite**
 
 Run these one at a time. `bats scripts/tests/build_engine.bats` rebuilds the engine and re-clones `build/engine-src`, so never start it while another engine build is running.
 ```bash
@@ -2002,7 +2049,7 @@ Expected:
 - `build_engine.bats`: all PASS, except the `status-go --json` check, which skips unless `RFM_ALLOW_PROMPTS=1`.
 - The `Engine integration` suite: PASS, its 4 other tests on `FakeHome`. The package's decoder reads `result` lines that now carry `size_kb`. Task 6 starts using the key; until then it is ignored. `statusStreamsLiveSnapshots` is skipped: until Task 8 it runs `status-go` on the real home, which asks Finder for free space and could raise an Automation prompt.
 
-- [ ] **Step 13: Document the removed sizes** — `docs/engine-protocol.md`
+- [x] **Step 13: Document the removed sizes** — `docs/engine-protocol.md`
 
 Find:
 ```markdown
@@ -2055,7 +2102,7 @@ Replace with:
 ## Selections (`MOLE_SELECTION_FILE`, patch 0003)
 ```
 
-- [ ] **Step 14: Add the new file to CI's patch tests** — `.github/workflows/ci.yml`
+- [x] **Step 14: Add the new file to CI's patch tests** — `.github/workflows/ci.yml`
 
 Find (in the `Patch tests` step):
 ```yaml
@@ -2073,7 +2120,7 @@ Replace with:
 
 Verify: `ruby -ryaml -e 'YAML.load_file(".github/workflows/ci.yml"); puts "ok"'` prints `ok`, and `grep -c 'tests/clean_removed_sizes.bats' .github/workflows/ci.yml` prints `1`.
 
-- [ ] **Step 15: Commit**
+- [x] **Step 15: Commit**
 
 ```bash
 git add patches/mole/0006-Report-removed-sizes-in-clean-result-events.patch docs/engine-protocol.md .github/workflows/ci.yml
@@ -2101,6 +2148,8 @@ A  patches/mole/0006-Report-removed-sizes-in-clean-result-events.patch
 ```
 
 ### Task 3: Engine — `status-bin` stubs and required files
+
+**As built** (`07cc282..c923ec2`: `b5d5752`, `c923ec2`; review clean). Built as written. Final wave: F20 (`5afe314`) added `scripts/tests/status_stub_spy.bash`, which copies a stub and replaces `osascript`/`system_profiler` with logging spies first on `PATH`, so a regression in the stub itself (for example a Bluetooth check quietly removed) fails the test instead of letting a real system query run; `build_engine.bats` and `app_bundle.bats` both use it now (see this task's blocks for the stub scripts).
 
 **Files:**
 - Modify:
@@ -2150,7 +2199,7 @@ A  patches/mole/0006-Report-removed-sizes-in-clean-result-events.patch
 
 All commands run from the repository root. Only one engine build runs at a time: `bats scripts/tests/build_engine.bats`, `scripts/build-engine.sh` and an `xcodebuild` that finds a stale engine all re-clone `build/engine-src`. Let each finish before starting the next.
 
-- [ ] **Step 1: Write the failing engine build checks** — `scripts/tests/build_engine.bats`
+- [x] **Step 1: Write the failing engine build checks** — `scripts/tests/build_engine.bats`
 
 Insert these four tests directly after the test `"the host sudo shim always fails"` (which ends with `[ "$status" -eq 1 ]` and `}`), separated by one blank line on each side. The rest of the file is unchanged.
 
@@ -2199,7 +2248,7 @@ Insert these four tests directly after the test `"the host sudo shim always fail
 
 `[ ]`, `grep` and `bash -n` fail a bats test on bash 3.2 wherever they stand; the only `[[ ]]` is each test's last statement. The probe data type proves the stub passes its arguments through unchanged: a stub that always ran one fixed command would pass the `-listDataTypes` comparison but not this one. `run` merges stderr into `$output`, so `[ -z "$output" ]` also proves the stubs write nothing to stderr.
 
-- [ ] **Step 2: Write the failing bundle checks** — `scripts/tests/app_bundle.bats`
+- [x] **Step 2: Write the failing bundle checks** — `scripts/tests/app_bundle.bats`
 
 Replace the first two comment lines of the header:
 ```bash
@@ -2245,7 +2294,7 @@ Insert these two tests directly after the test `"Contents/Helpers holds exactly 
 
 `lipo -archs` is the test `embed-engine.sh` itself uses to tell Mach-O from scripts. `[ ! -L … ]` is the `!` operand of `[`, not the shell's `!`, so it still fails the test.
 
-- [ ] **Step 3: Run the checks to verify they fail**
+- [x] **Step 3: Run the checks to verify they fail**
 
 Run: `bats scripts/tests/build_engine.bats`
 Expected: FAIL. `setup_file` builds the engine into a temporary directory first (a minute or two). Tests 4–7 are the new ones:
@@ -2264,7 +2313,7 @@ rm -rf "$(dirname "$standin")"
 ```
 Expected: FAIL, `1..2`, then `not ok 1 engine/status-bin holds the two status stubs as executable scripts` (`ls: …/status-bin: No such file or directory`) and `not ok 2 the bundled status stubs refuse Finder and Bluetooth` (exit 127, with a `BW01` warning). `build/engine` was built by Tasks 1–2 and has no `status-bin` yet. Step 16 runs the whole file against a real Release build.
 
-- [ ] **Step 4: Write the stubs** — replace `scripts/build-engine.sh`
+- [x] **Step 4: Write the stubs** — replace `scripts/build-engine.sh`
 
 Two edits against Plan 2's file: the header's `Output:` line, and a `status-bin` block after the `sudo` shim. The block runs after `rm -rf "$OUT"` and before `LICENSE` and `VERSION`, so `VERSION` stays the last file written.
 
@@ -2406,7 +2455,7 @@ printf 'Engine ready: %s (%s, %d patches)\n' "$OUT" "$tag" "${#engine_patches[@]
 
 The quoted `'SHIM'` delimiter keeps `"$@"` and `$arg` literal in the written stubs. `exec` with the absolute `/usr/sbin/system_profiler` can never find the stub again, so there is no loop. A call that names no data type (all types, Bluetooth included) passes through as the interface says; `status-go` never makes one.
 
-- [ ] **Step 5: Lint the build script and the checks**
+- [x] **Step 5: Lint the build script and the checks**
 
 ```bash
 shellcheck scripts/*.sh scripts/lib/*.sh
@@ -2415,7 +2464,7 @@ python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats
 ```
 Expected: no output from the first two, then `bats-assertion-audit-ok files=3`. `scripts/.shellcheckrc` makes shellcheck follow `lib/engine-inputs.sh`, as in CI.
 
-- [ ] **Step 6: Rebuild the engine and run the checks to verify they pass**
+- [x] **Step 6: Rebuild the engine and run the checks to verify they pass**
 
 Run: `RFM_NO_ENGINE_BUILD=1 scripts/ensure-engine.sh`
 Expected: exit 1 with `error: …/build/engine is missing or stale; run scripts/build-engine.sh`. Editing `build-engine.sh` changed `builder_sha256`, so the stamp check (and Xcode's "Prepare engine" phase) now rebuilds.
@@ -2439,7 +2488,7 @@ rm -rf "$(dirname "$standin")"
 ```
 Expected: PASS, `1..2`, `ok 1 engine/status-bin holds the two status stubs as executable scripts`, `ok 2 the bundled status stubs refuse Finder and Bluetooth`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`build/` is git-ignored):
@@ -2465,7 +2514,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 8: Write the failing installation tests** — replace `Packages/MoleEngine/Tests/MoleEngineTests/EngineInstallationTests.swift`
+- [x] **Step 8: Write the failing installation tests** — replace `Packages/MoleEngine/Tests/MoleEngineTests/EngineInstallationTests.swift`
 
 Plan 1's seven tests are unchanged, except that `acceptsACompleteLayout` also checks `statusBinDirectory`. Three tests are new: the two rejections, each run for both stubs, and a check that the shared environment never lists `status-bin`.
 
@@ -2576,12 +2625,12 @@ struct EngineInstallationTests {
 }
 ```
 
-- [ ] **Step 9: Run the tests to verify they fail**
+- [x] **Step 9: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineInstallationTests`
 Expected: FAIL to compile, with `EngineInstallationTests.swift:16:30: error: value of type 'EngineInstallation' has no member 'statusBinDirectory'` and the same error at `EngineInstallationTests.swift:91:75`. The rejection tests do not depend on that error: with the property but Plan 1's lists, `TestInstallation` writes no stubs, so their `removeItem` and `setAttributes` calls throw and all four cases fail.
 
-- [ ] **Step 10: Require the stubs** — replace `Packages/MoleEngine/Sources/MoleEngine/Engine/EngineInstallation.swift`
+- [x] **Step 10: Require the stubs** — replace `Packages/MoleEngine/Sources/MoleEngine/Engine/EngineInstallation.swift`
 
 ```swift
 import Foundation
@@ -2646,7 +2695,7 @@ extension EngineInstallation {
 
 The stubs go at the end of both lists, so a layout missing an older file still reports that file first (`EngineHealthCheckTests.aMissingScriptMeansReinstall` expects `missing bin/clean.sh`).
 
-- [ ] **Step 11: Make the fake layout's stubs refuse** — replace `Packages/MoleEngine/Tests/MoleEngineTests/Support/TestInstallation.swift`
+- [x] **Step 11: Make the fake layout's stubs refuse** — replace `Packages/MoleEngine/Tests/MoleEngineTests/Support/TestInstallation.swift`
 
 `makeLayout` already writes every entry of `requiredFiles`, so it now writes both stubs. The change makes those two refuse like the real ones, so a later test that runs something with this layout's `status-bin` on `PATH` can never reach the real `osascript`.
 
@@ -2697,7 +2746,7 @@ extension EngineEnvironment {
 }
 ```
 
-- [ ] **Step 12: Run the MoleEngine tests to verify they pass**
+- [x] **Step 12: Run the MoleEngine tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineInstallationTests`
 Expected: PASS, `✔ Suite "Engine installation and environment" passed` and `✔ Test run with 10 tests in 1 suite passed` (13 test cases: the three new tests run twice each).
@@ -2708,7 +2757,7 @@ Expected: PASS. Every unit suite passes; without `RFM_ENGINE_DIR` the `Engine in
 Run: `RFM_ENGINE_DIR="$PWD/build/engine" swift test --package-path Packages/MoleEngine --filter analyzerMeasuresAFolder`
 Expected: PASS, `✔ Test run with 1 test in 1 suite passed`. `IntegrationEngine.installation()` validates the engine rebuilt in Step 6 against the new lists, and the test runs `analyze-go` on a `FakeHome` only. The rest of the integration suite waits for Task 8: `statusStreamsLiveSnapshots` still runs `status-go` with the real `HOME` and without the stubs, and could ask Finder.
 
-- [ ] **Step 13: Run the app's engine health tests to verify the stale mirror fails**
+- [x] **Step 13: Run the app's engine health tests to verify the stale mirror fails**
 
 Run:
 ```bash
@@ -2725,7 +2774,7 @@ Expected: `** TEST FAILED **`. The "Prepare engine" phase prints `Engine is up t
 
 `aMissingScriptMeansReinstall`, `anyOtherLocatorErrorIsDescribed` and `theExpectedFingerprintIsTheGeneratedOne` still pass.
 
-- [ ] **Step 14: Update the mirror** — replace `RoomForMacTests/Support/EngineLayout.swift`
+- [x] **Step 14: Update the mirror** — replace `RoomForMacTests/Support/EngineLayout.swift`
 
 ```swift
 import Foundation
@@ -2780,7 +2829,7 @@ enum EngineLayout {
 
 App tests never run these fake files (the health check's self-test goes through `FakeEngineRunner`), so they keep Plan 2's `exit 0` body.
 
-- [ ] **Step 15: Run the app's unit tests to verify they pass**
+- [x] **Step 15: Run the app's unit tests to verify they pass**
 
 Run: the Step 13 command again.
 Expected: `✔ Suite "Engine health check" passed` (9 tests) and `** TEST SUCCEEDED **`.
@@ -2793,7 +2842,7 @@ xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit \
 ```
 Expected: `** TEST SUCCEEDED **`. This includes the other `EngineLayout` users (`AppModelTests`, `RootViewTests`, `SettingsTests`), and `EmbeddedEngineTests` and `ScenarioTests`, whose `EngineInstallation.bundled()` now also requires the embedded stubs.
 
-- [ ] **Step 16: Build Release and run the full bundle checks**
+- [x] **Step 16: Build Release and run the full bundle checks**
 
 Run:
 ```bash
@@ -2810,7 +2859,7 @@ APP="$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3/Build/Products/R
 ```
 Expected: PASS, `1..13`. Every test is `ok`, including `ok 3 Contents/Helpers holds exactly the two Go tools`, `ok 4 engine/status-bin holds the two status stubs as executable scripts` and `ok 5 the bundled status stubs refuse Finder and Bluetooth`. The one skip is `ok 13 the bundled status tool prints a JSON snapshot # skip set RFM_ALLOW_PROMPTS=1 …`.
 
-- [ ] **Step 17: Document the status helpers** — `docs/engine-protocol.md`
+- [x] **Step 17: Document the status helpers** — `docs/engine-protocol.md`
 
 In "Invoking the engine", replace the paragraph:
 ```markdown
@@ -2845,7 +2894,7 @@ shows its "Reinstall RoomForMac" card. They are scripts, so the app keeps them i
 `Contents/Resources/engine/status-bin`; `Contents/Helpers` holds only the two Go tools.
 ```
 
-- [ ] **Step 18: Check the working tree and commit**
+- [x] **Step 18: Check the working tree and commit**
 
 Run: `git status --short`
 Expected: exactly these five lines. `build/`, `RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored.
@@ -2877,6 +2926,8 @@ EOF
 ```
 
 ### Task 4: MoleEngine — `EngineRunControl` (stop that drains output, suspend, resume)
+
+**As built** (`c923ec2..a5a3f2f`: `9c2f53e`, fix round 1 `a5a3f2f`; review found 1 Important, execution ruling X2). The review found that a late `detach()` from an earlier run — one still draining output after its consumer abandoned it — could erase a reused control's link to the run that replaced it, silently dropping that run's stop. Fix round 1 makes `detach(_ process:)` take the `ProcessControl` and clear the phase only when it is still the current one; `MoleRunner` passes its own control. A regression test reuses one control across two runs and proves the stop reaches the second. The ruling's suggested `attach()` assert was deliberately left out, since it would fire on exactly the sanctioned reuse-before-detach case this fix protects (see the task's Concerns). Final wave: F18 (`3ea73eb`, doc/comment only) reworded the stop/SIGKILL comments in `ProcessControl.swift`, `Spawner.swift` and `MoleRunner.swift` to say SIGKILL follows only while the engine's leader is unreaped, and added a note on helpers in their own process group.
 
 **Files:**
 - Create: `Runner/EngineRunControl.swift`, `Tests/MoleEngineTests/EngineRunControlTests.swift`.
@@ -2970,7 +3021,7 @@ EOF
   - The TERM-counting test needs its stub to stay alive after the first stop, until the test releases it.
 - No user-facing strings: `Localizable.xcstrings` does not change. `docs/engine-protocol.md` does not change either; Task 5 writes the host-stop notes.
 
-- [ ] **Step 1: Write the failing tests** — `Packages/MoleEngine/Tests/MoleEngineTests/EngineRunControlTests.swift`
+- [x] **Step 1: Write the failing tests** — `Packages/MoleEngine/Tests/MoleEngineTests/EngineRunControlTests.swift`
 
 The suite is `.serialized` because several tests time silences and deadlines. A failed expectation never leaves a process behind:
 - the ticking stubs are bounded (`seq 100` × 0.1 s), and each of their tests stops its control in a `defer`;
@@ -3454,7 +3505,7 @@ private func lineCount(_ url: URL) -> Int {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineRunControlTests`
 Expected: the test target does not compile, so no test runs. The errors include:
@@ -3466,7 +3517,7 @@ Expected: the test target does not compile, so no test runs. The errors include:
 - `error: value of type 'ProcessControl' has no member 'suspend'`, and the same for `'resume'`
 - `error: value of type 'FakeRunner.Call' has no member 'control'`
 
-- [ ] **Step 3: Write the run control** — `Packages/MoleEngine/Sources/MoleEngine/Runner/EngineRunControl.swift`
+- [x] **Step 3: Write the run control** — `Packages/MoleEngine/Sources/MoleEngine/Runner/EngineRunControl.swift`
 
 ```swift
 import Synchronization
@@ -3640,7 +3691,7 @@ public final class EngineRunControl: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Stop with SIGCONT, suspend and resume in `ProcessControl`** — replace `Packages/MoleEngine/Sources/MoleEngine/Runner/ProcessControl.swift`
+- [x] **Step 4: Stop with SIGCONT, suspend and resume in `ProcessControl`** — replace `Packages/MoleEngine/Sources/MoleEngine/Runner/ProcessControl.swift`
 
 ```swift
 import Darwin
@@ -3729,7 +3780,7 @@ final class ProcessControl: @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 5: Add `stdoutLog` and `control` to the command, and a file stdout to the spawner**
+- [x] **Step 5: Add `stdoutLog` and `control` to the command, and a file stdout to the spawner**
 
 `Packages/MoleEngine/Sources/MoleEngine/Runner/EngineCommand.swift` (replace). The synthesized `==` compares `control` with `EngineRunControl.==`, which is identity. Plan 2's `EngineHealthCheckTests` compares commands without a control (`nil == nil`), so it is unaffected.
 ```swift
@@ -3888,7 +3939,7 @@ enum Spawner {
 }
 ```
 
-- [ ] **Step 6: Check, attach and detach the control in `MoleRunner`** — replace `Packages/MoleEngine/Sources/MoleEngine/Runner/MoleRunner.swift`
+- [x] **Step 6: Check, attach and detach the control in `MoleRunner`** — replace `Packages/MoleEngine/Sources/MoleEngine/Runner/MoleRunner.swift`
 
 The changes are:
 - the stop check before the spawn;
@@ -4028,7 +4079,7 @@ extension EngineError {
 }
 ```
 
-- [ ] **Step 7: Make `FakeRunner` honour the control** — replace `Packages/MoleEngine/Tests/MoleEngineTests/Support/FakeRunner.swift`
+- [x] **Step 7: Make `FakeRunner` honour the control** — replace `Packages/MoleEngine/Tests/MoleEngineTests/Support/FakeRunner.swift`
 
 The call is still recorded when the control was stopped, so tests can see which control a service passed.
 ```swift
@@ -4111,12 +4162,12 @@ func collectAll<Element>(_ stream: AsyncThrowingStream<Element, any Error>) asyn
 }
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineRunControlTests`
 Expected: `✔ Test run with 19 tests in 1 suite passed`, after about 8–10 s (the suite is serialized). No `warning:` lines mention `Runner/` or `EngineRunControlTests.swift`.
 
-- [ ] **Step 9: Prove the SIGCONT tests can fail**
+- [x] **Step 9: Prove the SIGCONT tests can fail**
 
 This step deletes only the SIGCONT in `stop(_:)`, which is indented 12 spaces; the one in `resume()` is indented 16 and stays. It runs the suite, then puts the file back.
 
@@ -4138,7 +4189,7 @@ Expected:
 - The run ends `✘ Test run with 19 tests in 1 suite failed after … with 3 issues.`
 - The last `grep -c` prints `2`. Run Step 8's command again: it passes.
 
-- [ ] **Step 10: Run the runner suite, the package, and the engine integration tests**
+- [x] **Step 10: Run the runner suite, the package, and the engine integration tests**
 
 Run:
 ```bash
@@ -4154,7 +4205,7 @@ Expected:
   - `statusStreamsLiveSnapshots` is skipped because it still runs `status-go` against the real home. Task 8 moves it to `FakeHome` and the `status-bin` stubs.
   - No other engine build may run at the same time.
 
-- [ ] **Step 11: Check the app's engine tests**
+- [x] **Step 11: Check the app's engine tests**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/EngineHealthCheckTests -only-testing:RoomForMacTests/EmbeddedEngineTests`
 Expected:
@@ -4163,7 +4214,7 @@ Expected:
 - `EmbeddedEngineTests` starts the signed `analyze-go` and `status-go` with `-h` through the new `MoleRunner`.
 - The build runs Plan 2's "Prepare engine" phase, so no other engine build may run at the same time.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add Packages/MoleEngine/Sources/MoleEngine/Runner/EngineRunControl.swift \
@@ -4215,6 +4266,8 @@ M  Packages/MoleEngine/Tests/MoleEngineTests/Support/FakeRunner.swift
 ```
 
 ### Task 5: MoleEngine — run options, diagnostics, run completion, log store
+
+**As built** (`a5a3f2f..23aaade`: `23aaade`; review clean). Built as written; production code has no deviations. Two test files needed an expected-value fix for a Swift runtime quirk — `String(describing:)` prints a concrete `CocoaError` differently from the same value boxed as `any Error`, which is how both `RunCompletion.classify` and `EventRun.launchError` actually receive it — so `RunCompletionTests` and `RunDiagnosticsTests` compute their expected strings through the same `as any Error` cast; the code under test is unchanged. Final wave: F18 (`3ea73eb`) reworded the "Stopping a run" section of `docs/engine-protocol.md` alongside Task 4's comment changes.
 
 **Files:**
 - Create: `Run/EngineRunOptions.swift`, `Run/RunDiagnostics.swift`, `Run/RunCompletion.swift`, `Run/EngineLogStore.swift`, `Tests/MoleEngineTests/{RunDiagnosticsTests,RunCompletionTests,EngineLogStoreTests}.swift`.
@@ -4341,7 +4394,7 @@ actor EngineLogStore {
 - **The skeleton's `exit` list** has two values that only fakes can produce. `EngineError.malformedOutput` (no runner throws it) reads `"malformed output"`, and an error that is not an `EngineError` reads `"failed"`.
 - **`EngineLogStore` rotates just before an append would push the current file past `maxFileBytes`.** So a file exceeds the limit only when a single entry is larger than it. `recentText` returns whole entries, separated by one blank line. When even the newest entry does not fit, it returns that entry's first `maxBytes` bytes.
 
-- [ ] **Step 1: Write the failing `RunCompletion` tests** — `Packages/MoleEngine/Tests/MoleEngineTests/RunCompletionTests.swift`
+- [x] **Step 1: Write the failing `RunCompletion` tests** — `Packages/MoleEngine/Tests/MoleEngineTests/RunCompletionTests.swift`
 
 ```swift
 import Foundation
@@ -4460,12 +4513,12 @@ struct RunCompletionTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter RunCompletionTests`
 Expected: the test target does not build: `error: cannot find type 'RunCompletion' in scope` (and `cannot find 'RunCompletion' in scope`).
 
-- [ ] **Step 3: Write `RunCompletion`** — `Packages/MoleEngine/Sources/MoleEngine/Run/RunCompletion.swift`
+- [x] **Step 3: Write `RunCompletion`** — `Packages/MoleEngine/Sources/MoleEngine/Run/RunCompletion.swift`
 
 ```swift
 import Foundation
@@ -4529,12 +4582,12 @@ public enum RunCompletion: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter RunCompletionTests`
 Expected: `✔ Test run with 2 tests in 1 suite passed`. `classifies(_:)` runs its 14 cases and counts as one test.
 
-- [ ] **Step 5: Write the failing diagnostics tests** — `Packages/MoleEngine/Tests/MoleEngineTests/RunDiagnosticsTests.swift`
+- [x] **Step 5: Write the failing diagnostics tests** — `Packages/MoleEngine/Tests/MoleEngineTests/RunDiagnosticsTests.swift`
 
 These tests use Task 4's `EngineRunControl`, `EngineCommand.stdoutLog`/`control` and its `FakeRunner`, and a real `MoleRunner` with `StubScript` and a 500 ms grace period.
 
@@ -4878,12 +4931,12 @@ struct RunDiagnosticsTests {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they fail**
+- [x] **Step 6: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter RunDiagnosticsTests`
 Expected: the test target does not build. The errors include `cannot find type 'RunDiagnostics' in scope` and `cannot find type 'EngineRunOptions' in scope`.
 
-- [ ] **Step 7: Write `EngineRunOptions`** — `Packages/MoleEngine/Sources/MoleEngine/Run/EngineRunOptions.swift`
+- [x] **Step 7: Write `EngineRunOptions`** — `Packages/MoleEngine/Sources/MoleEngine/Run/EngineRunOptions.swift`
 
 ```swift
 import Foundation
@@ -4902,7 +4955,7 @@ public struct EngineRunOptions: Sendable {
 }
 ```
 
-- [ ] **Step 8: Write `RunDiagnostics`** — `Packages/MoleEngine/Sources/MoleEngine/Run/RunDiagnostics.swift`
+- [x] **Step 8: Write `RunDiagnostics`** — `Packages/MoleEngine/Sources/MoleEngine/Run/RunDiagnostics.swift`
 
 ```swift
 import Foundation
@@ -5069,7 +5122,7 @@ extension EngineEvent {
 }
 ```
 
-- [ ] **Step 9: Give the run folder a stdout log** — replace `Packages/MoleEngine/Sources/MoleEngine/Engine/RunFiles.swift`
+- [x] **Step 9: Give the run folder a stdout log** — replace `Packages/MoleEngine/Sources/MoleEngine/Engine/RunFiles.swift`
 
 `make(in:)` also creates `stdout.log` empty with mode 0600, and removes the half-made folder if a file cannot be created. `writeNULSeparated` and `remove` are unchanged.
 
@@ -5124,7 +5177,7 @@ struct RunFiles: Sendable {
 }
 ```
 
-- [ ] **Step 10: Pass options, count events and deliver diagnostics** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/EventRun.swift`
+- [x] **Step 10: Pass options, count events and deliver diagnostics** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/EventRun.swift`
 
 ```swift
 import Foundation
@@ -5293,7 +5346,7 @@ Notes on the code:
 - The callback runs on the run's Task, not on the main actor. The features hop to their own actor inside it (Tasks 11 and 14).
 - A scratch-file failure used to reach the app as a `CocoaError` file error. It now arrives as `.launchFailed`, which Plan 2's `ErrorPresentation` shows as "The engine couldn't start", with the Cocoa error in the details. Plan 2's `ErrorPresentationTests` test `ErrorPresentation` directly and are unaffected.
 
-- [ ] **Step 11: Run the diagnostics tests and the existing service tests**
+- [x] **Step 11: Run the diagnostics tests and the existing service tests**
 
 Run: `swift test --package-path Packages/MoleEngine --filter 'RunDiagnosticsTests|ServicesTests|RunFilesTests|MoleRunnerTests|EngineRunControlTests'`
 Expected:
@@ -5301,7 +5354,7 @@ Expected:
 - `Run diagnostics` passes its 16 tests; `largeStdoutKeepsTheLast64KiBAsValidUTF8(source:)` runs 2 cases.
 - `Services`, `Run files`, `MoleRunner` and Task 4's `EngineRunControl` suite pass unchanged. The services compile without edits because every new `EventRun` parameter has a default.
 
-- [ ] **Step 12: Write the failing log-store tests** — `Packages/MoleEngine/Tests/MoleEngineTests/EngineLogStoreTests.swift`
+- [x] **Step 12: Write the failing log-store tests** — `Packages/MoleEngine/Tests/MoleEngineTests/EngineLogStoreTests.swift`
 
 ```swift
 import Foundation
@@ -5472,12 +5525,12 @@ struct EngineLogStoreTests {
 }
 ```
 
-- [ ] **Step 13: Run the tests to verify they fail**
+- [x] **Step 13: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineLogStoreTests`
 Expected: the test target does not build: `cannot find 'EngineLogStore' in scope`.
 
-- [ ] **Step 14: Write `EngineLogStore`** — `Packages/MoleEngine/Sources/MoleEngine/Run/EngineLogStore.swift`
+- [x] **Step 14: Write `EngineLogStore`** — `Packages/MoleEngine/Sources/MoleEngine/Run/EngineLogStore.swift`
 
 ```swift
 import Darwin
@@ -5676,12 +5729,12 @@ Notes on the code:
 - `oneLine` and `indented` split on every newline kind (`Character.isNewline`). A CR or CRLF in a tail cannot start an unindented line, so only headers begin with `=== `.
 - The app's live store is `EngineLogStore(directory: AppLogLocation.directory())`, which is `~/Library/Logs/RoomForMac`. Its inert default is `EngineLogStore(directory: nil)`. Both come from Task 9's `AppDependencies`. Tests always pass a temporary folder or `nil`.
 
-- [ ] **Step 15: Run the tests to verify they pass**
+- [x] **Step 15: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter EngineLogStoreTests`
 Expected: `✔ Test run with 10 tests in 1 suite passed`.
 
-- [ ] **Step 16: Document host stops, run endings and diagnostics** — append to `docs/engine-protocol.md`
+- [x] **Step 16: Document host stops, run endings and diagnostics** — append to `docs/engine-protocol.md`
 
 Append this section at the end of the file, after the sections Tasks 1–3 added:
 
@@ -5752,7 +5805,7 @@ These rules belong to `Packages/MoleEngine`; the engine needs no patch for them.
   would arrive either way.)
 ````
 
-- [ ] **Step 17: Run the whole package, check for warnings, and run the integration suite**
+- [x] **Step 17: Run the whole package, check for warnings, and run the integration suite**
 
 Run:
 ```bash
@@ -5766,7 +5819,7 @@ Expected:
 - The integration run passes its 4 tests unchanged against the engine Task 3 built, the two analyzer tests, `cleanRemovesExactlyTheSelectedItems` and `uninstallPreviewsThenMovesTheAppToTheTrash`, all on `FakeHome` except `analyzerTrashRefusesProtectedPaths`, which uses the signed-in user's environment until Task 8 moves it (its path is refused before any Trash route runs). The filter is the suite's raw identifier (its test ID; the file name does not match). `statusStreamsLiveSnapshots` is skipped, as in Task 4: until Task 8 it runs `status-go` on the real home without the `status-bin` stubs, which could ask Finder. If `build/engine` is missing, run `scripts/build-engine.sh` first, and never alongside another engine build or `bats scripts/tests`.
 - `git status --short` lists only this task's files.
 
-- [ ] **Step 18: Commit**
+- [x] **Step 18: Commit**
 
 ```bash
 git add Packages/MoleEngine/Sources/MoleEngine/Run/EngineRunOptions.swift \
@@ -5819,6 +5872,8 @@ M  docs/engine-protocol.md
 ```
 
 ### Task 6: MoleEngine — Smart Clean API
+
+**As built** (`23aaade..f8714f7`: `053cc48`, `fcd4289`, `f8714f7`; review clean). Built as written, across three commits (charging and confirming removals; the Smart Clean service seam with rescans and protected paths; the integration pins). Final wave: F17 (`d190ab9`) made `CleanService.protectedPaths` a public read-only property (previously private), so a test can pin that the live wiring actually carries RoomForMac's own paths — see Task 9's As-built note for the `AppDependencies` half of that fix.
 
 **Files:**
 - Create: `Clean/ProtectedPaths.swift`, `Clean/CleanSections.swift`, `Clean/CleanRemoval.swift`, `Tests/MoleEngineTests/{CleanServiceTests,CleanTallyTests}.swift`.
@@ -5936,7 +5991,7 @@ M  docs/engine-protocol.md
 - **One sequence.** `record(_:)` now forwards to `confirm(_:)`, so a tally fed through either method numbers its removals 1, 2, 3, … once each. `CleanRunTally`'s existing behaviour is unchanged: the first `removed` wins, a later `skipped` or `failed` overwrites an earlier non-removal, and unselected removals are logged.
 - **`removedBytes`** charges `result.sizeBytes` (patch 0006; 0 is a real size), then the previewed size. An unknown-size item previewed at 0 is charged what the engine measured at deletion (Ruling 10).
 
-- [ ] **Step 1: Write the failing tally tests** — `Packages/MoleEngine/Tests/MoleEngineTests/CleanTallyTests.swift`
+- [x] **Step 1: Write the failing tally tests** — `Packages/MoleEngine/Tests/MoleEngineTests/CleanTallyTests.swift`
 
 ```swift
 import Foundation
@@ -6121,7 +6176,7 @@ struct CleanTallyTests {
 }
 ```
 
-- [ ] **Step 2: Run the tally tests to verify they fail**
+- [x] **Step 2: Run the tally tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter CleanTallyTests`
 Expected: the test target does not compile, so no test runs. The first errors are:
@@ -6130,7 +6185,7 @@ Expected: the test target does not compile, so no test runs. The first errors ar
 - `Tests/MoleEngineTests/CleanTallyTests.swift:21:28: error: value of type 'CleanRunTally' has no member 'confirm'`
 - `Tests/MoleEngineTests/CleanTallyTests.swift:137:40: error: type 'CleanSelection' has no member 'refresh'`
 
-- [ ] **Step 3: Decode removed sizes** — replace `Packages/MoleEngine/Sources/MoleEngine/Models/ItemResult.swift`
+- [x] **Step 3: Decode removed sizes** — replace `Packages/MoleEngine/Sources/MoleEngine/Models/ItemResult.swift`
 
 ```swift
 import Foundation
@@ -6295,7 +6350,7 @@ private struct RawEvent: Decodable {
 }
 ```
 
-- [ ] **Step 4: Confirmed removals and the selection refresh**
+- [x] **Step 4: Confirmed removals and the selection refresh**
 
 `Packages/MoleEngine/Sources/MoleEngine/Clean/CleanRemoval.swift`
 ```swift
@@ -6515,7 +6570,7 @@ public enum CleanSelection {
 }
 ```
 
-- [ ] **Step 5: Run the tally, selection and decoder tests to verify they pass**
+- [x] **Step 5: Run the tally, selection and decoder tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter CleanTallyTests`
 Expected: `✔ Test run with 13 tests in 1 suite passed`. `anOversizedResultSizeMakesTheLineMalformed(_:)` runs 2 cases and counts as one test.
@@ -6523,7 +6578,7 @@ Expected: `✔ Test run with 13 tests in 1 suite passed`. `anOversizedResultSize
 Run: `swift test --package-path Packages/MoleEngine --filter 'CleanSelectionTests|EngineEventDecoderTests|ServicesTests'`
 Expected: every test passes, with no failures. The existing tally tests still hold: without `size_kb`, `removedBytes` falls back to the previewed sizes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`.build/` is git-ignored):
@@ -6561,7 +6616,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 7: Write the failing service tests** — `Packages/MoleEngine/Tests/MoleEngineTests/CleanServiceTests.swift`
+- [x] **Step 7: Write the failing service tests** — `Packages/MoleEngine/Tests/MoleEngineTests/CleanServiceTests.swift`
 
 The timeout test replaces the fake layout's `bin/clean.sh` with a script that writes one event and sleeps, and runs it through a real `MoleRunner`. The other tests use `FakeRunner`. `CleanDiagnosticsSink` lives here because the integration cases in Step 13 use it too.
 
@@ -6813,7 +6868,7 @@ struct CleanServiceTests {
 }
 ```
 
-- [ ] **Step 8: Run the service tests to verify they fail**
+- [x] **Step 8: Run the service tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter CleanServiceTests`
 Expected: the test target does not compile. The first errors are:
@@ -6822,7 +6877,7 @@ Expected: the test target does not compile. The first errors are:
 - `Tests/MoleEngineTests/CleanServiceTests.swift:39:23: error: generic parameter 'Element' could not be inferred` (the `scan(options:)` call)
 - later: `cannot find 'ProtectedPaths' in scope`, `extra argument 'protectedPaths' in call`, `cannot find 'CleanSections' in scope`
 
-- [ ] **Step 9: Protected paths and the section list**
+- [x] **Step 9: Protected paths and the section list**
 
 `Packages/MoleEngine/Sources/MoleEngine/Clean/ProtectedPaths.swift`
 ```swift
@@ -6939,7 +6994,7 @@ public enum CleanSections {
 }
 ```
 
-- [ ] **Step 10: The service** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/CleanService.swift`
+- [x] **Step 10: The service** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/CleanService.swift`
 
 ```swift
 import Foundation
@@ -7151,7 +7206,7 @@ final class ProtectedRowRelay: Sendable {
 }
 ```
 
-- [ ] **Step 11: Run the service tests and the whole package suite to verify they pass**
+- [x] **Step 11: Run the service tests and the whole package suite to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter CleanServiceTests`
 Expected: `✔ Test run with 10 tests in 1 suite passed`. The timeout test takes about 1 s.
@@ -7159,7 +7214,7 @@ Expected: `✔ Test run with 10 tests in 1 suite passed`. The timeout test takes
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: every test passes, with no failures. `Engine integration` is skipped because `RFM_ENGINE_DIR` is not set. `ServicesTests` still pass unchanged: `scan()` and `clean(_:)` keep working without arguments, and with nothing protected the filter passes every event through.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -7194,7 +7249,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 13: Integration cases on the real engine** — append to `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`, after the closing brace of `` struct `Engine integration` ``
+- [x] **Step 13: Integration cases on the real engine** — append to `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`, after the closing brace of `` struct `Engine integration` ``
 
 The cases join the serialized suite through an extension, so Tasks 7 and 8 can append their own blocks without touching these. Every case runs on a `FakeHome`: its `rm` guard logs any removal outside the fake root, and its tool stubs report no running processes.
 
@@ -7382,7 +7437,7 @@ How each case can fail:
 - `roomForMacsOwnDataIsNeverPreviewedOrRemoved`: with the filter removed, the own cache and log rows appear. If the filter still dropped them but skipped the count, the `"protected"` count would read 0. If the selection were not filtered, the own cache would be deleted and a `removed` result reported for it.
 - `stoppingAScanAfterTheFirstCandidateCancelsIt`: a stop that no longer reaches the engine lets the scan finish with a `summary` and no error.
 
-- [ ] **Step 14: Document the host notes** — `docs/engine-protocol.md`
+- [x] **Step 14: Document the host notes** — `docs/engine-protocol.md`
 
 Insert this block immediately before the line `` ## Selections (`MOLE_SELECTION_FILE`, patch 0003) ``, so it closes the Clean events section after Task 2's "Clean results (patch 0006)" notes (Task 5's host-side notes are a section of their own at the end of the file):
 
@@ -7425,7 +7480,7 @@ Verified against the patched `V1.56.0` engine; `MoleEngine`'s `CleanService`,
   never written to a selection file.
 ```
 
-- [ ] **Step 15: Run the integration cases**
+- [x] **Step 15: Run the integration cases**
 
 Run:
 ```bash
@@ -7441,7 +7496,7 @@ Expected:
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: every unit test passes, and `Engine integration` is skipped.
 
-- [ ] **Step 16: Commit**
+- [x] **Step 16: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -7474,6 +7529,8 @@ MSG
 ```
 
 ### Task 7: MoleEngine — Uninstall API
+
+**As built** (`f8714f7..ea9ef5c`: `ea9ef5c`; review clean). Built as written; every consumed signature matched the brief with no adjustment. Final wave: F19 (`3ea73eb`, doc only) reworded `UninstallService.preview`'s doc comment to say the amended patch 0004 exits 0, and that an older engine's exit 1 is still accepted when its `app_blocked` events cover every requested app.
 
 **Files:**
 - Create: `Uninstall/UninstallRunTally.swift`, `Tests/MoleEngineTests/{UninstallServiceTests,UninstallTallyTests}.swift`, `Tests/MoleEngineTests/Support/{LinesThenErrorRunner,HangingRunner}.swift`.
@@ -7590,7 +7647,7 @@ Paths are relative to `Packages/MoleEngine/Sources/MoleEngine/` and `Packages/Mo
 - **Test Trash.** With `MOLE_TEST_TRASH_DIR` set, `_mole_move_to_trash` (`lib/core/file_ops.sh:2557-2562`) moves the bundle to `<dir>/<basename>.<pid>.<epoch>`, so `RFMTrash.app` lands as `RFMTrash.app.<pid>.<epoch>`.
 - **Cold list.** The metadata cache lives in `$HOME/.cache/mole/uninstall_app_metadata_v3` (`bin/uninstall.sh:42-43`), which `FakeHome` does not create. `_scan_resolve_uncached` (`:820-831`) measures uncached apps with `du` only when there are at most `MOLE_UNINSTALL_INLINE_DU_MAX_COLD_ROWS` of them (default 20, `:55`, an overridable `readonly` default). Otherwise it keeps the 0.04 s `mdls` probe (`:50`, `:92`), which returns nothing for bundles under `/private/var/folders` (not indexed by Spotlight). 21 fixtures, plus the real `/Applications` apps the list also reads, exceed the default, so without the variable every fixture reads size 0.
 
-- [ ] **Step 1: Write the test runners**
+- [x] **Step 1: Write the test runners**
 
 `Packages/MoleEngine/Tests/MoleEngineTests/Support/LinesThenErrorRunner.swift`
 ```swift
@@ -7682,7 +7739,7 @@ final class HangingRunner: EngineRunning, @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 2: Write the failing service tests**
+- [x] **Step 2: Write the failing service tests**
 
 `Packages/MoleEngine/Tests/MoleEngineTests/UninstallServiceTests.swift`
 ```swift
@@ -8037,7 +8094,7 @@ extension UninstallServiceTests {
 
 The tests use Task 4's `FakeRunner`, which records `command.control` and throws `EngineError.cancelled` without answering when the control was stopped, Task 5's diagnostics (`"uninstall.sh --dry-run"`, `"exit 0"`, counts by wire type plus `"unparsed"`), and Plan 1's `eventually`, `collectAll`, `nulSeparatedPaths` and `EngineEnvironment.fixture`.
 
-- [ ] **Step 3: Write the failing tally tests**
+- [x] **Step 3: Write the failing tally tests**
 
 `Packages/MoleEngine/Tests/MoleEngineTests/UninstallTallyTests.swift`
 ```swift
@@ -8179,7 +8236,7 @@ extension UninstallTallyTests {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they fail**
+- [x] **Step 4: Run the tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter 'Uninstall(Service|Tally)Tests'`
 Expected: the test target does not compile. The errors include:
@@ -8192,7 +8249,7 @@ Expected: the test target does not compile. The errors include:
 - `UninstallServiceTests.swift:238:22: error: value of type 'InstalledApp' has no member 'id'`
 - `UninstallTallyTests.swift:8:21: error: cannot find 'UninstallRunTally' in scope`
 
-- [ ] **Step 5: Add per-leftover sizes and identity to the models**
+- [x] **Step 5: Add per-leftover sizes and identity to the models**
 
 Replace `Packages/MoleEngine/Sources/MoleEngine/Models/AppPreview.swift`:
 ```swift
@@ -8394,7 +8451,7 @@ extension InstalledApp: Identifiable {
 }
 ```
 
-- [ ] **Step 6: Decode `leftover_items`** — `Packages/MoleEngine/Sources/MoleEngine/Protocol/EngineEventDecoder.swift`
+- [x] **Step 6: Decode `leftover_items`** — `Packages/MoleEngine/Sources/MoleEngine/Protocol/EngineEventDecoder.swift`
 
 Task 6 changed only the `result` case of this file; these three edits leave it alone.
 
@@ -8465,7 +8522,7 @@ After the closing brace of `var event: EngineEvent?`, inside `RawEvent` (before 
 
 A leftover without `path` fails `RawLeftover`'s decoding, so the whole line is skipped like any other malformed line; `aLeftoverWithoutAPathMakesTheLineMalformed` pins it.
 
-- [ ] **Step 7: Write the run tally**
+- [x] **Step 7: Write the run tally**
 
 `Packages/MoleEngine/Sources/MoleEngine/Uninstall/UninstallRunTally.swift`
 ```swift
@@ -8584,7 +8641,7 @@ public struct UninstallRunTally: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 8: Write the service**
+- [x] **Step 8: Write the service**
 
 Replace `Packages/MoleEngine/Sources/MoleEngine/Services/UninstallService.swift`:
 ```swift
@@ -8775,7 +8832,7 @@ extension UninstallService {
 
 `run.events(…, options:)` and `run.stdoutData(…, options:)` are Task 5's `EventRun`: it passes `options.control` into the `EngineCommand`, reports `options.diagnostics` once before the stream ends, and turns a `RunFiles` failure into `EngineError.launchFailed`. The existing callers `listApps()`, `preview(appPaths:)` and `uninstall(appPaths:)` (Plan 1's `ServicesTests` and integration suite) compile unchanged through the default arguments.
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [x] **Step 9: Run the tests to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter 'Uninstall(Service|Tally)Tests'`
 Expected: PASS, `✔ Test run with 35 tests in 2 suites passed`: 24 in "Uninstall service" (`previewFailuresStillThrow(_:)` runs 6 cases and `aLeftoverSizeTooLargeForBytesMakesTheLineMalformed(_:)` 2; each counts as one test) and 11 in "Uninstall tally".
@@ -8787,7 +8844,7 @@ swift test --package-path Packages/MoleEngine
 ```
 Expected: the `grep` prints nothing. Every unit suite passes, including Plan 1's `ServicesTests` uninstall tests (their requests are fully accounted for) and `EngineEventDecoderTests` (`app` lines without `leftover_items` still decode). Without `RFM_ENGINE_DIR` the `Engine integration` suite is skipped.
 
-- [ ] **Step 10: Check that the key tests can fail**
+- [x] **Step 10: Check that the key tests can fail**
 
 1. In `UninstallService.preview`, delete the line `try Task.checkCancellation()`. Run `swift test --package-path Packages/MoleEngine --filter aCancelledPreviewThrowsInsteadOfReturningPartialResults`. Expected: FAIL. `EngineError.malformedOutput("uninstall preview did not report 1 requested app(s)")` (or `2`, when the cancel lands before Foo's line) is thrown instead of `CancellationError`. Put the line back.
 2. In `UninstallRunTally.recordResult`, replace the `return nil` under `case .removed, .failed:` with `break`. Run `swift test --package-path Packages/MoleEngine --filter 'theFirstResultForAnAppWins|eachRemovalIsReturnedOnce'`. Expected: FAIL; Foo ends `.failed(reason: "late")` and the repeated removal is returned a second time. Restore the `return nil`.
@@ -8795,7 +8852,7 @@ Expected: the `grep` prints nothing. Every unit suite passes, including Plan 1's
 
 Then run Step 9's first command again. Expected: 35 tests pass.
 
-- [ ] **Step 11: Add the integration tests** — `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
+- [x] **Step 11: Add the integration tests** — `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
 
 Add these four tests inside ``struct `Engine integration` ``, after `uninstallPreviewsThenMovesTheAppToTheTrash()` (the suite's `.serialized` and `.enabled(if:)` traits apply to them). They use Plan 1's `FakeHome`: a fake `HOME` and `TMPDIR`, tool stubs, the rm guard and `MOLE_TEST_TRASH_DIR`. The engine only reads the real `/Applications` while listing and scanning.
 ```swift
@@ -8905,7 +8962,7 @@ Add these four tests inside ``struct `Engine integration` ``, after `uninstallPr
     }
 ```
 
-- [ ] **Step 12: Run the uninstall integration tests**
+- [x] **Step 12: Run the uninstall integration tests**
 
 `build/engine` is the engine Task 3 built last (patches 0001–0006 plus the status stubs); this task changes no engine file. Check that it carries Task 1's amendment:
 
@@ -8921,7 +8978,7 @@ Expected: PASS, `✔ Test run with 5 tests in 1 suite passed` (Plan 1's uninstal
 
 Do not run the whole `Engine integration` suite yet. Until Task 8, `statusStreamsLiveSnapshots` starts `status-go` with the real `HOME` and without the stubs (see Task 3, Step 12).
 
-- [ ] **Step 13: Document the host side** — `docs/engine-protocol.md`
+- [x] **Step 13: Document the host side** — `docs/engine-protocol.md`
 
 Insert this subsection at the end of the "Uninstall" section, immediately before the heading ``## Analyzer Trash list (`bin/analyze-go --trash-list FILE`, patch 0005)``:
 ```markdown
@@ -8948,7 +9005,7 @@ Insert this subsection at the end of the "Uninstall" section, immediately before
   nobody requested is kept apart for the diagnostics and never charged.
 ```
 
-- [ ] **Step 14: Check the working tree and commit**
+- [x] **Step 14: Check the working tree and commit**
 
 Run: `git status --short`
 Expected: exactly these lines.
@@ -8997,6 +9054,8 @@ EOF
 ```
 
 ### Task 8: MoleEngine — Status API
+
+**As built** (`ea9ef5c..e6f59ce`: `89fad4c`, `84f1f99`, `e6f59ce`; review clean). Built as written across three commits; every file path, type and signature the brief assumed matched the repository exactly, so no step needed adaptation.
 
 **Files:**
 - Modify:
@@ -9074,7 +9133,7 @@ EOF
 - **Stop timing on the real engine.** Two cases measure a stop: one right after the first line, while the first full collect's helpers run; and one while the process is suspended, which only ends in under 2 s because the stop sends `SIGCONT` after `SIGTERM` (Task 4).
 - **No diagnostics sink.** `StatusServicing.session(interval:)` takes no `EngineRunOptions`, so a status run's `RunDiagnostics` reach nobody. A `status-go` failure still reaches Task 17 as the stream's error.
 
-- [ ] **Step 1: Write the failing snapshot decoding tests** — append to `Packages/MoleEngine/Tests/MoleEngineTests/ReportDecodingTests.swift`, after the closing brace of `struct ReportDecodingTests`
+- [x] **Step 1: Write the failing snapshot decoding tests** — append to `Packages/MoleEngine/Tests/MoleEngineTests/ReportDecodingTests.swift`, after the closing brace of `struct ReportDecodingTests`
 
 The new tests join the `Report decoding` suite through an extension. Each can fail:
 - `aFullSnapshotDecodesEveryHostField` fails on a property spelt `diskIO` or `logicalCPU`, or on any new field left out;
@@ -9283,12 +9342,12 @@ extension ReportDecodingTests {
 }
 ```
 
-- [ ] **Step 2: Run the decoding tests to verify they fail**
+- [x] **Step 2: Run the decoding tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter ReportDecodingTests`
 Expected: the test target does not compile, so no test runs. The first errors are `error: type 'SystemSnapshot' has no member 'decode'` in `ReportDecodingTests.swift`.
 
-- [ ] **Step 3: Parse RFC 3339 dates** — replace `Packages/MoleEngine/Sources/MoleEngine/Protocol/EngineJSON.swift`
+- [x] **Step 3: Parse RFC 3339 dates** — replace `Packages/MoleEngine/Sources/MoleEngine/Protocol/EngineJSON.swift`
 
 ```swift
 import Foundation
@@ -9329,7 +9388,7 @@ enum EngineJSON {
 }
 ```
 
-- [ ] **Step 4: Decode every field a host needs** — replace `Packages/MoleEngine/Sources/MoleEngine/Models/SystemSnapshot.swift`
+- [x] **Step 4: Decode every field a host needs** — replace `Packages/MoleEngine/Sources/MoleEngine/Models/SystemSnapshot.swift`
 
 The existing properties keep their names and types. The new ones are added in the engine's key order, and all of them are optional.
 
@@ -9502,7 +9561,7 @@ extension SystemSnapshot {
 }
 ```
 
-- [ ] **Step 5: Run the decoding tests and their neighbours to verify they pass**
+- [x] **Step 5: Run the decoding tests and their neighbours to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter ReportDecodingTests`
 Expected: `✔ Test run with 13 tests in 1 suite passed`. `collectedAtParsesEveryFormGoWrites(_:_:)` runs 5 cases and `aLineThatIsNotASnapshotDecodesAsNil(_:)` runs 6; each counts as one test. The existing `decodesASnapshotWithNullSensors` now also parses its `collected_at` (9 digits, `+08:00`) and still passes.
@@ -9510,7 +9569,7 @@ Expected: `✔ Test run with 13 tests in 1 suite passed`. `collectedAtParsesEver
 Run: `swift test --package-path Packages/MoleEngine --filter 'EngineEventDecoderTests|ServicesTests'`
 Expected: every test passes. The events, the app inventory and `DiskLevel` decode as before, and `statusStreamsDecodedSnapshots` still gets hosts `a` and `b`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`.build/` is git-ignored):
@@ -9542,7 +9601,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 7: Write the failing session tests** — `Packages/MoleEngine/Tests/MoleEngineTests/StatusSessionTests.swift`
+- [x] **Step 7: Write the failing session tests** — `Packages/MoleEngine/Tests/MoleEngineTests/StatusSessionTests.swift`
 
 The first five tests use `FakeRunner`. The last two start a real process through `MoleRunner`: a `TestInstallation` layout whose `bin/status-go` is a small bash script, with Task 3's `status-bin` stubs next to it. The first of these proves that a spawned collector resolves `osascript` and `system_profiler` to `status-bin`, not `/usr/bin` or `/usr/sbin`. The second proves that the session's own control stops it. Neither runs the real engine.
 
@@ -9692,12 +9751,12 @@ struct StatusSessionTests {
 }
 ```
 
-- [ ] **Step 8: Run the session tests to verify they fail**
+- [x] **Step 8: Run the session tests to verify they fail**
 
 Run: `swift test --package-path Packages/MoleEngine --filter StatusSessionTests`
 Expected: the test target does not compile. The first errors are `error: value of type 'StatusService' has no member 'session'` in `StatusSessionTests.swift`.
 
-- [ ] **Step 9: The session** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/StatusService.swift`
+- [x] **Step 9: The session** — replace `Packages/MoleEngine/Sources/MoleEngine/Services/StatusService.swift`
 
 ```swift
 import Foundation
@@ -9783,7 +9842,7 @@ extension StatusService: StatusServicing {
 }
 ```
 
-- [ ] **Step 10: Run the session tests and the whole package to verify they pass**
+- [x] **Step 10: Run the session tests and the whole package to verify they pass**
 
 Run: `swift test --package-path Packages/MoleEngine --filter StatusSessionTests`
 Expected: `✔ Test run with 7 tests in 1 suite passed`, in about 1 s. The stop test reads three ticks, stops, and ends with `EngineError.cancelled`.
@@ -9791,7 +9850,7 @@ Expected: `✔ Test run with 7 tests in 1 suite passed`, in about 1 s. The stop 
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: every test passes, with no failures. `Engine integration` is skipped because `RFM_ENGINE_DIR` is not set. `ServicesTests.statusStreamsDecodedSnapshots` passes unchanged: `snapshots(interval:)` still sends `--watch --interval 2s` with no timeout.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -9820,7 +9879,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 12: Integration cases on the real engine** — `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
+- [x] **Step 12: Integration cases on the real engine** — `Packages/MoleEngine/Tests/MoleEngineTests/Integration/EngineIntegrationTests.swift`
 
 First, move `statusStreamsLiveSnapshots` to a fake home. Replace the start of the test:
 
@@ -10016,7 +10075,7 @@ How each case can fail:
 - `statusStreamsLiveSnapshots` still fails if no snapshot has CPU cores and total memory.
 - `analyzerTrashRefusesProtectedPaths` still fails if `/System/Library` is not refused, or no longer exists.
 
-- [ ] **Step 13: Document live status** — `docs/engine-protocol.md`
+- [x] **Step 13: Document live status** — `docs/engine-protocol.md`
 
 Insert this section directly above the ``## Status helpers (`status-bin/`, no patch)`` heading that Task 3 added, so the reader meets the command before its helpers:
 
@@ -10081,7 +10140,7 @@ A host ignores `uptime`, `proxy`, `sensors` (always `null`), `bluetooth` (the en
 `process_alerts`.
 ```
 
-- [ ] **Step 14: Run the status integration cases**
+- [x] **Step 14: Run the status integration cases**
 
 Run:
 ```bash
@@ -10098,7 +10157,7 @@ Expected:
 Run: `swift test --package-path Packages/MoleEngine`
 Expected: every unit test passes, and `Engine integration` is skipped.
 
-- [ ] **Step 15: Commit**
+- [x] **Step 15: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -10132,6 +10191,8 @@ MSG
 ```
 
 ### Task 9: App foundation — removal seams, run queue, own data, services, run problem card
+
+**As built** (`e6f59ce..5de6027`: `5de6027`; review clean). Built as written; every file later tasks Find/Replace against was written verbatim, including comments and blank lines. Final wave: F11 (`1622fb0`) added `ByteText.total(_:hasUnknownSizes:)`, returning nil for an all-unknown zero total so a caller can show "Size unknown" instead of "at least Zero KB" (Tasks 10 and 12 consume it). F17 (`d190ab9`) deleted `AppDependencies.protectedPaths` — nothing read it — and added `AppDependencies.liveServices(ownData:)`, which `live()` now calls verbatim, so a test can construct the same live clean service `live()` builds without also constructing checkers and sensors; see Task 6's As-built note for the matching `CleanService` change.
 
 **Files:**
 - Create:
@@ -10300,7 +10361,7 @@ extension RunDiagnosticsReport {
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the removal fakes and the failing seam tests**
+- [x] **Step 1: Write the removal fakes and the failing seam tests**
 
 `RoomForMacTests/Support/RemovalFakes.swift`
 ```swift
@@ -10600,7 +10661,7 @@ private struct GatedReporter: RunReporter {
 
 `theCompositeAwaitsEachReporterBeforeTheNext` holds the first reporter at a `FakeChecker.Gate` and checks that the second has not run. A composite that ran its reporters concurrently would log `second:scan` while the first is held. `FileProbesTests` restores the locked folder's mode, so `TemporaryDirectory` can remove it.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -10611,7 +10672,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. Among the errors: `cannot find type 'RemovalGate' in scope` (`RemovalFakes.swift`), `cannot find 'RemovalFeature' in scope` and `cannot find 'FileProbes' in scope` (`RemovalSeamsTests.swift`).
 
-- [ ] **Step 3: Write the seams and the reporters**
+- [x] **Step 3: Write the seams and the reporters**
 
 `RoomForMac/Features/Removal/RemovalSeams.swift`
 ```swift
@@ -10783,12 +10844,12 @@ struct CompositeRunReporter: RunReporter {
 
 The protocol requirements are nonisolated and `async`, so Plan 5's actors and the `@MainActor` notifier and monitor (Tasks 17 and 20) can conform. Each value holds numbers, a UUID and enums only: `reportsAndRequestsCarryNoText` fails as soon as someone adds a text field.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Removal seams" passed` (10 tests), `✔ Suite "File probes" passed` (2 tests), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 5: Write the failing queue tests** — `RoomForMacTests/DestructiveRunQueueTests.swift`
+- [x] **Step 5: Write the failing queue tests** — `RoomForMacTests/DestructiveRunQueueTests.swift`
 
 ```swift
 import Foundation
@@ -10900,7 +10961,7 @@ struct DestructiveRunQueueTests {
 
 `waitUntilIdleReturnsWhenTheLeaseEnds` waits until both waiters are parked (`pendingWaiters == 2`) before it ends the lease, so the test does not depend on scheduling. The suite's one-minute limit turns a waiter that is never resumed into a failure instead of a hang.
 
-- [ ] **Step 6: Run the tests to verify they fail**
+- [x] **Step 6: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -10911,7 +10972,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`: `cannot find 'DestructiveRunQueue' in scope` and `cannot find 'DestructiveRunKind' in scope` in `DestructiveRunQueueTests.swift`.
 
-- [ ] **Step 7: Write the queue** — `RoomForMac/Features/Removal/DestructiveRunQueue.swift`
+- [x] **Step 7: Write the queue** — `RoomForMac/Features/Removal/DestructiveRunQueue.swift`
 
 ```swift
 import Foundation
@@ -11032,12 +11093,12 @@ final class DestructiveRunLease {
 
 `withCheckedContinuation` runs its closure on the main actor without suspending first, so no lease can end between the `active` check and the append.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: the Step 6 command again.
 Expected: `✔ Suite "Destructive run queue" passed` (8 tests) and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 9: Write the failing own-data and size-text tests**
+- [x] **Step 9: Write the failing own-data and size-text tests**
 
 `RoomForMacTests/OwnDataTests.swift`
 ```swift
@@ -11189,7 +11250,7 @@ struct ByteTextTests {
 
 The unrelated paths include near misses: a longer bundle identifier, a sibling with the same prefix, and another user's home. A prefix match without the `/` boundary would protect them and fail. `1.5 MiB` tells binary from decimal units: 1 572 864 bytes read "1.6 MB" in decimal units and "1.5 MB" in binary ones.
 
-- [ ] **Step 10: Run the tests to verify they fail**
+- [x] **Step 10: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -11200,7 +11261,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`: `type 'ProtectedPaths' has no member 'roomForMac'`, `cannot find 'AppLogLocation' in scope` and `cannot find 'ByteText' in scope`.
 
-- [ ] **Step 11: Write the own-data list and the size text**
+- [x] **Step 11: Write the own-data list and the size text**
 
 `RoomForMac/Features/Removal/OwnData.swift`
 ```swift
@@ -11323,12 +11384,12 @@ enum ByteText {
 }
 ```
 
-- [ ] **Step 12: Run the tests to verify they pass**
+- [x] **Step 12: Run the tests to verify they pass**
 
 Run: the Step 10 command again.
 Expected: `✔ Suite "RoomForMac's own data" passed` (8 tests; the two parameterized ones run 10 and 8 cases), `✔ Suite "Byte text" passed` (5 tests), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 13: Write the failing services tests** — `RoomForMacTests/EngineServicesTests.swift`
+- [x] **Step 13: Write the failing services tests** — `RoomForMacTests/EngineServicesTests.swift`
 
 ```swift
 import Foundation
@@ -11492,7 +11553,7 @@ struct AppModelServicesTests {
 }
 ```
 
-- [ ] **Step 14: Run the tests to verify they fail**
+- [x] **Step 14: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -11504,7 +11565,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`: `cannot find 'EngineServices' in scope`, `value of type 'AppDependencies' has no member 'protectedPaths'` and `value of type 'AppModel' has no member 'services'`.
 
-- [ ] **Step 15: Write the services** — `RoomForMac/Engine/EngineServices.swift`
+- [x] **Step 15: Write the services** — `RoomForMac/Engine/EngineServices.swift`
 
 ```swift
 import Foundation
@@ -11585,7 +11646,7 @@ extension AsyncThrowingStream where Failure == any Error {
 }
 ```
 
-- [ ] **Step 16: Give the dependencies the new seams** — replace `RoomForMac/App/AppDependencies.swift`
+- [x] **Step 16: Give the dependencies the new seams** — replace `RoomForMac/App/AppDependencies.swift`
 
 The new properties follow `loginItem`, so Plan 2's memberwise calls (`AppDependencies(preferences:engineCheck:openURL:)` in the tests, the full list in `live()` and `forScenario`) compile unchanged. Only `live()` changes: it sets the services, the protected paths, the host app path and the log folder. Everything under `#if DEBUG` is Plan 2's code, unchanged.
 
@@ -11757,7 +11818,7 @@ struct AppDependencies {
 }
 ```
 
-- [ ] **Step 17: Make the services when the engine is ready** — replace `RoomForMac/App/AppModel.swift`
+- [x] **Step 17: Make the services when the engine is ready** — replace `RoomForMac/App/AppModel.swift`
 
 ```swift
 import MoleEngine
@@ -11865,12 +11926,12 @@ final class AppModel {
 }
 ```
 
-- [ ] **Step 18: Run the tests to verify they pass**
+- [x] **Step 18: Run the tests to verify they pass**
 
 Run: the Step 14 command again.
 Expected: `✔ Suite "Engine services" passed` (4 tests), `✔ Suite "App model services" passed` (4 tests), and Plan 2's `✔ Suite "App model" passed` and `✔ Suite "App dependencies" passed`, then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 19: Write the failing card tests** — `RoomForMacTests/RunProblemCardTests.swift`
+- [x] **Step 19: Write the failing card tests** — `RoomForMacTests/RunProblemCardTests.swift`
 
 ```swift
 import Foundation
@@ -11996,7 +12057,7 @@ struct RunProblemCardTests {
 
 The start time is 1 790 000 000 s after 1970 (`2026-09-21T14:13:20Z`), and the run lasts exactly 7.5 s, so the report's text is fixed. The render tests follow `RootViewTests`: the card must differ from a transparent frame (`RenderedPixels.transparent`, never a render of `Color.clear`) and between light and dark by at least 1 000 pixels.
 
-- [ ] **Step 20: Run the tests to verify they fail**
+- [x] **Step 20: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -12007,7 +12068,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`: `type 'AccessibilityID' has no member 'runProblemCard'`, `cannot find 'RunDiagnosticsReport' in scope` and `cannot find 'RunProblemCard' in scope`.
 
-- [ ] **Step 21: Write the identifiers and the card**
+- [x] **Step 21: Write the identifiers and the card**
 
 Append to `RoomForMac/App/AccessibilityID.swift`:
 ```swift
@@ -12216,12 +12277,12 @@ struct RunProblemCard: View {
 
 `Text(presentation.title)`, `Text(presentation.message)` and the details take a `String`, so they show it verbatim: `ErrorPresentation` and `RunDiagnosticsReport` have already localized their labels. Every literal in the view (`"Show details"`, `"Copied"`, `"Copy diagnostics"`, `"Try again"`) is a `LocalizedStringKey`. The retry label is an `if`/`else` rather than `retryTitle ?? "Try again"`, so the string extractor sees the literal. The card keeps its buttons reachable with `.accessibilityElement(children: .contain)` and names the group with the title.
 
-- [ ] **Step 22: Run the tests to verify they pass**
+- [x] **Step 22: Run the tests to verify they pass**
 
 Run: the Step 20 command again.
 Expected: `✔ Suite "Run problem card" passed` (7 tests) and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 23: Run the whole unit scheme**
+- [x] **Step 23: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -12234,7 +12295,7 @@ grep -E '(Features/Removal/[A-Za-z]+|DesignSystem/ByteText|Engine/(EngineService
 ```
 Expected: the log ends with `** TEST SUCCEEDED **`, and the `grep` prints nothing, so this task's files have no warnings. Every Plan 2 suite still passes: `ScenarioTests`, `SettingsTests`, `OnboardingFinishTests` and `OnboardingViewTests` build `AppDependencies` with the memberwise initializer or `forScenario` and get the inert defaults, so every `AppModel.start()` among them makes `EngineServices.unavailable`, which spawns nothing.
 
-- [ ] **Step 24: Add the new strings to the String Catalog**
+- [x] **Step 24: Add the new strings to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 23 build left for the app target. `-derivedDataPath` must match Step 23, or `OBJ` points at another build:
 ```bash
@@ -12247,7 +12308,7 @@ git diff --stat RoomForMac/Resources/Localizable.xcstrings
 ```
 Expected: `ls` lists both files under `…/RoomForMac-plan3/Build/Intermediates.noindex/…/Objects-normal/arm64/`. `xcstringstool` prints nothing and exits 0. The diff adds exactly these 16 keys, each an empty entry, and removes nothing: `%@/s`, `(empty)`, `(none)`, `Command: %@`, `Duration: %@ s`, `Engine run`, `Events: %@`, `Exit: %@`, `Standard error (end):`, `Standard output (end):`, `Started: %@`, `Try again`, `Unexpected removals:`, `Wait for cleaning to finish.`, `Wait for the uninstall to finish.`, `at least %@`. `Copied`, `Copy diagnostics` and `Show details` are Plan 2's keys and do not change. `--skip-marking-strings-stale` keeps the sync from marking other tasks' keys stale.
 
-- [ ] **Step 25: Commit**
+- [x] **Step 25: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -12298,6 +12359,8 @@ EOF
 ```
 
 ### Task 10: Smart Clean — preview, plan, outcomes, copy, catalog, timings, labels
+
+**As built** (`5de6027..58992ed`: `c0bedfc`, `6a88135`, `58992ed`; review clean), across three commits (scan preview and clean plan; outcomes, progress and copy; section timings and row labels). One test-only workaround: `CleanPreviewTests.refreshDropsVanishedRowsAndTakesFreshSizes` binds a grown size to a typed `Int64` local instead of comparing an optional chain directly against an inline arithmetic literal, because of a Swift Testing `#expect` misevaluation on this toolchain (Xcode 27.0, Swift 6.4); `CleanPreview`/`CleanSelection.refresh` themselves are unaffected. Final wave (`1622fb0`) touched several of this task's files: F9 added `ItemOutcome.interrupted` ("Stopped while cleaning: part of it may be gone"), so `CleanProgress.report` no longer marks an item `.notReached`/`.alreadyGone` when a stop cut its section short; F10 added `CleanPreview.cleanableBytes`/`cleanableCount`/`cleanableHasUnknownSizes` — what Select All would clean, leaving out password-gated rows; F12 gave `~/.Trash` and `~/Library/Logs` rows a "Trash · <name>"/"Logs · <name>" label in `CleanItemLabeler.swift`; F16 reworded the protected-path explanation in `CleanOutcome.swift`'s copy to "It matches a rule in your protected-files list."
 
 **Files:**
 - Create:
@@ -12509,7 +12572,7 @@ EOF
 
 The work runs in three rounds, each with its own commit: the preview and plan, then outcomes, progress and copy, then timings, scan progress and labels. All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing preview tests** — `RoomForMacTests/CleanPreviewTests.swift`
+- [x] **Step 1: Write the failing preview tests** — `RoomForMacTests/CleanPreviewTests.swift`
 
 The fixture is research §1.1's captured dry run: Chrome's row is covered by Google's in another section, Yarn/v6 by Yarn, one row has an unknown size, and the clang cache lies outside the home folder. It adds a Time Machine row and a section the app does not know.
 
@@ -12909,7 +12972,7 @@ struct CleanPreviewTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/CleanPreviewTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
@@ -12917,7 +12980,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `RoomForMacTests/CleanPreviewTests.swift:49:9: error: cannot find 'CleanPreview' in scope`
 - `RoomForMacTests/CleanPreviewTests.swift:53:42: error: cannot find type 'CleanItemID' in scope`
 
-- [ ] **Step 3: Write the preview** — `RoomForMac/Features/SmartClean/CleanPreview.swift`
+- [x] **Step 3: Write the preview** — `RoomForMac/Features/SmartClean/CleanPreview.swift`
 
 ```swift
 import Foundation
@@ -13324,7 +13387,7 @@ Notes on the code:
 - `Layout` computes sections, coverage and totals from a list of rows. The initializer and `refresh(with:)` both build one, so a refreshed preview follows the same rules as a fresh one.
 - `normalized(_:)` is the one place that keeps the selection free of covered rows. `toggle`, `setSection`, `selectAll` and `replaceSelection` all pass through it.
 
-- [ ] **Step 4: Write the plan** — `RoomForMac/Features/SmartClean/CleanPlan.swift`
+- [x] **Step 4: Write the plan** — `RoomForMac/Features/SmartClean/CleanPlan.swift`
 
 ```swift
 import Foundation
@@ -13408,12 +13471,12 @@ enum CleanBytes {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Clean preview" passed after … seconds`, `✔ Test run with 21 tests in 1 suite passed after … seconds` and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 These files add no user-facing strings, so the String Catalog does not change.
 Run: `git status --short`
@@ -13448,7 +13511,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 7: Write the failing outcome and progress tests** — `RoomForMacTests/CleanOutcomeTests.swift` and `RoomForMacTests/CleanProgressTests.swift`
+- [x] **Step 7: Write the failing outcome and progress tests** — `RoomForMacTests/CleanOutcomeTests.swift` and `RoomForMacTests/CleanProgressTests.swift`
 
 `RoomForMacTests/CleanOutcomeTests.swift` (the copy, the headlines and notes, and the section catalog):
 
@@ -13891,7 +13954,7 @@ struct CleanProgressTests {
 }
 ```
 
-- [ ] **Step 8: Run the tests to verify they fail**
+- [x] **Step 8: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/CleanOutcomeTests -only-testing:RoomForMacTests/CleanProgressTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
@@ -13899,7 +13962,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `RoomForMacTests/CleanOutcomeTests.swift:143:24: error: cannot find 'CleanRunCopy' in scope`
 - `RoomForMacTests/CleanProgressTests.swift:43:24: error: cannot find 'CleanProgress' in scope`
 
-- [ ] **Step 9: Write the outcomes, their copy and the report** — `RoomForMac/Features/SmartClean/CleanOutcome.swift`
+- [x] **Step 9: Write the outcomes, their copy and the report** — `RoomForMac/Features/SmartClean/CleanOutcome.swift`
 
 ```swift
 import Foundation
@@ -14243,7 +14306,7 @@ struct CleanReport: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 10: Write the section catalog** — `RoomForMac/Features/SmartClean/CleanSectionCatalog.swift`
+- [x] **Step 10: Write the section catalog** — `RoomForMac/Features/SmartClean/CleanSectionCatalog.swift`
 
 ```swift
 import Foundation
@@ -14297,7 +14360,7 @@ enum CleanSectionCatalog {
 }
 ```
 
-- [ ] **Step 11: Write the clean progress** — `RoomForMac/Features/SmartClean/CleanProgress.swift`
+- [x] **Step 11: Write the clean progress** — `RoomForMac/Features/SmartClean/CleanProgress.swift`
 
 ```swift
 import Foundation
@@ -14436,7 +14499,7 @@ struct CleanProgress: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 12: Run the tests: one plural is still missing**
+- [x] **Step 12: Run the tests: one plural is still missing**
 
 Run: the Step 8 command again.
 Expected: 23 of the 24 tests pass. One fails, because the String Catalog has no plural for the headline yet:
@@ -14447,7 +14510,7 @@ Expected: 23 of the 24 tests pass. One fails, because the String Catalog has no 
 ```
 The size follows the Mac's region format ("2 GB" in English). No other test fails: every other string reads the same from its key.
 
-- [ ] **Step 13: Add the new strings and the headline plural to the String Catalog**
+- [x] **Step 13: Add the new strings and the headline plural to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 12 build left for the app target. `-derivedDataPath` must match Step 12, or `OBJ` points at another build:
 ```bash
@@ -14507,12 +14570,12 @@ plutil -p "$TMPDIR/rfm-xcstrings/en.lproj/Localizable.stringsdict"
 ```
 Expected: `compile` prints nothing and exits 0. `plutil` shows two entries: Plan 2's `Engine %@ (%@, %lld patches)`, and `Freed %@ · %lld items removed` with `NSStringLocalizedFormatKey` `%2$#@value@`, `NSStringFormatValueTypeKey` `lld`, `one` `Freed %1$@ · %2$lld item removed` and `other` `Freed %1$@ · %2$lld items removed`. The compiler picks the second argument, the only integer, for the plural rule.
 
-- [ ] **Step 14: Run the tests to verify they pass**
+- [x] **Step 14: Run the tests to verify they pass**
 
 Run: the Step 8 command again.
 Expected: `✔ Suite "Clean outcome copy" passed` (14 tests), `✔ Suite "Clean progress" passed` (10 tests), `✔ Test run with 24 tests in 2 suites passed after … seconds` and `** TEST SUCCEEDED **`. The parameterized tests report their cases: `everyKnownSkipHasItsOwnCopy(detail:)` 10, `everyKnownFailureHasItsOwnCopy(detail:)` 14, `everyRunCompletionHasAHeadline(_:)` 15 and `theCleanupReportIsPathFree(completion:ending:)` 5.
 
-- [ ] **Step 15: Commit**
+- [x] **Step 15: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -14550,7 +14613,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 16: Write the failing timing, scan-progress and label tests** — `RoomForMacTests/SectionTimingsTests.swift` and `RoomForMacTests/CleanItemLabelerTests.swift`
+- [x] **Step 16: Write the failing timing, scan-progress and label tests** — `RoomForMacTests/SectionTimingsTests.swift` and `RoomForMacTests/CleanItemLabelerTests.swift`
 
 `RoomForMacTests/SectionTimingsTests.swift` (timings, `ScanProgress` and the stored preference; the suite keeps its `TemporaryDefaults` for the whole test):
 
@@ -14789,7 +14852,7 @@ struct CleanItemLabelerTests {
 }
 ```
 
-- [ ] **Step 17: Run the tests to verify they fail**
+- [x] **Step 17: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SectionTimingsTests -only-testing:RoomForMacTests/CleanItemLabelerTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
@@ -14798,7 +14861,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `RoomForMacTests/SectionTimingsTests.swift:151:31: error: value of type 'AppPreferences' has no member 'cleanSectionTimings'`
 - `RoomForMacTests/CleanItemLabelerTests.swift:12:16: error: cannot find 'CleanItemLabeler' in scope`
 
-- [ ] **Step 18: Store the timings in preferences** — edit `RoomForMac/App/AppPreferences.swift` (Plan 2's version; no Plan 3 task has changed it before this one)
+- [x] **Step 18: Store the timings in preferences** — edit `RoomForMac/App/AppPreferences.swift` (Plan 2's version; no Plan 3 task has changed it before this one)
 
 1. Find:
    ```swift
@@ -14991,7 +15054,7 @@ struct AppPreferences: @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 19: Write the timings** — `RoomForMac/Features/SmartClean/SectionTimings.swift`
+- [x] **Step 19: Write the timings** — `RoomForMac/Features/SmartClean/SectionTimings.swift`
 
 ```swift
 import Foundation
@@ -15078,7 +15141,7 @@ struct SectionTimings: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 20: Write the scan progress** — `RoomForMac/Features/SmartClean/ScanProgress.swift`
+- [x] **Step 20: Write the scan progress** — `RoomForMac/Features/SmartClean/ScanProgress.swift`
 
 ```swift
 import Foundation
@@ -15169,7 +15232,7 @@ struct ScanProgress: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 21: Write the labeler** — `RoomForMac/Features/SmartClean/CleanItemLabeler.swift`
+- [x] **Step 21: Write the labeler** — `RoomForMac/Features/SmartClean/CleanItemLabeler.swift`
 
 ```swift
 import AppKit
@@ -15272,12 +15335,12 @@ enum CleanItemLabeler {
 }
 ```
 
-- [ ] **Step 22: Run the tests to verify they pass**
+- [x] **Step 22: Run the tests to verify they pass**
 
 Run: the Step 17 command again.
 Expected: `✔ Suite "Section timings and scan progress" passed` (12 tests), `✔ Suite "Clean item labels" passed` (3 tests; `theLabelTable(path:expected:)` reports 20 cases), `✔ Test run with 15 tests in 2 suites passed after … seconds` and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 23: Run the whole unit scheme**
+- [x] **Step 23: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -15294,7 +15357,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. This task's five suites (60 tests) pass together with every Plan 2 suite and Task 9's suites; Plan 2's `AppPreferencesTests` still pass, because no existing key changed.
 - Both `grep`s print nothing: this task's files have no warnings, and no test asks Launch Services for an app name.
 
-- [ ] **Step 24: Add the label strings to the String Catalog**
+- [x] **Step 24: Add the label strings to the String Catalog**
 
 Run the Step 13 sync again, against the Step 23 build:
 ```bash
@@ -15307,7 +15370,7 @@ git diff RoomForMac/Resources/Localizable.xcstrings | grep -E '^[+-]    "'
 ```
 Expected: `xcstringstool` prints nothing and exits 0. The last command prints exactly 6 lines, `+    "<key>" : {` for each of these keys, which the sync adds as empty entries: `Clang module cache`, `Logs`, `Trash`, `Xcode build data`, `Xcode build data · %@`, `iOS software update`. No line starts with `-`, so nothing is removed, and the headline plural from Step 13 does not change. `SectionTimings.swift`, `ScanProgress.swift` and the preferences add no keys.
 
-- [ ] **Step 25: Commit**
+- [x] **Step 25: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -15346,6 +15409,8 @@ MSG
 ```
 
 ### Task 11: Smart Clean — `SmartCleanModel`
+
+**As built** (`58992ed..eefc567`: `e19f6d6`, `842de5f`, fix round 1 `eefc567`; review approved with 5 minors, 3 promoted — execution ruling X3). Built as written; no deviations from the brief. Fix round 1 settled the three promoted minors: `requestClean()` now re-checks that the phase still matches the refreshed preview before rebuilding the plan and calling the gate, since a selection change or a new scan during the recheck's last await could otherwise spend a gate answer on a plan no longer on screen; `isFresh` now rejects a preview dated after `now` as fresh, so a backward clock change can no longer skip the recheck forever; `show(_:note:)` now clears a stale `gateDecision` on any transition outside `.results`, including into `.failed` and past `done()`. The regression test for the first finding drives a real blocking file write through a named pipe on `EngineLogStore` (which has no test seam) to land the race deterministically, rather than relying on a sleep. Final wave (`1622fb0`): F10 made `SmartCleanModel` build `ScanReport` (and so its notification) from the cleanable totals rather than the full scan; F15 added `SmartCleanNote.itemsGone(count:)`, so a recheck that drops rows says so, carried through the confirmation sheet and back to results on cancel.
 
 **Files:**
 - Create: `RoomForMac/Features/SmartClean/SmartCleanModel.swift`, `RoomForMacTests/SmartCleanModelTests.swift`, `RoomForMacTests/Support/ScriptedCleanService.swift`.
@@ -15504,7 +15569,7 @@ MSG
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the scripted service** — `RoomForMacTests/Support/ScriptedCleanService.swift`
+- [x] **Step 1: Write the scripted service** — `RoomForMacTests/Support/ScriptedCleanService.swift`
 
 ```swift
 import Foundation
@@ -15637,7 +15702,7 @@ final class ScriptedCleanService: CleanServicing, @unchecked Sendable {
 }
 ```
 
-- [ ] **Step 2: Write the failing model tests** — `RoomForMacTests/SmartCleanModelTests.swift`
+- [x] **Step 2: Write the failing model tests** — `RoomForMacTests/SmartCleanModelTests.swift`
 
 The tests cover every row of the transition table: the guard, scanning, each scan ending, selection, the gate, the lease, cleaning, each clean ending, the recheck, and the entry and exit calls. They use only the scripted service, Task 9's removal fakes, `TemporaryDefaults`, `TemporaryDirectory` and `FakeChecker.Gate`. The clock is a `Locked<Date>` the tests move, and `FileProbes` answers from a `Locked<Set<String>>`.
 
@@ -16438,7 +16503,7 @@ struct SmartCleanModelTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SmartCleanModelTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The first errors are:
@@ -16448,7 +16513,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The fir
 
 `ScriptedCleanService.swift` itself compiles: it needs only MoleEngine and `FakeChecker.Gate`.
 
-- [ ] **Step 4: Write the model** — `RoomForMac/Features/SmartClean/SmartCleanModel.swift`
+- [x] **Step 4: Write the model** — `RoomForMac/Features/SmartClean/SmartCleanModel.swift`
 
 ```swift
 import Foundation
@@ -17022,12 +17087,12 @@ Notes on the code:
 - `stop()` changes only the flag in the phase's progress, then calls the running command's control. The stream keeps delivering until it ends (Task 4), and the ending alone decides the next phase.
 - `presentation(of:)` and `isFresh(_:now:limit:)` are `nonisolated static` so they need no model.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: the Step 3 command again.
 Expected: `✔ Test run with 30 tests in 1 suite passed` and `** TEST SUCCEEDED **`. `aGateRefusalKeepsTheResultsAndASelectionChangeClearsIt(_:)` runs 2 cases and counts as one test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -17064,7 +17129,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 7: Write the failing wiring tests** — append to `RoomForMacTests/SmartCleanModelTests.swift`
+- [x] **Step 7: Write the failing wiring tests** — append to `RoomForMacTests/SmartCleanModelTests.swift`
 
 Append this suite after the closing brace of `SmartCleanModelTests`. It reuses the file's private `Fixture` and `SmartCleanPhase` helpers.
 
@@ -17137,14 +17202,14 @@ struct SmartCleanWiringTests {
 }
 ```
 
-- [ ] **Step 8: Run the tests to verify they fail**
+- [x] **Step 8: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SmartCleanWiringTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
 - `RoomForMacTests/SmartCleanModelTests.swift:828:26: error: value of type 'AppModel' has no member 'smartClean'`
 - `RoomForMacTests/SmartCleanModelTests.swift:859:30: error: value of type 'AppDependencies' has no member 'cleanItemLabel'`
 
-- [ ] **Step 9: Give the dependencies a row labeler** — edit `RoomForMac/App/AppDependencies.swift` (Task 9's version)
+- [x] **Step 9: Give the dependencies a row labeler** — edit `RoomForMac/App/AppDependencies.swift` (Task 9's version)
 
 After `var now: @Sendable () -> Date = { Date() }`, add:
 
@@ -17178,7 +17243,7 @@ with:
 
 The memberwise initializer skips the defaulted `removalGate`, `removalRecorder`, `runReporter` and `now`, which stay inert. `forScenario` does not change: DEBUG scenarios get the inert labeler until Task 21 scripts them.
 
-- [ ] **Step 10: Build Smart Clean in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (Task 9's version)
+- [x] **Step 10: Build Smart Clean in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (Task 9's version)
 
 After the `reporter` property, add:
 
@@ -17229,12 +17294,12 @@ with:
 
 `smartClean` comes after the `reporter` line, as `makeFeatures`' doc comment orders it. Tasks 17 and 20 insert their models above that line, so Smart Clean always gets the final composite reporter. `appleSilicon` and `freshnessLimit` keep their defaults.
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SmartCleanModelTests -only-testing:RoomForMacTests/SmartCleanWiringTests -only-testing:RoomForMacTests/AppModelTests -only-testing:RoomForMacTests/AppModelServicesTests`
 Expected: `✔ Suite "Smart Clean model" passed` (30 tests), `✔ Suite "Smart Clean in the app model" passed` (2 tests), Plan 2's `✔ Suite "App model" passed` and Task 9's `✔ Suite "App model services" passed`, then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 12: Run the whole unit scheme**
+- [x] **Step 12: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -17250,7 +17315,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. Every Plan 2 suite and every earlier Plan 3 suite still passes. Tests that build `AppDependencies` with the memberwise initializer get `EngineServices.unavailable`, so every `AppModel.start()` among them also builds a `SmartCleanModel`. That model runs nothing, because nothing calls `scan()` on it.
 - Both `grep`s print nothing: this task's files have no warnings, and the model adds no strings to the catalog.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -17279,6 +17344,8 @@ MSG
 ```
 
 ### Task 12: Smart Clean — UI
+
+**As built** (`eefc567..f350166`: `f350166`; review clean). Built as written; every consumed type's signature was checked against the repository before writing and needed no adjustment. Final wave (`1622fb0`) touched several of this task's views: F10 changed `CleanResultsView`'s hero to show the cleanable total (with "At least" when needed) and a "Found X, including items that need your password" caption when the scan found more; F11 made the Clean button read "Clean N items" and the section/hero/confirmation totals read "Size unknown" instead of "at least Zero KB" when every size in a total is unknown; F13 hid the decorative section/run-state/exclamation symbols from accessibility in `CleanResultsView.swift` and `CleanProgressView.swift`; F14 added `SmartCleanHero.blockedText(.uninstaller)` = "You can scan now. Cleaning can start once the uninstall finishes."
 
 **Files:**
 - Create:
@@ -17500,7 +17567,7 @@ MSG
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing view tests** — `RoomForMacTests/SmartCleanViewTests.swift`
+- [x] **Step 1: Write the failing view tests** — `RoomForMacTests/SmartCleanViewTests.swift`
 
 Three suites:
 - **"Smart Clean view logic"** checks the pure parts: every identifier and slug, the screen for each phase, the button and banner texts, row tags and locks, the confirmation counts, the cleaning rows, when the Full Disk Access and problem cards show, how an unmapped detail shows, and the ring's text.
@@ -18264,7 +18331,7 @@ struct SmartCleanRenderTests {
 
 `countsArePlural()` fails until Step 10 gives the String Catalog its two plurals. The wiring suite keeps its `TemporaryDefaults` and `TemporaryDirectory` in properties, so they live for the whole test, and has a one-minute limit because one test waits on a gate.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SmartCleanViewLogicTests -only-testing:RoomForMacTests/SmartCleanViewWiringTests -only-testing:RoomForMacTests/SmartCleanRenderTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
@@ -18272,7 +18339,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `RoomForMacTests/SmartCleanViewTests.swift:153:33: error: type 'AccessibilityID' has no member 'smartCleanScan'`
 - `RoomForMacTests/SmartCleanViewTests.swift:204:17: error: cannot find 'SmartCleanScreen' in scope`
 
-- [ ] **Step 3: Add the identifiers** — `RoomForMac/App/AccessibilityID.swift` (Task 9's version)
+- [x] **Step 3: Add the identifiers** — `RoomForMac/App/AccessibilityID.swift` (Task 9's version)
 
 Append to the end of the file, after Task 9's `// MARK: - Run problem card (Plan 3 Task 9)` block and one blank line:
 ```swift
@@ -18342,7 +18409,7 @@ extension AccessibilityID {
 }
 ```
 
-- [ ] **Step 4: Write the view and what the screens share** — `RoomForMac/Features/SmartClean/SmartCleanView.swift`
+- [x] **Step 4: Write the view and what the screens share** — `RoomForMac/Features/SmartClean/SmartCleanView.swift`
 
 ```swift
 import AppKit
@@ -18757,7 +18824,7 @@ Notes on the code:
 - The model clears `pendingFirstScan` and scans unless it is busy (Task 11). `consumePendingScan(_:appModel:)` only adds the case of a missing model, which leaves the flag for later.
 - `ConfirmingPlan` makes the plan `Identifiable` by its run, for `.sheet(item:)`. When the phase moves on after **Clean**, the getter returns nil and the sheet closes; a cancel the binding may send then is ignored by the model in `.cleaning`.
 
-- [ ] **Step 5: Write the hero and the scan ring** — `RoomForMac/Features/SmartClean/SmartCleanHero.swift` and `RoomForMac/Features/SmartClean/ScanProgressView.swift`
+- [x] **Step 5: Write the hero and the scan ring** — `RoomForMac/Features/SmartClean/SmartCleanHero.swift` and `RoomForMac/Features/SmartClean/ScanProgressView.swift`
 
 `RoomForMac/Features/SmartClean/SmartCleanHero.swift`
 ```swift
@@ -18996,7 +19063,7 @@ struct ScanProgressView: View {
 
 Both views take `SmartCleanView`'s namespace from the environment and fall back to their own, so each also draws on its own in a render test. The button's glass is tinted `action` (the default of `morphingGlass`); the ring's is untinted and not interactive.
 
-- [ ] **Step 6: Write the results and the gate notice** — `RoomForMac/Features/SmartClean/CleanResultsView.swift` and `RoomForMac/Features/SmartClean/RemovalGateNotice.swift`
+- [x] **Step 6: Write the results and the gate notice** — `RoomForMac/Features/SmartClean/CleanResultsView.swift` and `RoomForMac/Features/SmartClean/RemovalGateNotice.swift`
 
 `RoomForMac/Features/SmartClean/CleanResultsView.swift`
 ```swift
@@ -19505,7 +19572,7 @@ struct RemovalGateNotice: View {
 
 A row is a plain `Button` over its whole content, so it takes keyboard focus and VoiceOver reads its label, tags and size as one element, with "Selected" or "Not selected" as its value. Plan 3's gate always allows, so the notice appears only once Plan 5's allowance plugs in. Its titles and details are literals in each `switch` arm, so the String Catalog gets one key per sentence, and the size stays a format argument.
 
-- [ ] **Step 7: Write the confirmation, the run and the summary** — `RoomForMac/Features/SmartClean/{CleanConfirmSheet,CleanProgressView,CleanSummaryView}.swift`
+- [x] **Step 7: Write the confirmation, the run and the summary** — `RoomForMac/Features/SmartClean/{CleanConfirmSheet,CleanProgressView,CleanSummaryView}.swift`
 
 `RoomForMac/Features/SmartClean/CleanConfirmSheet.swift`
 ```swift
@@ -19994,7 +20061,7 @@ private struct OutcomeGroupCard: View {
 
 `explanationText(for:)` builds the explanation from `String(localized:)`, so it reads exactly as Task 10's copy, with no Markdown parsing, and only the detail's own characters change font. The problem card for `.incomplete` carries `EngineError.malformedOutput("The engine ended without a summary.")`, the same reason Task 11 uses; like every engine reason, it only reaches **Show details**.
 
-- [ ] **Step 8: Show Smart Clean in the window and delete its placeholder**
+- [x] **Step 8: Show Smart Clean in the window and delete its placeholder**
 
 In `RoomForMac/App/RootView.swift`, find (in `MainSplitView.detail`):
 ```swift
@@ -20033,7 +20100,7 @@ and replace it with:
 Run: `grep -rn "SmartCleanPlaceholderView" RoomForMac RoomForMacTests RoomForMacUITests`
 Expected: no output.
 
-- [ ] **Step 9: Run the tests: two plurals are still missing**
+- [x] **Step 9: Run the tests: two plurals are still missing**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/SmartCleanViewLogicTests -only-testing:RoomForMacTests/SmartCleanViewWiringTests -only-testing:RoomForMacTests/SmartCleanRenderTests -only-testing:RoomForMacTests/RootViewTests`
 Expected: 33 of the 34 tests pass. One fails, because the String Catalog has no plurals for the counts yet:
@@ -20045,7 +20112,7 @@ Expected: 33 of the 34 tests pass. One fails, because the String Catalog has no 
 ```
 No other test fails: every other string reads the same from its key, and sizes follow the Mac's region format through `ByteText`.
 
-- [ ] **Step 10: Add the new strings and the two plurals to the String Catalog**
+- [x] **Step 10: Add the new strings and the two plurals to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 9 build left for the app target. `-derivedDataPath` must match Step 9, or `OBJ` points at another build:
 ```bash
@@ -20132,12 +20199,12 @@ plutil -p "$TMPDIR/rfm-xcstrings/en.lproj/Localizable.stringsdict"
 ```
 Expected: `compile` prints nothing and exits 0. `plutil` shows four entries: this task's `%lld items` (`one` `%lld item`, `other` `%lld items`) and `%lld items removed` (`one` `%lld item removed`, `other` `%lld items removed`), each with `NSStringLocalizedFormatKey` `%#@value@` and `NSStringFormatValueTypeKey` `lld`; Plan 2's `Engine %@ (%@, %lld patches)`; and Task 10's `Freed %@ · %lld items removed`.
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: the Step 9 command again.
 Expected: `✔ Suite "Smart Clean view logic" passed` (18 tests), `✔ Suite "Smart Clean view wiring" passed` (2 tests), `✔ Suite "Smart Clean rendering" passed` (9 tests), Plan 2's `✔ Suite "Root view" passed` (5 tests), `✔ Test run with 34 tests in 4 suites passed after … seconds` and `** TEST SUCCEEDED **`. The parameterized tests report their cases: `slugs(text:expected:)` 8, and each rendering test 2 (light and dark).
 
-- [ ] **Step 12: Run the whole unit scheme and build the UI tests**
+- [x] **Step 12: Run the whole unit scheme and build the UI tests**
 
 Run:
 ```bash
@@ -20157,7 +20224,7 @@ Expected:
 - The `grep` prints nothing: this task's files have no warnings.
 - The UI-test build prints `** TEST BUILD SUCCEEDED **`. The UI tests are built, not run (they need Automation Mode).
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -20213,6 +20280,8 @@ MSG
 ```
 
 ### Task 13: Uninstaller — rows, query, plan, summary, running apps, icons
+
+**As built** (`f350166..e198faf`: `e198faf`; review clean). Built as written. Deviation: Step 10's RED check was not independently observed — implementation and test files were written together after a session interruption forced batching — mitigated by byte-for-byte verification against the brief and by Step 14's mutation testing. Final wave (`08945e7`, then narrowed by `872e3aa`) rewrote much of `RunningApps.swift` and touched `UninstallPlan.swift`/`UninstallSummary.swift`: F1 made `RunningApps.isSameBundle(_:as:)` compare `realpath`/`.fileResourceIdentifierKey` instead of trailing-slash-normalised strings, and made RoomForMac's own process always a clash in `sameNameProcesses` regardless of where it runs from — a self-uninstall through a symlink or another spelling of the path could otherwise remove RoomForMac itself (see the corrected reasoning below, where this section used to say removing RoomForMac "would end it"); F2 rewrote the pkill-matching rule to compare `regcomp(REG_EXTENDED)` against every name macOS may compare (the full basename of `argv[0]`, the executable's file name, `proc_name`, `p_comm`), and added `HeldBackReason.nameIsAPattern` for an executable name with regex metacharacters — then `872e3aa` replaced that unconditional hold-back with "held back only when another running process actually matches the way `pkill -x` would" (execution ruling FW3), so an app such as Zoom (`zoom.us`) is removable again when nothing else matches its name; F3 added `UninstallSummary.offersOpenTrash`; F4 made row identifiers fall back to a path slug when a bundle ID is shared or empty.
 
 **Files:**
 - Create:
@@ -20365,7 +20434,7 @@ MSG
   - `RunningApps.live.instances` for our own bundle excludes our own pid, which is safe and read-only.
 
 **How this task reads the contract** (no other interface changes):
-- **`sameNameProcesses` follows what `pkill -x` matches.** `pkill -x` compares the process name, which is the name the executable was started under. A process started through a link keeps the link's name, while `proc_pidpath` gives the target's. So a process clashes when its executable file's name **or** its process name equals the executable, and its executable does not lie inside the app. A process macOS gives no path for counts when its name matches. RoomForMac's own process counts too: removing another copy of RoomForMac would end it. A false clash only holds an app back with a clear reason; a missed one would end an unrelated process.
+- **`sameNameProcesses` follows what `pkill -x` matches.** `pkill -x` compares the process name, which is the name the executable was started under. A process started through a link keeps the link's name, while `proc_pidpath` gives the target's. So a process clashes when its executable file's name **or** its process name equals the executable, and its executable does not lie inside the app. A process macOS gives no path for counts when its name matches. RoomForMac's own process counts too, but not because `pkill -x` would actually reach it: `pgrep`/`pkill` skip their own ancestors, so ending another copy of RoomForMac most likely would not end this one running process. Holding it back is a safe over-approximation instead — the reason that stands is data loss: an uninstall that reached RoomForMac's own bundle would move the running app to the Trash out from under itself (as Ruling 13 already refuses for its data). A false clash only holds an app back with a clear reason; a missed one would end an unrelated process.
 - **Extensions are excluded wherever they sit.** A candidate whose path has any `.appex` component (in any case) is skipped, so an extension's executable (a process without a bundle URL) is never quit either. Candidates without a pid (`-1`) never match.
 - **`live.terminate` and `live.forceTerminate` refuse RoomForMac's own pid**, and pids ≤ 0, through `mayEnd`, so a model bug can never quit the app in the middle of a run.
 - **`executableName` reads `Contents/Info.plist` itself,** as the engine's `plutil -extract CFBundleExecutable` does. `Bundle(path:)` would cache a bundle that is about to go to the Trash. When it answers nil (no plist, as for iPad apps, or no key), the engine kills by the app's name, so Task 14 falls back to `AppPreview.name`.
@@ -20378,7 +20447,7 @@ MSG
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing value-type tests** — `RoomForMacTests/UninstallerTypesTests.swift`
+- [x] **Step 1: Write the failing value-type tests** — `RoomForMacTests/UninstallerTypesTests.swift`
 
 ```swift
 import AppKit
@@ -20905,7 +20974,7 @@ struct AppIconCacheTests {
 
 `theSummaryReportsEachAppOnce` runs every outcome through one plan: a removal whose covered and unknown leftovers are still on disk, a failure, a block from the run's own scan, two apps without a result (one bundle already gone), one app held back, one needing a password and one blocked in the preview. The icon cache test's loader returns one shared image, so a cache that resized the loader's image in place would fail the check on `shared`. Each suite that needs a temporary store keeps it in a stored property, so it lives for the whole test.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -20917,7 +20986,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. Among the errors: `cannot find 'AppRow' in scope`, `cannot find 'AppListQuery' in scope`, `cannot find 'UninstallPlan' in scope`, `cannot find 'FailureReason' in scope`, `cannot find 'UninstallSummary' in scope`, `cannot find 'AppIconCache' in scope` and `value of type 'AppPreferences' has no member 'uninstallerSort'`.
 
-- [ ] **Step 3: Write the list rows and the query**
+- [x] **Step 3: Write the list rows and the query**
 
 `RoomForMac/Features/Uninstaller/AppRow.swift`
 ```swift
@@ -21046,7 +21115,7 @@ struct AppListQuery: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Write the plan** — `RoomForMac/Features/Uninstaller/UninstallPlan.swift`
+- [x] **Step 4: Write the plan** — `RoomForMac/Features/Uninstaller/UninstallPlan.swift`
 
 ```swift
 import Foundation
@@ -21284,7 +21353,7 @@ struct UninstallPlan: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 5: Write the summary** — `RoomForMac/Features/Uninstaller/UninstallSummary.swift`
+- [x] **Step 5: Write the summary** — `RoomForMac/Features/Uninstaller/UninstallSummary.swift`
 
 ```swift
 import Foundation
@@ -21510,7 +21579,7 @@ struct UninstallSummary: Sendable, Equatable {
 
 The engine strings in `engineReasons` are lookup keys only; no view ever shows them.
 
-- [ ] **Step 6: Write the icon cache** — `RoomForMac/Features/Uninstaller/AppIconCache.swift`
+- [x] **Step 6: Write the icon cache** — `RoomForMac/Features/Uninstaller/AppIconCache.swift`
 
 ```swift
 import AppKit
@@ -21583,7 +21652,7 @@ final class AppIconCache {
 
 `NSImage` is `Sendable` in the SDK Xcode 27 ships, so the detached load can hand the image back to the main actor; `NSWorkspace.shared.icon(forFile:)` is safe off the main thread and returns a generic icon, never nil, for a missing path (uninstaller research §7).
 
-- [ ] **Step 7: Store the sort order** — edit `RoomForMac/App/AppPreferences.swift`
+- [x] **Step 7: Store the sort order** — edit `RoomForMac/App/AppPreferences.swift`
 
 In `enum Key`, find (Plan 2's line; Task 10 adds its key below it, which this edit leaves alone):
 ```swift
@@ -21612,12 +21681,12 @@ Replace with:
 
 The preference holds the raw string, as the skeleton declares; `AppSortOrder(rawValue:)` turns it back into an order, and gives nil for a value this version does not know.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Uninstaller types" passed` (18 tests: `leftoversAreClassifiedByTheirFolder(path:kind:)` runs 27 cases and `theEndingComesFromTheRunError(error:ending:)` 4, and each counts as one test), `✔ Suite "Uninstaller preferences" passed` (1 test) and `✔ Suite "App icon cache" passed` (2 tests), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 9: Write the fake and the failing running-apps tests**
+- [x] **Step 9: Write the fake and the failing running-apps tests**
 
 `RoomForMacTests/Support/FakeRunningApps.swift`
 ```swift
@@ -21951,7 +22020,7 @@ struct RunningAppsDependencyTests {
 
 The made-up paths sit under `/nonexistent`, so `canonicalPath` never meets a real file and the pure tests read the same on every Mac. `liveFindsThisTestHostButNeverReturnsIt` only reads (see "How this task reads the contract").
 
-- [ ] **Step 10: Run the tests to verify they fail**
+- [x] **Step 10: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -21962,7 +22031,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. Among the errors: `cannot find type 'RunningInstance' in scope` and `cannot find 'RunningApps' in scope` (`FakeRunningApps.swift`).
 
-- [ ] **Step 11: Write the running apps** — `RoomForMac/Features/Uninstaller/RunningApps.swift`
+- [x] **Step 11: Write the running apps** — `RoomForMac/Features/Uninstaller/RunningApps.swift`
 
 ```swift
 import AppKit
@@ -21994,8 +22063,11 @@ struct RunningApps: Sendable {
     var executableName: @Sendable (_ appPath: String) -> String?
     /// Processes outside `appPath` that the engine's `pkill -x <executable>`
     /// would also end: their executable file or their process name is
-    /// `executable`. RoomForMac's own process counts too, because removing
-    /// another copy of RoomForMac would end it.
+    /// `executable`. RoomForMac's own process counts too — not because
+    /// `pkill -x` would actually reach it (`pgrep`/`pkill` skip their own
+    /// ancestors), but as a safe over-approximation: removing RoomForMac's
+    /// own bundle while it runs would move its own data to the Trash out
+    /// from under it.
     var sameNameProcesses: @Sendable (_ executable: String, _ appPath: String) -> [Int32]
     /// Asks the app to quit, as Quit in its menu would. True when the request
     /// was delivered, which does not mean it has quit.
@@ -22219,7 +22291,7 @@ extension RunningApps {
 
 `liveCandidates` and `liveProcesses` only read metadata (`realpath`, `.fileResourceIdentifierKey`, libproc), which raises no privacy prompt. `NSRunningApplication.terminate()` may return before the app exits (`NSRunningApplication.h`), so callers poll `isRunning`, which builds a fresh `NSRunningApplication` on every call.
 
-- [ ] **Step 12: Give the dependencies the running apps** — edit `RoomForMac/App/AppDependencies.swift` (Task 9's version with Task 11's `cleanItemLabel`)
+- [x] **Step 12: Give the dependencies the running apps** — edit `RoomForMac/App/AppDependencies.swift` (Task 9's version with Task 11's `cleanItemLabel`)
 
 Find (the end of Task 11's default labeler):
 ```swift
@@ -22254,12 +22326,12 @@ Replace with:
 
 `runningApps` is the last stored property, so it is the last memberwise argument. Plan 2's memberwise calls in the tests and in `forScenario` compile unchanged and get `.none` (Ruling 25), so DEBUG scenarios see no running apps.
 
-- [ ] **Step 13: Run the tests to verify they pass**
+- [x] **Step 13: Run the tests to verify they pass**
 
 Run: the Step 10 command again, then the Step 2 command again.
 Expected: `✔ Suite "Running apps" passed` (8 tests) and `✔ Suite "Running apps in the dependencies" passed` (1 test), then `** TEST SUCCEEDED **`; the Step 2 command still gives Step 8's result.
 
-- [ ] **Step 14: Check that the key tests can fail**
+- [x] **Step 14: Check that the key tests can fail**
 
 1. In `RunningApps.instances(ofApp:among:ownPid:)`, change `where candidate.pid > 0 && candidate.pid != ownPid {` to `where candidate.pid > 0 {`. Run the Step 10 command. Expected: `** TEST FAILED **`: `liveInstancesAreTheAppAndTheAppsInsideIt` finds `[2, 3, 8, 1]`, and `liveFindsThisTestHostButNeverReturnsIt` finds this process in `RunningApps.live.instances(bundle)`. Restore the line.
 2. In `RunningApps.sameNameProcesses(executable:canonicalAppPath:among:)`, change `guard fileName == executable || process.name == executable else {` to `guard fileName == executable else {`. Run the Step 10 command. Expected: `** TEST FAILED **`: `sameNameProcessesAreTheOnesOutsideTheApp` gets `[2, 6, 8]`, missing the process started through a link (7) and the one without a path (4). Restore the line.
@@ -22268,7 +22340,7 @@ Expected: `✔ Suite "Running apps" passed` (8 tests) and `✔ Suite "Running ap
 
 Then run the Step 10 and Step 2 commands again. Expected: both end with `** TEST SUCCEEDED **`.
 
-- [ ] **Step 15: Run the whole unit scheme**
+- [x] **Step 15: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -22281,7 +22353,7 @@ grep -E '(Features/Uninstaller/(AppRow|AppListQuery|UninstallPlan|UninstallSumma
 ```
 Expected: the log ends with `** TEST SUCCEEDED **`, and the `grep` prints nothing, so this task's files have no warnings. Every Plan 2 suite and every earlier Plan 3 suite still passes: the memberwise `AppDependencies` they build get `RunningApps.none`, which starts nothing and ends nothing.
 
-- [ ] **Step 16: Add the new strings to the String Catalog**
+- [x] **Step 16: Add the new strings to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; sync it from the `.stringsdata` files the Step 15 build left for the app target, as Task 9 does. `-derivedDataPath` must match Step 15:
 ```bash
@@ -22294,7 +22366,7 @@ git diff --stat RoomForMac/Resources/Localizable.xcstrings
 ```
 Expected: `ls` lists the three files under `…/RoomForMac-plan3/Build/Intermediates.noindex/…/Objects-normal/arm64/`. `xcstringstool` prints nothing and exits 0. The diff removes nothing and adds these 23 keys, each an empty entry: `Allow RoomForMac under App Management in System Settings, then try again.`, `App data`, `Background items`, `Caches`, `Containers`, `Couldn't move it to the Trash`, `Homebrew couldn't remove it`, `Last used`, `Name`, `Other files`, `Preferences`, `Protected from removal`, `Remove it with Homebrew in Terminal.`, `RoomForMac couldn't move it to the Trash`, `RoomForMac may need App Management access in System Settings. You can also drag the app to the Trash in Finder.`, `Saved window state`, `Select it again to see what would be removed now.`, `Size`, `The app changed after you reviewed it`, `The uninstaller reported: %@`, `Website data`, `macOS didn't allow moving it to the Trash`, `macOS or a safety rule protects this app, so it stayed in place.`. `Logs` (the `.logs` title) is already in the catalog: Task 10's row labels use the same word, and its second catalog sync added it. If the diff adds a key that is not listed, a string in this task's files differs from the plan. `--skip-marking-strings-stale` keeps the sync from marking other tasks' keys stale.
 
-- [ ] **Step 17: Commit**
+- [x] **Step 17: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -22342,6 +22414,8 @@ EOF
 ```
 
 ### Task 14: Uninstaller — `UninstallerModel`
+
+**As built** (`e198faf..059eef8`: `ebfb8e5`, `ce7ef8a`, fix round 1 `55d3d29`, fix round 2 `059eef8`; review approved with 3 minors, 2 promoted — execution ruling X4). Deviation: `AppModel.swift`'s `uninstallerDependencies(service:)` was placed by intent, immediately after `smartCleanDependencies` and before `completeOnboarding(startFirstScan:)`, because the brief's Find anchor assumed no method sat between them; behavior and dependency ordering are unchanged. Fix round 1 settled both promoted minors: `remove(_ plan:)` now re-runs the same-name clash check immediately before calling `uninstall`, since a clash appearing only after quitting started could otherwise still be sent to the engine's `pkill -x`; and a helper asked for the first time in the poll's last round now gets one more `pollInterval` before being reported a survivor. The re-review found the helper-grace fix incomplete: `grace` was a single value set only the first time *any* app's helper was newly asked in the whole `poll()` call, so a second app's helper asked later, exactly at the deadline, reproduced the original bug. Fix round 2 makes `grace` extend (never shorten) every time a round asks a new helper, bounded by the number of helpers still to ask, with a two-app regression test. Final wave (`08945e7`, narrowed by `872e3aa`) changed `UninstallerModel.swift` again: `show`/`confirm` use `isSameBundle` to hide/hold back RoomForMac (F1), `holdBackNameClashes(in:)` became a shared helper used by both `confirm()` and `remove()`'s re-check (F2), and the amendment removed the unconditional pattern hold-back once F2's matching became precise enough to check for real.
 
 **Files:**
 - Create: `RoomForMac/Features/Uninstaller/UninstallerModel.swift`, `RoomForMacTests/UninstallerModelTests.swift`, `RoomForMacTests/Support/{ScriptedUninstallService,ManualClock}.swift`.
@@ -22512,7 +22586,7 @@ EOF
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing clock tests** — `RoomForMacTests/ManualClockTests.swift`
+- [x] **Step 1: Write the failing clock tests** — `RoomForMacTests/ManualClockTests.swift`
 
 ```swift
 import Testing
@@ -22620,12 +22694,12 @@ struct ManualClockTests {
 
 The first two tests pin the two halves of `advance(by:)`: only due sleepers wake, and one step wakes them earliest first. The order is read from `resumedDeadlines`, because tasks resumed together may run in any order on the cooperative pool. A double resume of a `CheckedContinuation` traps, so the cancellation tests also pin that each sleeper is resumed exactly once.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/ManualClockTests`
 Expected: `** TEST FAILED **`, because the test target does not compile: `cannot find 'ManualClock' in scope` in `ManualClockTests.swift`.
 
-- [ ] **Step 3: Write the clock** — `RoomForMacTests/Support/ManualClock.swift`
+- [x] **Step 3: Write the clock** — `RoomForMacTests/Support/ManualClock.swift`
 
 ```swift
 import Synchronization
@@ -22840,12 +22914,12 @@ Notes on the code:
 - A task cancelled before its sleep registers leaves its id in `cancelled`; the registration then throws at once. The `defer` removes the id when the sleep returns.
 - `sleep(until:tolerance:)` gives `tolerance` a default, which the `Clock` requirement allows; callers through `any Clock<Duration>` pass it anyway.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Manual clock" passed` (6 tests) and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 5: Write the scripted service** — `RoomForMacTests/Support/ScriptedUninstallService.swift`
+- [x] **Step 5: Write the scripted service** — `RoomForMacTests/Support/ScriptedUninstallService.swift`
 
 ```swift
 import Foundation
@@ -23059,7 +23133,7 @@ private extension Result {
 
 `Playback` follows Task 11's `ScriptedCleanService`, whose own is private to its file.
 
-- [ ] **Step 6: Write the failing model tests** — `RoomForMacTests/UninstallerModelTests.swift`
+- [x] **Step 6: Write the failing model tests** — `RoomForMacTests/UninstallerModelTests.swift`
 
 The tests use only the scripted service, Task 13's `FakeRunningApps`, Task 9's removal fakes, `ManualClock`, `TemporaryDefaults`, `TemporaryDirectory` and `FakeChecker.Gate`. `now` is derived from the `ManualClock`, so moving the clock also moves the dates. The harness's re-list waits an hour unless a test asks for 30 s, so it never runs by surprise; it still counts as a sleeper, which is why the waits read `waitForSleepers(2)` (the re-list, plus the debounce or the poll). No test sleeps. They wait on task values, `waitForSleepers` and gate arrivals; the one yield loop, in `aStalePreviewNeverReplacesTheCurrentOne` (which cannot await the preview it holds back), is bounded by the suite's one-minute limit.
 
@@ -24181,12 +24255,12 @@ struct UninstallerModelTests {
 }
 ```
 
-- [ ] **Step 7: Run the tests to verify they fail**
+- [x] **Step 7: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/UninstallerModelTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. Among the errors, in `UninstallerModelTests.swift`: `cannot find type 'DrawerState' in scope`, `cannot find type 'UninstallerModel' in scope` and `cannot find 'UninstallerDependencies' in scope`. `ScriptedUninstallService.swift` compiles on its own: it needs only MoleEngine, `ScriptedCleanService.Step` and `FakeChecker.Gate`.
 
-- [ ] **Step 8: Write the model** — `RoomForMac/Features/Uninstaller/UninstallerModel.swift`
+- [x] **Step 8: Write the model** — `RoomForMac/Features/Uninstaller/UninstallerModel.swift`
 
 ```swift
 import Foundation
@@ -24948,12 +25022,12 @@ Notes on the code:
 - The recorder is awaited inside the loop, before the next event is read, so each confirmation reaches it as it arrives and in sequence order. `max(removed.freedBytes, 0)` charges what the tally stored.
 - `DiagnosticsSlot` is Task 11's helper again; each is private to its file.
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [x] **Step 9: Run the tests to verify they pass**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/UninstallerModelTests -only-testing:RoomForMacTests/ManualClockTests`
 Expected: `✔ Suite "Uninstaller model" passed` (36 tests; `aGateRefusalNeverTerminatesAnApp(_:)` runs 2 cases and counts as one test) and `✔ Suite "Manual clock" passed` (6 tests), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 10: Check that the key tests can fail**
+- [x] **Step 10: Check that the key tests can fail**
 
 1. **B1.** In `confirm()`, delete these four lines:
    ```swift
@@ -24968,7 +25042,7 @@ Expected: `✔ Suite "Uninstaller model" passed` (36 tests; `aGateRefusalNeverTe
 
 Then run the Step 9 command again. Expected: Step 9's result.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -25011,7 +25085,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 12: Write the failing wiring tests** — append to `RoomForMacTests/UninstallerModelTests.swift`
+- [x] **Step 12: Write the failing wiring tests** — append to `RoomForMacTests/UninstallerModelTests.swift`
 
 Append this suite after the closing brace of `UninstallerModelTests`. It reuses the file's private `Fixture`.
 
@@ -25090,12 +25164,12 @@ struct UninstallerWiringTests {
 
 The model here runs on the real `ContinuousClock`, and nothing in these tests waits for its timers. The background re-list is due 30 s after the first list; it holds the model weakly, so after the test it finds none and does nothing.
 
-- [ ] **Step 13: Run the tests to verify they fail**
+- [x] **Step 13: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/UninstallerWiringTests`
 Expected: `** TEST FAILED **`, because the test target does not compile: `value of type 'AppModel' has no member 'uninstaller'` in `UninstallerModelTests.swift`.
 
-- [ ] **Step 14: Build the Uninstaller in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (Task 9's version with Task 11's Smart Clean)
+- [x] **Step 14: Build the Uninstaller in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (Task 9's version with Task 11's Smart Clean)
 
 Find:
 ```swift
@@ -25162,12 +25236,12 @@ Replace with:
 
 The Uninstaller comes after Smart Clean, as `makeFeatures`' doc comment orders it, so both get the final reporter once Tasks 17 and 20 insert their models above the `reporter` line. `allowsAdministrator`, `clock` and the timings keep their defaults. `runningApps` and `uninstallerSort` are Task 13's.
 
-- [ ] **Step 15: Run the tests to verify they pass**
+- [x] **Step 15: Run the tests to verify they pass**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/UninstallerWiringTests -only-testing:RoomForMacTests/UninstallerModelTests -only-testing:RoomForMacTests/SmartCleanWiringTests -only-testing:RoomForMacTests/AppModelTests -only-testing:RoomForMacTests/AppModelServicesTests`
 Expected: `✔ Suite "Uninstaller in the app model" passed` (2 tests), `✔ Suite "Uninstaller model" passed` (36 tests), Task 11's `✔ Suite "Smart Clean in the app model" passed`, Plan 2's `✔ Suite "App model" passed` and Task 9's `✔ Suite "App model services" passed`, then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 16: Run the whole unit scheme**
+- [x] **Step 16: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -25183,7 +25257,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. Every Plan 2 suite and every earlier Plan 3 suite still passes. Tests that build `AppDependencies` with the memberwise initializer get `EngineServices.unavailable` and `RunningApps.none`, so every `AppModel.start()` among them also builds an `UninstallerModel`. It runs nothing, because nothing calls `load()` on it: Plan 2's `RootView` still shows the Uninstaller placeholder until Task 15.
 - Both `grep`s print nothing: this task's files have no warnings, and the model adds no strings to the catalog.
 
-- [ ] **Step 17: Commit**
+- [x] **Step 17: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -25209,6 +25283,8 @@ MSG
 ```
 
 ### Task 15: Uninstaller — UI
+
+**As built** (`059eef8..5906da9`: `5906da9`; review clean). Built as written; every Find anchor and render threshold matched the tree on the first try. Final wave (`08945e7`) added a unique-bundle-ID-vs-shared-or-empty case to `AccessibilityID.uninstallerRow(_:path:)`/`AppListView.rowIdentifiers(_:)` (F4), and reworded `UninstallSummaryView`'s Skipped group for the name-clash reason (F2); `872e3aa` then reverted the extra "Skipped" line the F2 wave had added, once the pattern hold-back became conditional again.
 
 **Files:**
 - Create: `RoomForMac/Features/Uninstaller/{UninstallerView,AppListView,UninstallDrawer,ForceQuitSheet,UninstallSummaryView}.swift`, `RoomForMacTests/UninstallerViewTests.swift`.
@@ -25363,7 +25439,7 @@ MSG
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing view tests** — `RoomForMacTests/UninstallerViewTests.swift`
+- [x] **Step 1: Write the failing view tests** — `RoomForMacTests/UninstallerViewTests.swift`
 
 ```swift
 import AppKit
@@ -26058,7 +26134,7 @@ struct UninstallerViewTests {
 
 The fixtures are made-up apps under `/Applications` and `/Users/fixture`. `UninstallPlan.make` and `UninstallSummary.make` (Task 13) build every plan and summary, so the screens show exactly what the model hands them. The render tests follow Task 9's: each view differs from a transparent frame (`RenderedPixels.transparent`, never a render of `Color.clear`) and between light and dark by at least 1 000 pixels, or 300 for a single row and for an empty list's message; the variants the requirements name (every access state, every drawer state, the extra groups, a second app still open) differ from each other too, so a missing group, or a state drawn as another, fails. The wiring tests drive a real `UninstallerModel` over Task 14's `ScriptedUninstallService` with `RunningApps.none`, and a `relistDelay` of one day, so the background re-list never runs during a test; they poll for the list in 10 ms steps for at most 5 s, and the suite's one-minute limit covers the rest. `quittingCountsArePlural` fails until Step 10 adds the plural.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -26069,7 +26145,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`: the test target does not compile, with errors such as `cannot find 'AppListView' in scope`, `cannot find 'UninstallDrawer' in scope`, `cannot find 'UninstallDrawerActions' in scope`, `cannot find 'UninstallSummaryView' in scope`, `cannot find 'UninstallerView' in scope` and `type 'AccessibilityID' has no member 'uninstallerList'`.
 
-- [ ] **Step 3: Add the identifiers** — append to `RoomForMac/App/AccessibilityID.swift`, after a blank line
+- [x] **Step 3: Add the identifiers** — append to `RoomForMac/App/AccessibilityID.swift`, after a blank line
 
 ```swift
 // MARK: - Uninstaller (Plan 3 Task 15)
@@ -26101,7 +26177,7 @@ extension AccessibilityID {
 }
 ```
 
-- [ ] **Step 4: Write the list** — `RoomForMac/Features/Uninstaller/AppListView.swift`
+- [x] **Step 4: Write the list** — `RoomForMac/Features/Uninstaller/AppListView.swift`
 
 ```swift
 import AppKit
@@ -26396,7 +26472,7 @@ extension AppListView {
 
 A row is a plain `Button` over its whole content, so it takes keyboard focus and VoiceOver reads the name, last use, labels and size as one element, with "Selected" or "Not selected" as its value. The checkbox and the lock are SF Symbols: `ImageRenderer` draws AppKit checkboxes as a placeholder. A row that needs a password is disabled and dimmed, and its help (the tooltip, and the VoiceOver help) is `needsPasswordHelp`; rows are also disabled while the drawer locks the selection (quitting or removing).
 
-- [ ] **Step 5: Write the drawer** — `RoomForMac/Features/Uninstaller/UninstallDrawer.swift`
+- [x] **Step 5: Write the drawer** — `RoomForMac/Features/Uninstaller/UninstallDrawer.swift`
 
 ```swift
 import MoleEngine
@@ -27054,7 +27130,7 @@ extension UninstallDrawer {
 
 Each state has one header card; the review and the summary scroll their content between a pinned header and footer. The removing state has no footer at all: a removal cannot be cancelled once it starts (Ruling 15), and the card says so. The confirmation's `Task` inherits the main actor from the button's action, so `isConfirming` is only touched there.
 
-- [ ] **Step 6: Write the Force Quit sheet and the summary**
+- [x] **Step 6: Write the Force Quit sheet and the summary**
 
 `RoomForMac/Features/Uninstaller/ForceQuitSheet.swift`
 ```swift
@@ -27390,7 +27466,7 @@ extension UninstallSummaryView {
 
 **Force Quit** is the only destructive (`clay`) control in the sheet; nothing is the default action, so Return presses nothing. The summary offers **Open App Management** once, under the failed apps, when any of their reasons `offersAppManagement`, and **Open Trash** only with the hint (`showsEmptyTrashHint`).
 
-- [ ] **Step 7: Write the section** — `RoomForMac/Features/Uninstaller/UninstallerView.swift`
+- [x] **Step 7: Write the section** — `RoomForMac/Features/Uninstaller/UninstallerView.swift`
 
 ```swift
 import MoleEngine
@@ -27572,7 +27648,7 @@ extension UninstallerView {
 }
 ```
 
-- [ ] **Step 8: Show the section and delete its placeholder**
+- [x] **Step 8: Show the section and delete its placeholder**
 
 In `RoomForMac/App/RootView.swift` (Task 12 already replaced the Smart Clean case above it), find:
 ```swift
@@ -27600,7 +27676,7 @@ The list keeps Status's placeholder until Task 18 deletes it with `SectionPlaceh
 Run: `grep -rn "UninstallerPlaceholderView" RoomForMac RoomForMacTests RoomForMacUITests`
 Expected: no output.
 
-- [ ] **Step 9: Run the tests**
+- [x] **Step 9: Run the tests**
 
 Run: the Step 2 command again.
 Expected: every test passes except the plural, which the String Catalog does not have yet:
@@ -27611,7 +27687,7 @@ Expected: every test passes except the plural, which the String Catalog does not
 ```
 No test crashes the host. A `Fatal error: no current update to enqueue action to` would mean a `TabView` was rendered offscreen (Plan 2 Task 14); nothing here renders one.
 
-- [ ] **Step 10: Add the new strings and the plural to the String Catalog**
+- [x] **Step 10: Add the new strings and the plural to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; sync it from the `.stringsdata` files the Step 9 build left for the app target, as Task 9 does. `-derivedDataPath` must match Step 9:
 ```bash
@@ -27666,12 +27742,12 @@ plutil -p "$TMPDIR/rfm-xcstrings/en.lproj/Localizable.stringsdict"
 ```
 Expected: `compile` prints nothing and exits 0 (a JSON slip gives `error: The data couldn’t be read because it isn’t in the correct format.`). `plutil` lists a `Quitting %lld apps…` entry whose `NSStringFormatValueTypeKey` is `lld`, with `one` → `Quitting %lld app…` and `other` → `Quitting %lld apps…`, next to the plurals of earlier tasks.
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Uninstaller view logic" passed` (18 tests), `✔ Suite "Uninstaller rendering" passed` (8 tests, each run in light and dark), `✔ Suite "Uninstaller wiring" passed` (2 tests), `✔ Suite "Uninstaller views" passed`, `✔ Suite "Root view" passed` (5 tests), `✔ Test run with 33 tests in 5 suites passed`, then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 12: Run the whole unit scheme**
+- [x] **Step 12: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -27684,7 +27760,7 @@ grep -E '(Features/Uninstaller/(UninstallerView|AppListView|UninstallDrawer|Forc
 ```
 Expected: the log ends with `** TEST SUCCEEDED **`, and the `grep` prints nothing, so this task's files have no warnings. Every Plan 2 suite and every earlier Plan 3 suite still passes, `ScenarioTests` and `RootViewTests` included: `AccessibilityID.placeholder(_:)` and `SectionPlaceholderView` are still there.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored; the deletion is already staged by `git rm`):
@@ -27725,6 +27801,8 @@ EOF
 ```
 
 ### Task 16: Status — readings, history, health, sensors
+
+**As built** (`5906da9..dca7705`: `2dbaf86`, `4b18af0`, `dca7705`; review clean). Built as written, across three commits (cadence and sensors; health; reading and history). The RED/GREEN cycle ran in these three coarser phases rather than the brief's finer step-by-step sequence, because all test files were authored together up front; each phase's isolated RED and GREEN was reconstructed by staging files in and out of the tree, with every result produced by a real build, not asserted from memory.
 
 **Files:**
 - Create: `RoomForMac/Features/Status/{StatusReading,StatusHistory,HealthSummary,StatusSensors,StatusCadence}.swift`, `RoomForMacTests/{StatusReadingTests,HealthSummaryTests,StatusHistoryTests}.swift`, `RoomForMacTests/Support/FakeSensors.swift`.
@@ -27903,7 +27981,7 @@ EOF
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the test support and the failing cadence and sensor tests**
+- [x] **Step 1: Write the test support and the failing cadence and sensor tests**
 
 `RoomForMacTests/Support/StatusFixtures.swift`
 ```swift
@@ -28329,12 +28407,12 @@ struct StatusSensorsWiringTests {
 
 Each test can fail: the cadence table fails on any other mapping (a `.background` for the menu-bar extra alone fails two tests), the pressure and free-space cases on a wrong constant or a missing clamp, and the wiring test if the dependencies default to anything but the inert sensors.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusCadenceTests -only-testing:RoomForMacTests/StatusSensorsTests -only-testing:RoomForMacTests/StatusSensorsWiringTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/Support/FakeSensors.swift:…: error: cannot find type 'FreeSpace' in scope`; the other new test files report the same kind of error for `StatusCadence`, `MemoryPressure` and `StatusSensors`.
 
-- [ ] **Step 3: The cadence** — `RoomForMac/Features/Status/StatusCadence.swift`
+- [x] **Step 3: The cadence** — `RoomForMac/Features/Status/StatusCadence.swift`
 
 ```swift
 /// Something on screen that wants Status readings (Ruling 16). `StatusMonitor` keeps
@@ -28384,7 +28462,7 @@ enum StatusCadence: Int, Comparable, Sendable {
 }
 ```
 
-- [ ] **Step 4: The sensors** — `RoomForMac/Features/Status/StatusSensors.swift`
+- [x] **Step 4: The sensors** — `RoomForMac/Features/Status/StatusSensors.swift`
 
 ```swift
 import Foundation
@@ -28618,7 +28696,7 @@ struct PowerSourceBatteryReader: BatteryPresenceReading {
 
 `import IOKit` links IOKit.framework automatically, so `project.yml` does not change.
 
-- [ ] **Step 5: Give the dependencies the sensors** — edit `RoomForMac/App/AppDependencies.swift`
+- [x] **Step 5: Give the dependencies the sensors** — edit `RoomForMac/App/AppDependencies.swift`
 
 The memberwise initializer takes its arguments in declaration order. Declaring `sensors` directly before `logStore` puts `sensors:` directly before `logStore:` in `live()`, wherever Tasks 11 and 13 placed their own properties after `now`.
 
@@ -28647,12 +28725,12 @@ Replace with:
 ```
 Since Task 11 the `logStore:` line ends with a comma. The Find text stops before it, so the comma stays. The DEBUG `forScenario` does not change: scenarios get the inert sensors until Task 21 scripts them.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Status cadence" passed`, `✔ Suite "Status sensors" passed` and `✔ Suite "Status sensors wiring" passed`, then `✔ Test run with 15 tests in 3 suites passed` and `** TEST SUCCEEDED **`. `everySetOfDemandsResolves(_:)` runs 16 cases and `memoryPressureMapsTheKernelLevel(_:_:)` 7; each counts as one test.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` is git-ignored):
@@ -28690,7 +28768,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 8: Write the failing health tests** — `RoomForMacTests/HealthSummaryTests.swift`
+- [x] **Step 8: Write the failing health tests** — `RoomForMacTests/HealthSummaryTests.swift`
 
 `eachHeadlineOutranksTheOnesAfterIt` walks the whole priority chain on one snapshot: it fails if any two steps are swapped. The edge tests fail on `>=` where the engine has `>`, and the copy tests on any changed string.
 
@@ -29021,12 +29099,12 @@ struct HealthSummaryTests {
 }
 ```
 
-- [ ] **Step 9: Run the tests to verify they fail**
+- [x] **Step 9: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/HealthSummaryTests`
 Expected: `** TEST FAILED **`, because the test target does not compile: `RoomForMacTests/HealthSummaryTests.swift:…: error: cannot find 'HealthSummary' in scope`.
 
-- [ ] **Step 10: The health summary** — `RoomForMac/Features/Status/HealthSummary.swift`
+- [x] **Step 10: The health summary** — `RoomForMac/Features/Status/HealthSummary.swift`
 
 ```swift
 import Foundation
@@ -29345,12 +29423,12 @@ struct HealthSummary: Sendable, Equatable {
 
 Every headline and issue title is a `LocalizedStringResource` literal, so the build extracts it for the catalog; the process name and the free size are `%@` arguments. The `.issues` title is an `if` and a `return` rather than `??`, so the extractor sees the literal.
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: the Step 9 command again.
 Expected: `✔ Suite "Health summary" passed`, then `✔ Test run with 25 tests in 1 suite passed` and `** TEST SUCCEEDED **`. The parameterized tests run 10 (bands), 10 (issue names), 4 (messages without issues), 5 (process naming), 2 (pressure levels) and 10 (issue titles) cases.
 
-- [ ] **Step 12: Add the health strings to the String Catalog**
+- [x] **Step 12: Add the health strings to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 11 build left for the app target. `-derivedDataPath` must match Step 11:
 ```bash
@@ -29388,7 +29466,7 @@ Your disk may be failing. Back up now.
 ```
 `--skip-marking-strings-stale` keeps the sync from marking other tasks' keys stale.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -29417,7 +29495,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 14: Write the failing reading and history tests**
+- [x] **Step 14: Write the failing reading and history tests**
 
 Append the reading suites to `RoomForMacTests/StatusReadingTests.swift`. Find its last lines:
 ```swift
@@ -29702,12 +29780,12 @@ struct StatusHistoryTests {
 
 The merge tests fail if a fast snapshot keeps its raw disk or loses its own CPU, the sensor tests if an engine value leaks through (the capture's GPU usage is −1 and its pressure ""), and the history tests on a left-aligned series or a ring that compares its storage instead of its samples.
 
-- [ ] **Step 15: Run the tests to verify they fail**
+- [x] **Step 15: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusReadingTests -only-testing:RoomForMacTests/StatusCardKindTests -only-testing:RoomForMacTests/StatusHistoryTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/StatusReadingTests.swift:…: error: cannot find type 'StatusReading' in scope`; `StatusHistoryTests.swift` reports the same kind of error for `StatusSample` and `StatusHistory`.
 
-- [ ] **Step 16: The readings** — `RoomForMac/Features/Status/StatusReading.swift`
+- [x] **Step 16: The readings** — `RoomForMac/Features/Status/StatusReading.swift`
 
 ```swift
 import Foundation
@@ -29975,7 +30053,7 @@ struct StatusReading: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 17: The history** — `RoomForMac/Features/Status/StatusHistory.swift`
+- [x] **Step 17: The history** — `RoomForMac/Features/Status/StatusHistory.swift`
 
 ```swift
 import Foundation
@@ -30073,12 +30151,12 @@ struct StatusHistory: Sendable, Equatable, RandomAccessCollection {
 }
 ```
 
-- [ ] **Step 18: Run the task's tests to verify they pass**
+- [x] **Step 18: Run the task's tests to verify they pass**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusCadenceTests -only-testing:RoomForMacTests/StatusSensorsTests -only-testing:RoomForMacTests/StatusSensorsWiringTests -only-testing:RoomForMacTests/HealthSummaryTests -only-testing:RoomForMacTests/StatusReadingTests -only-testing:RoomForMacTests/StatusCardKindTests -only-testing:RoomForMacTests/StatusHistoryTests`
 Expected: a `✔ Suite … passed` line for "Status cadence", "Status sensors", "Status sensors wiring", "Health summary", "Status reading", "Status card kinds" and "Status history", then `✔ Test run with 59 tests in 7 suites passed` and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 19: Run the whole unit scheme**
+- [x] **Step 19: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -30094,7 +30172,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. Every Plan 2 suite and every earlier Plan 3 suite still passes: tests that build `AppDependencies` with the memberwise initializer get `StatusSensors.unavailable`, which reads nothing.
 - Both `grep`s print nothing: this task's files have no warnings, and no test builds a live sensor, so no test reads IOKit, sysctl or the disk.
 
-- [ ] **Step 20: Add the card titles to the String Catalog**
+- [x] **Step 20: Add the card titles to the String Catalog**
 
 Sync from the Step 19 build, as in Step 12:
 ```bash
@@ -30107,7 +30185,7 @@ git diff --stat RoomForMac/Resources/Localizable.xcstrings
 ```
 Expected: `xcstringstool` prints nothing and exits 0. The diff adds exactly these 6 keys, each an empty entry, and removes nothing: `Battery`, `CPU`, `Disk`, `GPU`, `Memory`, `Network`. Step 12's keys stay as they are.
 
-- [ ] **Step 21: Commit**
+- [x] **Step 21: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -30140,6 +30218,8 @@ EOF
 ```
 
 ### Task 17: Status — `StatusMonitor`
+
+**As built** (`dca7705..e753c48`: `9f808bc`, `e753c48`; review clean; Opus). Built as written. Deviation is process-only: Steps 1/2/4/5's files were extracted from the brief in one batch, so the Step 3 RED command ran green (22/22) instead of failing to compile; Step 9's app-wiring RED step, which does depend on an `AppModel` change not yet made, ran correctly in order and failed as predicted. Final wave (`2988060`) changed `StatusMonitor.swift` twice: F6 made the free-space timer run only while `.statusSection` or `.menuBarPanel` is a demand, never for `.menuBarInserted` alone (execution ruling FW2, revising Ruling 16 again); F7 made `resumeFeed(discardingPausedRates:)` drop rates from the first snapshot after a suspension longer than 2.5 s, so a long pause never reports rates averaged across the gap.
 
 **Files:**
 - Create: `RoomForMac/Features/Status/{StatusSource,StatusMonitor}.swift`, `RoomForMacTests/StatusMonitorTests.swift`, `RoomForMacTests/Support/FakeStatusSource.swift`.
@@ -30276,7 +30356,7 @@ EOF
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the fake source** — `RoomForMacTests/Support/FakeStatusSource.swift`
+- [x] **Step 1: Write the fake source** — `RoomForMacTests/Support/FakeStatusSource.swift`
 
 ```swift
 import Foundation
@@ -30444,7 +30524,7 @@ final class FakeStatusSource: StatusSource {
 }
 ```
 
-- [ ] **Step 2: Write the failing monitor tests** — `RoomForMacTests/StatusMonitorTests.swift`
+- [x] **Step 2: Write the failing monitor tests** — `RoomForMacTests/StatusMonitorTests.swift`
 
 The file holds two suites: the monitor over `FakeStatusSource`, Task 16's `FakeSensors` and a `ManualClock`, and `LiveStatusSource` over a recording `StatusServicing`. Step 8 appends a third suite for the app model.
 
@@ -31206,14 +31286,14 @@ How the less obvious tests can fail:
 - `aReadRequestedWhileOneRunsReadsAgainAfterIt` fails if a request during a read is dropped.
 - `stopEndsTheFeedAndEveryTimer` fails if the pending pause or the free-space timer outlives `stop()`, or if anything opens again.
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusMonitorTests -only-testing:RoomForMacTests/LiveStatusSourceTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include:
 - `RoomForMacTests/Support/FakeStatusSource.swift:18:31: error: cannot find type 'StatusSource' in scope`
 - `RoomForMacTests/Support/FakeStatusSource.swift:70:20: error: cannot find type 'StatusFeed' in scope`
 
-- [ ] **Step 4: The feed seam** — `RoomForMac/Features/Status/StatusSource.swift`
+- [x] **Step 4: The feed seam** — `RoomForMac/Features/Status/StatusSource.swift`
 
 ```swift
 import Foundation
@@ -31264,7 +31344,7 @@ struct LiveStatusSource: StatusSource {
 }
 ```
 
-- [ ] **Step 5: The monitor** — `RoomForMac/Features/Status/StatusMonitor.swift`
+- [x] **Step 5: The monitor** — `RoomForMac/Features/Status/StatusMonitor.swift`
 
 ```swift
 import Foundation
@@ -31803,12 +31883,12 @@ extension StatusMonitor: RunReporter {
 
 `RunReporter`'s requirements are nonisolated and `async`, so the main-actor monitor conforms without an isolated conformance, as Task 9's note on `RunReporting.swift` foresaw.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: the Step 3 command again.
 Expected: `✔ Suite "Status monitor" passed` (21 tests) and `✔ Suite "Live status source" passed` (1 test), then `** TEST SUCCEEDED **`. The suites take seconds: every timer runs on the `ManualClock`, and no test waits on real time.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` is git-ignored):
@@ -31842,7 +31922,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 8: Write the failing app-model tests**
+- [x] **Step 8: Write the failing app-model tests**
 
 Append this suite to the end of `RoomForMacTests/StatusMonitorTests.swift`, after a blank line:
 
@@ -31961,12 +32041,12 @@ Replace it with:
 
 The new assertion passes before and after Step 10: today `model.reporter` is the dependencies' reporter itself, and from Step 10 on it is a composite that calls it first. It fails if a later `makeFeatures` drops the dependencies' reporter.
 
-- [ ] **Step 9: Run the tests to verify they fail**
+- [x] **Step 9: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusMonitorWiringTests -only-testing:RoomForMacTests/AppModelServicesTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `RoomForMacTests/StatusMonitorTests.swift:778:23: error: value of type 'AppModel' has no member 'statusMonitor'`, and four more lines of the new suite report the same.
 
-- [ ] **Step 10: Build the monitor in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (as Tasks 9, 11 and 14 left it)
+- [x] **Step 10: Build the monitor in `makeFeatures`** — edit `RoomForMac/App/AppModel.swift` (as Tasks 9, 11 and 14 left it)
 
 After the `reporter` property, add the monitor's. Find:
 
@@ -32021,12 +32101,12 @@ Replace it with:
         statusMonitor?.setAllowed(true)
 ```
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusMonitorTests -only-testing:RoomForMacTests/LiveStatusSourceTests -only-testing:RoomForMacTests/StatusMonitorWiringTests -only-testing:RoomForMacTests/AppModelServicesTests -only-testing:RoomForMacTests/AppModelTests -only-testing:RoomForMacTests/SmartCleanWiringTests -only-testing:RoomForMacTests/UninstallerWiringTests`
 Expected: `✔ Suite "Status monitor" passed` (21 tests), `✔ Suite "Live status source" passed` (1 test), `✔ Suite "Status monitor in the app model" passed` (4 tests), Task 9's `✔ Suite "App model services" passed`, Plan 2's `✔ Suite "App model" passed`, Task 11's `✔ Suite "Smart Clean in the app model" passed` and Task 14's `✔ Suite "Uninstaller in the app model" passed`, then `** TEST SUCCEEDED **`. Tasks 11 and 14 check their scan reports through `reporter.scans`, so the composite still reaches them.
 
-- [ ] **Step 12: Run the whole unit scheme**
+- [x] **Step 12: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -32043,7 +32123,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. Every Plan 2 suite and every earlier Plan 3 suite still passes. Every `AppModel.start()` in them now also builds a `StatusMonitor`, over `EngineServices.unavailable`'s status service and `StatusSensors.unavailable`; it opens nothing, because no test there sets a demand.
 - Both `grep`s print nothing: this task's files have no warnings, and the monitor adds no strings to the catalog.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -32072,6 +32152,8 @@ MSG
 ```
 
 ### Task 18: Status — UI
+
+**As built** (`e753c48..43f688b`: `43f688b`; review clean). Built as written; the new Status files, `RootView.swift` and `RootViewTests.swift` were confirmed byte-for-byte identical to the plan's own preflight type-check snapshot, and no placement-by-intent was needed.
 
 **Files:**
 - Create: `RoomForMac/Features/Status/{StatusView,StatusCard,Sparkline,HealthLine,WindowOcclusionReader}.swift`, `RoomForMacTests/StatusViewTests.swift`.
@@ -32191,7 +32273,7 @@ MSG
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing Status view tests** — `RoomForMacTests/StatusViewTests.swift`
+- [x] **Step 1: Write the failing Status view tests** — `RoomForMacTests/StatusViewTests.swift`
 
 ```swift
 import AppKit
@@ -32581,12 +32663,12 @@ private struct IdleStatusSource: StatusSource {
 
 The readings are built the way the monitor builds them: Task 16's `StatusFixtures.full()` (the research's full capture, decoded by Task 8's `SystemSnapshot.decode(line:)`) through `StatusReading.make`, then one field changed through its `var`. Histories use Task 16's memberwise `StatusSample`: 60 samples 120/59 s apart span exactly two minutes, so the summary's span is fixed. The render tests follow Plan 2 and Task 9: at least 1 000 pixels must differ from `RenderedPixels.transparent`, between light and dark, or between two states. The sparkline renders use a size no other render in the suite uses. The two tests that wait poll for at most 5 s, and the suite has a one-minute limit.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/StatusViewTests`
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `cannot find 'StatusCardContent' in scope`, `cannot find 'StatusGrid' in scope`, `cannot find 'Sparkline' in scope`, `cannot find 'WindowOcclusionReader' in scope`, `cannot find 'StatusView' in scope` and `type 'AccessibilityID' has no member 'statusCard'`.
 
-- [ ] **Step 3: Write the sparkline** — `RoomForMac/Features/Status/Sparkline.swift`
+- [x] **Step 3: Write the sparkline** — `RoomForMac/Features/Status/Sparkline.swift`
 
 ```swift
 import Charts
@@ -32673,7 +32755,7 @@ struct Sparkline: View {
 }
 ```
 
-- [ ] **Step 4: Write the card and its content** — `RoomForMac/Features/Status/StatusCard.swift`
+- [x] **Step 4: Write the card and its content** — `RoomForMac/Features/Status/StatusCard.swift`
 
 ```swift
 import SwiftUI
@@ -33124,7 +33206,7 @@ struct StatusChip: View {
 
 Every figure, detail and chip is a `String` the content has already localized, so the view shows it with `Text(_:)` over a `String`, verbatim. Each phrase with a value is one `String(localized:)` with the value as an argument ("Load %@", "%@ used of %@", "%lld cores"), never words glued to a number. `locale:` reaches the number formats and the interpolated values; the words come from the app's String Catalog.
 
-- [ ] **Step 5: Write the health line** — `RoomForMac/Features/Status/HealthLine.swift`
+- [x] **Step 5: Write the health line** — `RoomForMac/Features/Status/HealthLine.swift`
 
 ```swift
 import SwiftUI
@@ -33192,7 +33274,7 @@ struct HealthLine: View {
 
 `Text(summary.headline.title)` shows Task 16's `LocalizedStringResource`, in which only a process name or a size is data. "Score %lld" and "Also reported: %@" are `LocalizedStringKey`s.
 
-- [ ] **Step 6: Write the window watcher** — `RoomForMac/Features/Status/WindowOcclusionReader.swift`
+- [x] **Step 6: Write the window watcher** — `RoomForMac/Features/Status/WindowOcclusionReader.swift`
 
 ```swift
 import AppKit
@@ -33293,7 +33375,7 @@ struct WindowOcclusionReader: NSViewRepresentable {
 
 The observer's block runs on the main queue, so `MainActor.assumeIsolated` holds. The first report waits for a `Task` because `viewDidMoveToWindow` runs inside SwiftUI's update, and the callback changes `StatusView`'s state.
 
-- [ ] **Step 7: Write the section and the grid** — `RoomForMac/Features/Status/StatusView.swift`
+- [x] **Step 7: Write the section and the grid** — `RoomForMac/Features/Status/StatusView.swift`
 
 ```swift
 import SwiftUI
@@ -33532,7 +33614,7 @@ private struct StatusFailureCard: View {
 }
 ```
 
-- [ ] **Step 8: Add the Status identifiers** — append to `RoomForMac/App/AccessibilityID.swift`, after a blank line
+- [x] **Step 8: Add the Status identifiers** — append to `RoomForMac/App/AccessibilityID.swift`, after a blank line
 
 ```swift
 // MARK: - Status (Plan 3 Task 18)
@@ -33552,12 +33634,12 @@ extension AccessibilityID {
 }
 ```
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [x] **Step 9: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Status view" passed`, then `✔ Test run with 21 tests in 1 suite passed` and `** TEST SUCCEEDED **`. The parameterized tests run 6 (card kinds), 2 (grid schemes) and 2 (waiting and failure schemes) cases.
 
-- [ ] **Step 10: Replace the root view tests and drop the placeholder identifier check**
+- [x] **Step 10: Replace the root view tests and drop the placeholder identifier check**
 
 First check what Tasks 12 and 15 left in `RoomForMacTests/RootViewTests.swift`:
 
@@ -33665,12 +33747,12 @@ Replace with:
         #expect(AccessibilityID.engineProblemCard == "engineProblem.card")
 ```
 
-- [ ] **Step 11: Run the tests to verify they fail**
+- [x] **Step 11: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit -destination "platform=macOS,arch=arm64" -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan3" test -only-testing:RoomForMacTests/RootViewTests -only-testing:RoomForMacTests/UITestIdentifierTests`
 Expected: `** TEST FAILED **`: the test target does not compile, with `RoomForMacTests/RootViewTests.swift:…: error: cannot find 'SectionDetail' in scope`.
 
-- [ ] **Step 12: Show Status in the main window and delete the placeholders**
+- [x] **Step 12: Show Status in the main window and delete the placeholders**
 
 In `RoomForMac/App/RootView.swift`, three edits. Tasks 12 and 15 changed only the `.smartClean` and `.uninstaller` cases, which these edits leave as they are.
 
@@ -33826,7 +33908,7 @@ Expected: no output.
 Run: `grep -rln 'placeholder' RoomForMacUITests`
 Expected: exactly `RoomForMacUITests/LaunchSmokeTests.swift`, `RoomForMacUITests/OnboardingSmokeTests.swift` and `RoomForMacUITests/UITestSupport.swift`, in any order: the UI tests' own `UIID.placeholder(_:)` and its two users, which Task 21 replaces whole.
 
-- [ ] **Step 13: Run the tests to verify they pass**
+- [x] **Step 13: Run the tests to verify they pass**
 
 Run: the Step 11 command again.
 Expected: `✔ Suite "Root view" passed` (4 tests, plus any test Step 10 carried over) and `✔ Suite "UI test identifiers" passed` (4 tests), then `** TEST SUCCEEDED **`. `eachSectionShowsItsFeature` runs 3 cases, one per section.
@@ -33842,7 +33924,7 @@ xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac \
 ```
 Expected: `** TEST BUILD SUCCEEDED **`. Nothing is run: UI tests need Automation Mode (Plan 2 ruling P6).
 
-- [ ] **Step 14: Write the failing plural test**
+- [x] **Step 14: Write the failing plural test**
 
 In `RoomForMacTests/StatusViewTests.swift`, find:
 ```swift
@@ -33868,12 +33950,12 @@ Replace with:
     @Test func batteryStatusIsCopyOrData() {
 ```
 
-- [ ] **Step 15: Run it to verify it fails**
+- [x] **Step 15: Run it to verify it fails**
 
 Run: the Step 2 command again.
 Expected: `✘ Test run with 22 tests in 1 suite failed … with 2 issues` and `** TEST FAILED **`. Both issues are in `oneCoreAndOneCycleAreSingular()`, which the String Catalog cannot pass yet: `cpu.details` is `["1 cores"]` instead of `["1 core"]`, and `battery.details` (`["Charged", "1 cycles", "Maximum capacity 93%"]`) has no `"1 cycle"`. The other 21 tests pass.
 
-- [ ] **Step 16: Add the new strings and the plurals to the String Catalog**
+- [x] **Step 16: Add the new strings and the plurals to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 15 build left for the app target. `-derivedDataPath` must match Step 15:
 ```bash
@@ -34007,12 +34089,12 @@ grep -c 'Coming in the next update' RoomForMac/Resources/Localizable.xcstrings
 ```
 Expected: `compile` prints nothing and exits 0 (a JSON slip gives `error: The data couldn’t be read because it isn’t in the correct format.`). `plutil` lists `%lld cores` and `%lld cycles` entries whose `NSStringLocalizedFormatKey` is `%#@value@` and `NSStringFormatValueTypeKey` is `lld`, with `one` → `%lld core` and `other` → `%lld cores`, and `one` → `%lld cycle` and `other` → `%lld cycles`, next to the plurals of Plan 2 and earlier tasks. The `grep` prints `0`.
 
-- [ ] **Step 17: Run the Status tests to verify they pass**
+- [x] **Step 17: Run the Status tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Status view" passed`, then `✔ Test run with 22 tests in 1 suite passed` and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 18: Run the whole unit scheme**
+- [x] **Step 18: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -34025,7 +34107,7 @@ grep -E '(Features/Status/(StatusView|StatusCard|Sparkline|HealthLine|WindowOccl
 ```
 Expected: the log ends with `** TEST SUCCEEDED **`, and the `grep` prints nothing, so this task's files have no warnings. Every Plan 2 suite and every earlier Plan 3 suite still passes: no test renders a placeholder any more, and `ScenarioTests` no longer names `AccessibilityID.placeholder(_:)`.
 
-- [ ] **Step 19: Commit**
+- [x] **Step 19: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored; the deletion is already staged by `git rm`):
@@ -34069,6 +34151,8 @@ EOF
 ```
 
 ### Task 19: Menu-bar extra, `AppDelegate`, window lifecycle, deep links, menu-bar setting
+
+**As built** (`43f688b..72d1fb8`: `f7543aa`, fix round 1 `72d1fb8`; review found 1 plan-mandated Important — execution ruling X5). The review found that "Quit When Done"/"Stop and Quit" could wait forever at a Force Quit question (or a Smart Clean confirmation) the user could not see — quitting from the menu-bar panel with the window closed, or from another section. Fix round 1 makes `terminationReply()` call `router.showMain(section:)` for the lease's section (`.smartClean` for `.stopCleaning`, `.uninstaller` for `.waitForUninstall`) right after the user confirms, before awaiting `queue.waitUntilIdle()`. Final wave (`2988060`) made `handleReopen` always call `router.showMain()` regardless of `hasVisibleWindows` (F5), since a menu-bar-only launch can report no visible windows even with the extra shown — this also resolves the deferred minor this task originally left open about Dock reopen relying on `hasVisibleWindows`.
 
 **Files:**
 - Create:
@@ -34260,7 +34344,7 @@ EOF
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing link and menu-bar model tests**
+- [x] **Step 1: Write the failing link and menu-bar model tests**
 
 `RoomForMacTests/DeepLinkTests.swift`
 ```swift
@@ -34834,7 +34918,7 @@ struct MenuBarGaugesTests {
 
 Each fixture writes onboarding and the switch before it makes a model, because `AppModel` reads both once, in `init`. `MenuBarFixture`'s models reach no engine: `makeServices` answers with `EngineServices.unavailable` apart from the Smart Clean service a test passes, and a ready engine makes a Status monitor whose default sensors read nothing and which opens no collector for the menu-bar demand alone (Ruling 16). Tests that start a ready model stop its monitor at the end. The suites that await carry `.timeLimit(.minutes(1))`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -34853,7 +34937,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `RoomForMacTests/MenuBarTests.swift:…: error: cannot find 'WindowRouter' in scope`
 - `RoomForMacTests/MenuBarTests.swift:…: error: cannot find 'MenuBarGauges' in scope`
 
-- [ ] **Step 3: Write the link, the preference, the model's menu-bar state, the router, the binding and the gauges**
+- [x] **Step 3: Write the link, the preference, the model's menu-bar state, the router, the binding and the gauges**
 
 `RoomForMac/App/DeepLink.swift`
 ```swift
@@ -35286,7 +35370,7 @@ struct MenuBarGauges: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: the Step 2 command again, with Task 17's app-model suite added:
 ```bash
@@ -35300,7 +35384,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `✔ Suite "Deep links" passed` (7 tests; the five parameterized ones run 5, 8, 6, 4 and 9 cases), `✔ Suite "Deep links in the app model" passed` (2), `✔ Suite "Menu-bar extra in the app model" passed` (9; `insertionFollowsTheSwitchOnboardingAndTheEngine` runs 12 cases), `✔ Suite "Menu-bar insertion binding" passed` (3), `✔ Suite "Window router" passed` (5), `✔ Suite "Menu-bar gauges" passed` (5) and Task 17's `✔ Suite "Status monitor in the app model" passed` (4), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 5: Write the failing delegate tests** — `RoomForMacTests/AppDelegateTests.swift`
+- [x] **Step 5: Write the failing delegate tests** — `RoomForMacTests/AppDelegateTests.swift`
 
 ```swift
 import AppKit
@@ -35716,7 +35800,7 @@ struct AppDelegateTests {
 
 Every test that can reach a quit prompt passes its own `ask` and `replyToTermination`, so no alert appears and the test host never receives `reply(toApplicationShouldTerminate:)`. No test calls `AppDelegate()`, which would build the live dependencies. The waits for the termination task are bounded by the suite's time limit.
 
-- [ ] **Step 6: Run the tests to verify they fail**
+- [x] **Step 6: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -35728,7 +35812,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `cannot find 'LaunchKind' in scope`, `cannot find 'TerminationDecision' in scope`, `cannot find 'TerminationPrompt' in scope` and `cannot find 'AppDelegate' in scope`, all in `RoomForMacTests/AppDelegateTests.swift`.
 
-- [ ] **Step 7: Write the launch kind and the delegate**
+- [x] **Step 7: Write the launch kind and the delegate**
 
 `RoomForMac/App/LaunchKind.swift`
 ```swift
@@ -35965,12 +36049,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: the Step 6 command again.
 Expected: `✔ Suite "Launch kind" passed` (5 tests), `✔ Suite "Termination decision" passed` (3) and `✔ Suite "App delegate" passed` (15; `aLaunchThatShowsTheWindowAsksForNothing` runs 2 cases), then `** TEST SUCCEEDED **`. No alert appears and the test host keeps running.
 
-- [ ] **Step 9: Write the failing panel tests** — append to `RoomForMacTests/MenuBarTests.swift`
+- [x] **Step 9: Write the failing panel tests** — append to `RoomForMacTests/MenuBarTests.swift`
 
 Append after the closing brace of `MenuBarGaugesTests`, the end of the file, with one blank line between. It reuses the file's `MenuBarFixture`.
 ```swift
@@ -36160,7 +36244,7 @@ struct PanelWindowObserverTests {
 
 The observer tests build a borderless window that is never shown, and drive the view with its window's notifications by hand, because a status item's panel cannot be opened headlessly (research §9, finding 11). The second test posts real notifications, so it also checks that the view listens to its own window only, and stops when it leaves it.
 
-- [ ] **Step 10: Run the tests to verify they fail**
+- [x] **Step 10: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -36171,7 +36255,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `cannot find 'MenuBarPanelContent' in scope`, `cannot find 'MenuBarPanel' in scope`, `cannot find 'MenuBarLabel' in scope`, `cannot find 'PanelWindowObserver' in scope` and `type 'AccessibilityID' has no member 'menuBarPanel'`, all in `RoomForMacTests/MenuBarTests.swift`.
 
-- [ ] **Step 11: Write the identifiers, the label, the window observer and the panel**
+- [x] **Step 11: Write the identifiers, the label, the window observer and the panel**
 
 Edit `RoomForMac/App/AccessibilityID.swift`. Find Plan 2's Settings heading:
 ```swift
@@ -36582,12 +36666,12 @@ struct MenuBarGaugeView: View {
 }
 ```
 
-- [ ] **Step 12: Run the tests to verify they pass**
+- [x] **Step 12: Run the tests to verify they pass**
 
 Run: the Step 10 command again.
 Expected: `✔ Suite "Menu-bar panel" passed` (7 tests; `thePanelRenders(scheme:)` runs 2 cases) and `✔ Suite "Panel window observer" passed` (2), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 13: Write the failing Settings tests** — edit `RoomForMacTests/SettingsTests.swift`
+- [x] **Step 13: Write the failing Settings tests** — edit `RoomForMacTests/SettingsTests.swift`
 
 Find the end of the file:
 ```swift
@@ -36652,7 +36736,7 @@ extension SettingsTests {
 }
 ```
 
-- [ ] **Step 14: Run the tests to verify they fail**
+- [x] **Step 14: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -36663,7 +36747,7 @@ xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit \
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `value of type 'GeneralSettingsView' has no member 'menuBarRow'`, `extra argument 'model' in call` and `type 'AccessibilityID' has no member 'settingsMenuBar'`, all in `RoomForMacTests/SettingsTests.swift`.
 
-- [ ] **Step 15: Replace the note with the switch**
+- [x] **Step 15: Replace the note with the switch**
 
 Edit `RoomForMac/App/AccessibilityID.swift`. In the Settings extension, find:
 ```swift
@@ -36813,12 +36897,12 @@ Replace with:
 
 Plan 2's tests build `GeneralSettingsView(permissions:loginItem:openURL:)` and compile unchanged; their render test draws the tab without the switch, as before.
 
-- [ ] **Step 16: Run the tests to verify they pass**
+- [x] **Step 16: Run the tests to verify they pass**
 
 Run: the Step 14 command again.
 Expected: `✔ Test run with 52 tests in 7 suites passed`: Plan 2's 49 tests in 6 suites, and `✔ Suite "Menu-bar switch" passed` (3 tests). Then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 17: Install the delegate and the menu-bar extra** — replace `RoomForMac/App/RoomForMacApp.swift`
+- [x] **Step 17: Install the delegate and the menu-bar extra** — replace `RoomForMac/App/RoomForMacApp.swift`
 
 The launcher and the unit-test host's scene are Plan 2's, unchanged: the unit-test host still never builds `RoomForMacApp`, so no test creates the delegate, the menu-bar item or the window.
 ```swift
@@ -36905,7 +36989,7 @@ struct RoomForMacApp: App {
 }
 ```
 
-- [ ] **Step 18: Run the whole unit scheme**
+- [x] **Step 18: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -36919,7 +37003,7 @@ grep -nE 'AppDelegate\(\)|runAlert\(|NSApp\.reply|NSApp\.terminate' RoomForMacTe
 ```
 Expected: the log ends with `** TEST SUCCEEDED **`, and both `grep`s print nothing: this task's files have no warnings, and no test builds the live delegate, shows the quit alert, replies to a real termination or quits the host. Every earlier suite still passes: the suites that build an `AppModel` over a fresh suite get the switch's default (on), which none of them reads, and a ready model's monitor opens no collector for the menu-bar demand alone. Task 17's app-model tests, which count free-space reads, turn the switch off (Step 3).
 
-- [ ] **Step 19: Add the new strings to the String Catalog**
+- [x] **Step 19: Add the new strings to the String Catalog**
 
 Sync the catalog from the `.stringsdata` files the Step 18 build left for the app target, as Task 9 does. `-derivedDataPath` must match Step 18:
 ```bash
@@ -36949,7 +37033,7 @@ mkdir -p "$TMPDIR/rfm-xcstrings" && xcrun xcstringstool compile RoomForMac/Resou
 ```
 Expected: `grep` prints `0`, and `compile` prints nothing and exits 0.
 
-- [ ] **Step 20: Commit**
+- [x] **Step 20: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` and `RoomForMac/Generated/` are git-ignored):
@@ -37007,6 +37091,8 @@ EOF
 The owner's manual checks for this task are in Task 22's list: U5 (a login launch opens no window), U7 (links in each app state), the panel's open and close signal, and `isInserted = false` removing the item on macOS 26 and 27.
 
 ### Task 20: Notifications
+
+**As built** (`72d1fb8..95dcafb`: `95dcafb`; review clean). Built as written; every Find anchor matched the tree on the first try, including through Task 19's fix round.
 
 **Files:**
 - Create: `RoomForMac/Features/Notifications/RunNotifier.swift`, `RoomForMacTests/RunNotifierTests.swift`.
@@ -37118,7 +37204,7 @@ extension AppDelegate {                                                 // App/A
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing notifier tests** — `RoomForMacTests/RunNotifierTests.swift`
+- [x] **Step 1: Write the failing notifier tests** — `RoomForMacTests/RunNotifierTests.swift`
 
 ```swift
 import AppKit
@@ -37395,7 +37481,7 @@ struct RunNotifierTests {
 
 The copy tests build each expected body from `ByteText.string`, so they pass in any region. `noTextHoldsAPath` runs every report shape, sizes from 0 to `Int64.max` and counts up to `Int.max`, through the copy. `aCleanupPostsOnlyWhenEveryConditionHolds` checks all eight gate combinations, and `theConditionsAreReadWhenTheRunEnds` checks that the gate is read when each run ends, not when the notifier is made.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -37406,7 +37492,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. Among the errors, all in `RunNotifierTests.swift`: `cannot find 'RunNotifier' in scope`, `cannot find type 'RunNotification' in scope` and `cannot find 'NotificationPoster' in scope`.
 
-- [ ] **Step 3: Write the notifier** — `RoomForMac/Features/Notifications/RunNotifier.swift`
+- [x] **Step 3: Write the notifier** — `RoomForMac/Features/Notifications/RunNotifier.swift`
 
 ```swift
 import Foundation
@@ -37613,12 +37699,12 @@ final class RunNotifier: RunReporter {
 
 `RunReporter`'s requirements are nonisolated and `async`, so the main-actor notifier conforms (Task 9's note). The composite awaits it like any reporter. Every title and body goes through `String(localized:)`. The only values in them are `ByteText` sizes and counts, never text from a report, because reports carry none (Task 9's `reportsAndRequestsCarryNoText`).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: the Step 2 command again.
 Expected: `✔ Suite "Run notification copy" passed` (11 tests) and `✔ Suite "Run notifier" passed` (6 tests), then `** TEST SUCCEEDED **`. A parameterized test counts once: the two ending tables run 5 cases each, the gate tests 8 each and the permission test 5. Singular counts ("1 item") come in Step 13.
 
-- [ ] **Step 5: Write the failing wiring, switch and click tests** — append to `RoomForMacTests/RunNotifierTests.swift`
+- [x] **Step 5: Write the failing wiring, switch and click tests** — append to `RoomForMacTests/RunNotifierTests.swift`
 
 ```swift
 /// A Smart Clean run over two rows whose paths hold names. No notification may repeat any of them.
@@ -38014,7 +38100,7 @@ struct NotificationClickTests {
 - `switchingAwayReadsThePermissionAgain` calls the `NSApplicationDelegate` method itself.
 - The three suites carry `.timeLimit(.minutes(1))`, and no test sleeps.
 
-- [ ] **Step 6: Run the tests to verify they fail**
+- [x] **Step 6: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -38031,7 +38117,7 @@ Expected: `** TEST FAILED **`, because the test target does not compile. The err
 - `type 'AccessibilityID' has no member 'settingsNotifyWhenDone'`;
 - `value of type 'AppDelegate' has no member 'openNotification'`, and the same for `'applicationDidResignActive'`.
 
-- [ ] **Step 7: Give the dependencies the poster** — edit `RoomForMac/App/AppDependencies.swift`
+- [x] **Step 7: Give the dependencies the poster** — edit `RoomForMac/App/AppDependencies.swift`
 
 In `RoomForMac/App/AppDependencies.swift`, find:
 ```swift
@@ -38060,7 +38146,7 @@ Replace it with:
 
 The memberwise initializer takes its arguments in declaration order. `notifications` is declared right after `now`, so it precedes every property Tasks 11 and 13 added after `now` (`cleanItemLabel`, `runningApps`), and follows Task 16's `sensors`, which sits before `logStore`. Its argument therefore goes right after `logStore:`, which since Task 11 ends with a comma. `isAppActive` keeps its default in `live()`. `forScenario` does not change: scenarios get `.none` until Task 21 sets it explicitly.
 
-- [ ] **Step 8: Wire the notifier and the switch into the model** — edit `RoomForMac/App/AppModel.swift`
+- [x] **Step 8: Wire the notifier and the switch into the model** — edit `RoomForMac/App/AppModel.swift`
 
 In `RoomForMac/App/AppModel.swift`, find:
 ```swift
@@ -38154,7 +38240,7 @@ Replace it with:
 
 The notifier is built after Task 17's monitor and before the composite, so Smart Clean and the Uninstaller, built next, report to both. It holds the model weakly and the permission center strongly, and neither holds the notifier, so no retain cycle forms. `notificationsWanted` is observed, so the switch redraws when it changes, and so is `onboardingFlow`, whose choices the Extras screen changes.
 
-- [ ] **Step 9: Add the switch** — edit `RoomForMac/App/AccessibilityID.swift`, `RoomForMac/Features/Settings/GeneralSettingsView.swift` and `RoomForMac/Features/Onboarding/Steps/ExtrasStep.swift`
+- [x] **Step 9: Add the switch** — edit `RoomForMac/App/AccessibilityID.swift`, `RoomForMac/Features/Settings/GeneralSettingsView.swift` and `RoomForMac/Features/Onboarding/Steps/ExtrasStep.swift`
 
 Append to `RoomForMac/App/AccessibilityID.swift`:
 ```swift
@@ -38247,7 +38333,7 @@ Replace it with:
 
 The switch sits above the Notifications row, whose chip and **Allow** / **Open Settings** button show what macOS allows. Plan 2's tests build `GeneralSettingsView` without a model and see no switch. `ImageRenderer` draws a `Form`'s rows blank (Plan 2, Task 14), so the tests check the row and its binding instead of pixels. The Extras toggle keeps its identifier and binding; only its words change.
 
-- [ ] **Step 10: Handle clicks and keep the permission current** — edit `RoomForMac/App/AppDelegate.swift`, create `RoomForMac/App/AppDelegate+Notifications.swift`
+- [x] **Step 10: Handle clicks and keep the permission current** — edit `RoomForMac/App/AppDelegate.swift`, create `RoomForMac/App/AppDelegate+Notifications.swift`
 
 In `RoomForMac/App/AppDelegate.swift`, find (in `init(model:router:ask:)`):
 ```swift
@@ -38345,12 +38431,12 @@ extension AppDelegate {
 
 The new parameter comes after `ask`, so Task 19's calls, including a trailing closure for `ask`, compile unchanged and install nothing. `applicationDidResignActive` is an optional `NSApplicationDelegate` method, and `AppDelegate` declares that conformance, so the method is exposed to AppKit from this extension like any other.
 
-- [ ] **Step 11: Run the tests to verify they pass**
+- [x] **Step 11: Run the tests to verify they pass**
 
 Run: the Step 6 command again (`xcodegen generate` adds the new file to the project).
 Expected: `✔ Suite "Notifications in the app model" passed` (7 tests), `✔ Suite "Notify switch" passed` (6 tests) and `✔ Suite "Notification clicks" passed` (6 tests), then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 12: Check that the key tests can fail**
+- [x] **Step 12: Check that the key tests can fail**
 
 1. In `RunNotifier.mayPost`, delete ` && !isAppActive()`. Run the Step 2 command. Expected: `** TEST FAILED **`: `aCleanupPostsOnlyWhenEveryConditionHolds(gates:)` and `aScanPostsOnlyWhenEveryConditionHolds(gates:)` fail for "wanted true, granted true, active true". Restore the line.
 2. In `AppModel.completeOnboarding(startFirstScan:)`, delete `notificationsWanted = preferences.notificationsWanted`. Run the Step 6 command. Expected: `** TEST FAILED **`: `finishingOnboardingWithExtrasOffTurnsTheSwitchOff` finds `model.notifyWhenDone` still true. Restore the line.
@@ -38359,7 +38445,7 @@ Expected: `✔ Suite "Notifications in the app model" passed` (7 tests), `✔ Su
 
 Then run the Step 2 and Step 6 commands again. Expected: both end with `** TEST SUCCEEDED **`.
 
-- [ ] **Step 13: Write the failing plural test** — append to `RoomForMacTests/RunNotifierTests.swift`
+- [x] **Step 13: Write the failing plural test** — append to `RoomForMacTests/RunNotifierTests.swift`
 
 ```swift
 @Suite("Run notification plurals")
@@ -38375,7 +38461,7 @@ struct RunNotificationPluralTests {
 }
 ```
 
-- [ ] **Step 14: Run it to verify it fails**
+- [x] **Step 14: Run it to verify it fails**
 
 Run:
 ```bash
@@ -38390,7 +38476,7 @@ Expected: `** TEST FAILED **` with three issues, because the catalog has no plur
 ```
 and the same for `Freed … · 1 items` and `Moved … to the Trash · 1 apps`.
 
-- [ ] **Step 15: Add the new strings and the plurals to the String Catalog**
+- [x] **Step 15: Add the new strings and the plurals to the String Catalog**
 
 `xcodebuild` does not update `Localizable.xcstrings`; only the Xcode editor does. Sync the catalog from the `.stringsdata` files the Step 14 build left for the app target. `-derivedDataPath` must match Step 14, or `OBJ` points at another build:
 ```bash
@@ -38536,7 +38622,7 @@ Expected: `compile` prints nothing and exits 0; a JSON slip gives `error: The da
 
 Each `other` is the key's own wording. The compiler picks the one integer argument for the plural rule.
 
-- [ ] **Step 16: Run the notification tests**
+- [x] **Step 16: Run the notification tests**
 
 Run:
 ```bash
@@ -38549,7 +38635,7 @@ xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit \
 ```
 Expected: the six suites pass: "Run notification copy" (11 tests), "Run notifier" (6), "Notifications in the app model" (7), "Notify switch" (6), "Notification clicks" (6) and "Run notification plurals" (1). Then `✔ Test run with 37 tests in 6 suites passed` and `** TEST SUCCEEDED **`.
 
-- [ ] **Step 17: Run the whole unit scheme**
+- [x] **Step 17: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -38566,7 +38652,7 @@ Expected:
 - The first `grep` prints nothing: this task's files have no warnings.
 - The second `grep` prints exactly five lines: Plan 2's three in `RoomForMac/Features/Permissions/NotificationChecker.swift` (its doc comment and its two calls), one in `RoomForMac/Features/Notifications/RunNotifier.swift` (`live`) and one in `RoomForMac/App/AppDelegate+Notifications.swift` (`installNotificationDelegate`). No test file is listed: no test reaches the notification center.
 
-- [ ] **Step 18: Commit**
+- [x] **Step 18: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines (`RoomForMac.xcodeproj/` is git-ignored):
@@ -38608,6 +38694,8 @@ EOF
 ```
 
 ### Task 21: DEBUG scenarios and UI smoke tests
+
+**As built** (`95dcafb..5e1f935`: `5e1f935`; review clean). Deviation: the brief's RED step — observing the predicted compile failure before writing the implementation files — was not independently observed, since every file in this task is a mechanical transcription of an already type-checked preflight block; GREEN evidence (905 tests, zero warnings, a clean Release build) is solid. A `-configuration Release clean` was found to remove Debug intermediates too on this toolchain (noted for later tasks; no functional impact).
 
 **Files:**
 - Create:
@@ -38726,7 +38814,7 @@ EOF
 
 All commands run from the repository root. An `xcodebuild` that finds a stale engine rebuilds it, so no other engine build may run at the same time.
 
-- [ ] **Step 1: Write the failing scenario tests** — edit `RoomForMacTests/ScenarioTests.swift`
+- [x] **Step 1: Write the failing scenario tests** — edit `RoomForMacTests/ScenarioTests.swift`
 
 The new tests go after the file's last test. They cover:
 - **"Scenario dependencies"**, the skeleton's first two `ScenarioTests` checks, for every scenario. `makeServices` gives the scripted services and never a MoleEngine one. The logs, gate, recorder, reporter, protected paths and host path keep their inert defaults. The menu-bar preference is off. The file probes, running apps, sensors and labeler answer from the scripted Mac, and each launch gets its own. Every fixture path lies under `/Users/rfm-scenario`, where a live probe finds nothing, so each check fails if something live is wired. The running-app table is checked before anything is terminated, so a live table would stop the test before `terminate` is called. Only `notifications` is not asserted: telling `.none` from `.live` would mean calling the live poster, which unit tests never do.
@@ -39423,7 +39511,7 @@ private struct ScenarioTimeout: Error, CustomStringConvertible {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -39435,7 +39523,7 @@ xcodegen generate && xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
 ```
 Expected: `** TEST FAILED **`, because the test target does not compile. The errors include `cannot find 'ScenarioFixtures' in scope`, `cannot find 'ScenarioWorld' in scope`, `cannot find 'ScenarioServices' in scope` and `cannot find type 'ScenarioCleanService' in scope`.
 
-- [ ] **Step 3: Write the fixtures** — `RoomForMac/App/Scenarios/ScenarioFixtures.swift`
+- [x] **Step 3: Write the fixtures** — `RoomForMac/App/Scenarios/ScenarioFixtures.swift`
 
 Sizes are in KiB × 1024, as the engine reports them. The snapshot lines use only keys that `status-go` writes (research fixture `fixture-full.json`), plus `purgeable`, which Task 8's full fixture adds the same way. `line(_:)` turns each into a single NDJSON line.
 
@@ -39749,7 +39837,7 @@ enum ScenarioFixtures {
 #endif
 ```
 
-- [ ] **Step 4: Write the scripted services** — `RoomForMac/App/Scenarios/ScenarioServices.swift`
+- [x] **Step 4: Write the scripted services** — `RoomForMac/App/Scenarios/ScenarioServices.swift`
 
 ```swift
 #if DEBUG
@@ -40387,7 +40475,7 @@ extension EngineEvent {
 #endif
 ```
 
-- [ ] **Step 5: Script the scenarios** — edit `RoomForMac/App/AppDependencies.swift`
+- [x] **Step 5: Script the scenarios** — edit `RoomForMac/App/AppDependencies.swift`
 
 Find (once; Plan 2's text, which Tasks 9–20 leave as it is):
 ```swift
@@ -40477,7 +40565,7 @@ Replace with:
     }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run:
 ```bash
@@ -40496,7 +40584,7 @@ Expected:
 - Plan 2's `✔ Suite "UI test scenarios" passed` and `✔ Suite "App dependencies" passed`: the new `forScenario` keeps every scripted approval, the flags and the engine checks.
 - Then `** TEST SUCCEEDED **`.
 
-- [ ] **Step 7: Write the UI smoke tests**
+- [x] **Step 7: Write the UI smoke tests**
 
 `RoomForMacUITests/UITestSupport.swift` (whole file):
 ```swift
@@ -40887,7 +40975,7 @@ About these tests:
 - `UIWait.reaction` (10 s) covers every scripted run: a scan takes about 1 s, a cleanup about 0.5 s, and the first full Status snapshot 2 s.
 - Nothing clicks **Open Trash**: scenarios open no links (`openURL` does nothing), so the click would prove nothing.
 
-- [ ] **Step 8: Build the app and all tests**
+- [x] **Step 8: Build the app and all tests**
 
 Run:
 ```bash
@@ -40901,7 +40989,7 @@ Expected: `** TEST BUILD SUCCEEDED **` and nothing else. The seven `RoomForMacUI
 Run: `grep -rn 'placeholder' RoomForMacUITests`
 Expected: no output. No UI test waits for `placeholder.smartClean` or any other placeholder identifier any more: Tasks 12, 15 and 18 deleted those views, and Task 18 left `UIID.placeholder(_:)` and its two users to this task (Ruling 24).
 
-- [ ] **Step 9: Run the whole unit scheme**
+- [x] **Step 9: Run the whole unit scheme**
 
 Run:
 ```bash
@@ -40916,7 +41004,7 @@ Expected:
 - The log ends with `** TEST SUCCEEDED **`. Every Plan 2 suite and every earlier Plan 3 suite still passes.
 - The `grep` prints nothing: this task's files have no warnings.
 
-- [ ] **Step 10: Check that Release ships no scenario code**
+- [x] **Step 10: Check that Release ships no scenario code**
 
 Run:
 ```bash
@@ -40938,7 +41026,7 @@ Expected: `** BUILD SUCCEEDED **`, then `absent: RoomForMac.UITest`, `absent: rf
 - The Release configuration has no `DEBUG`, so `forScenario`, `ScenarioServices`, `ScenarioWorld`, `ScenarioFixtures` and their strings are all compiled out, as Plan 2's scenario code is.
 - The build is arm64-only (`ARCHS=arm64`), which is enough for this check and half the size of a universal one. The `clean` removes only the Release build it made, because this Mac has little free disk; the Debug build stays.
 
-- [ ] **Step 11: Confirm the String Catalog does not change**
+- [x] **Step 11: Confirm the String Catalog does not change**
 
 Run:
 ```bash
@@ -40975,7 +41063,7 @@ open -n "$APP" --args -RFMUITestScenario onboarded
 - No system prompt appears, and no engine process starts (`pgrep -f status-go` prints nothing).
 - Quit with ⌘Q, then run `defaults delete RoomForMac.UITest` to drop the scenario suite.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 Run: `git status --short`
 Expected: exactly these lines:
@@ -41023,6 +41111,8 @@ MSG
 ```
 
 ### Task 22: Protocol document, CI, README, roadmap, handoff, manual checklist
+
+**As built** (`5e1f935..49ba954`: `49ba954`; review clean). Built as written, plus three owner's-manual-checklist bullets the controller asked for directly (a Dock click reopening the window; a mid-Force-Quit quit bringing the Uninstaller forward; the panel's own Status live/paused signal), which is why the handoff diff is 3 lines larger than the brief's own printed table. `.github/workflows/ci.yml` needed no edit: Task 2 had already added `clean_removed_sizes.bats` to "Patch tests". Final wave: F8 (`2988060`) reworded the README's login-launch sentence and Status bullet; F20 (`5afe314`) added `scripts/tests/status_stub_spy.bash`, which this task's own CI check already covers through Task 3's bats files; F18/F19 (`3ea73eb`) reworded `docs/engine-protocol.md` further, after this task's own Step 3 pass — see Tasks 3, 4, 5 and 7's As-built notes. The amendment `872e3aa` (after the final wave) narrowed F2's pattern hold-back; nothing in this task's own files changed as a result.
 
 **Files:**
 - Modify: `docs/engine-protocol.md` (final consistency pass), `.github/workflows/ci.yml` (verify), `README.md`, `docs/superpowers/plans/2026-09-25-roomformac-roadmap.md`, `docs/superpowers/plans/2026-09-26-mvp-handoff.md`.
@@ -41082,7 +41172,7 @@ MSG
 
 All commands run from the repository root, on the branch `plan3/features` after Task 21.
 
-- [ ] **Step 1: Write the CI check and run it**
+- [x] **Step 1: Write the CI check and run it**
 
 This check pins the CI contract. It is not committed; Step 8 runs it again.
 
@@ -41158,7 +41248,7 @@ ruby "$TMPDIR/check-ci.rb" "$TMPDIR/ci-without-0006.yml"
 ```
 Expected: FAIL (exit 1), printing exactly `engine: Patch tests misses tests/clean_removed_sizes.bats`. The same line appears for `ci.yml` as it was before Task 2.
 
-- [ ] **Step 2: Write the document check and watch it fail**
+- [x] **Step 2: Write the document check and watch it fail**
 
 This check pins what this task leaves in the documents. It also pins the corrections Tasks 1–8 wrote into the protocol (Smart Clean research G12, uninstaller research §2.5, the stubs, and the host's stop and diagnostics), so this task's edits cannot drop them. It is not committed; Step 8 runs it again.
 
@@ -41289,7 +41379,7 @@ Expected: FAIL (exit 1) with 57 lines, every one about this task's own text:
 
 No line names the text Tasks 1–8 wrote (the first 18 `need` lines), and no `no such file` or `odd number of code fences` line appears. If one does, an earlier task's protocol step did not land, or the plan document is not at its path (see Plan file): fix that first.
 
-- [ ] **Step 3: Final pass on the protocol document** — `docs/engine-protocol.md`
+- [x] **Step 3: Final pass on the protocol document** — `docs/engine-protocol.md`
 
 The document already holds Tasks 1, 2, 3, 5, 6, 7 and 8's sections. Make these nine replacements; each Find text occurs exactly once at that point.
 
@@ -41449,7 +41539,7 @@ Replace with:
 
 Everything else in the document stays. Tasks 1–8 already made the corrections Smart Clean research G12 lists (`skipped` results for unselected paths and the decimal `removed` detail in Task 2; `count`, paths outside `HOME`, cross-section `covered_by`, the report-only sections, display-only real-run totals and selected dry runs in Task 6; no `summary` after a host stop, and an engine that outlives its host, in Task 5) and the one uninstaller research §2.5 lists for this document (`freed_kb`, Task 1). Step 2's check pins all of them.
 
-- [ ] **Step 4: Document the menu-bar extra, notifications, logs and scenarios** — `README.md`
+- [x] **Step 4: Document the menu-bar extra, notifications, logs and scenarios** — `README.md`
 
 Make these three replacements; each Find text occurs exactly once at that point.
 
@@ -41503,7 +41593,7 @@ RFM_ENGINE_DIR="$PWD/build/engine" swift test --package-path Packages/MoleEngine
 The integration suite runs the engine only in a temporary fake home folder, never on your own files, and takes several minutes.
 ````
 
-- [ ] **Step 5: Mark Plan 3 done in the roadmap and list the spec errata** — `docs/superpowers/plans/2026-09-25-roomformac-roadmap.md`
+- [x] **Step 5: Mark Plan 3 done in the roadmap and list the spec errata** — `docs/superpowers/plans/2026-09-25-roomformac-roadmap.md`
 
 Make these four replacements; each Find text occurs exactly once at that point.
 
@@ -41561,7 +41651,7 @@ Where the built software differs from the spec, the plans' Rulings decide. The d
 6. **Notification triggers (§5.6 and §6 row 6).** The spec asks for the Notifications permission but names no trigger. Built (Plan 3 Ruling 20): RoomForMac posts a notification only when **Notify me when a scan or cleanup finishes** is on, the permission is granted and RoomForMac is not the active app, and only when a Smart Clean scan finishes, a Smart Clean cleanup ends (however it ends) or an uninstall ends. The text carries counts and sizes, never a name, and a click opens the matching section. There are no low-space or scheduled notifications in v1.
 ```
 
-- [ ] **Step 6: Mark Plan 3 done in the handoff and add the owner's manual checks** — `docs/superpowers/plans/2026-09-26-mvp-handoff.md`
+- [x] **Step 6: Mark Plan 3 done in the handoff and add the owner's manual checks** — `docs/superpowers/plans/2026-09-26-mvp-handoff.md`
 
 Make these fourteen replacements; each Find text occurs exactly once at that point.
 
@@ -41819,7 +41909,7 @@ Replace with:
 > Plan 3 has landed. Read the handoff's Step 5, the roadmap and its spec errata. Write Plan 6 with superpowers:writing-plans, then stop for my review.
 ```
 
-- [ ] **Step 7: Point the signing guide's stability test at a file Plan 3 keeps** — `docs/signing.md`
+- [x] **Step 7: Point the signing guide's stability test at a file Plan 3 keeps** — `docs/signing.md`
 
 Make these two replacements (Files issue above); each Find text occurs exactly once.
 
@@ -41841,7 +41931,7 @@ Replace with:
 git checkout -- RoomForMac/Features/Settings/AboutView.swift
 ```
 
-- [ ] **Step 8: Run both checks again**
+- [x] **Step 8: Run both checks again**
 
 Run:
 ```bash
@@ -41865,7 +41955,7 @@ Expected:
 
 If `check-docs.rb` still prints a line, the replacement it names did not land: compare that Find text with the file.
 
-- [ ] **Step 9: Run the engine half of CI locally**
+- [x] **Step 9: Run the engine half of CI locally**
 
 Run these one at a time. `build-engine.sh` and `bats scripts/tests` both re-clone `build/engine-src`; never start one while another engine build runs.
 ```bash
@@ -41893,7 +41983,7 @@ Expected:
 
 These are exactly the engine job's steps, so a green run here is what CI will run once it can.
 
-- [ ] **Step 10: Run the app job's build and checks locally**
+- [x] **Step 10: Run the app job's build and checks locally**
 
 These are the app job's commands, with this plan's DerivedData folder outside `~/Desktop` (Plan 2 execution ruling E6). The UI tests are built, not run: they need Automation Mode (owner's check 10).
 ```bash
@@ -41921,7 +42011,7 @@ Expected, in order:
 
 If an `xcodebuild` fails with `…/build/engine is missing or stale; run scripts/build-engine.sh`, something changed the engine's inputs after Step 9: run `scripts/ensure-engine.sh` and repeat from that command.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add README.md docs/engine-protocol.md docs/signing.md \
