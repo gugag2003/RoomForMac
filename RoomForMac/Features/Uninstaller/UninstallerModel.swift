@@ -492,8 +492,15 @@ final class UninstallerModel {
     /// A round that asks a helper to quit for the first time gets one more `interval`
     /// before the deadline can end the wait, even when `deadline` has already passed:
     /// otherwise a helper asked in what would have been the last round gets ~0 s to
-    /// respond and is reported a survivor for no reason (fix round 1 finding 2). The
-    /// grace is granted once per call, not renewed by a later round.
+    /// respond and is reported a survivor for no reason (fix round 1 finding 2). Since
+    /// one call polls every instance across the whole plan, a later app's helper can be
+    /// asked for the first time in a later round than an earlier app's; the grace is
+    /// therefore extended (never shortened) every time a round asks a helper for the
+    /// first time, not granted only once for the whole call (fix round 2 finding 2) —
+    /// otherwise an early helper's grace would "use up" the mechanism and a later
+    /// helper, freshly asked exactly at the deadline, would lose its own chance to quit.
+    /// `due(among:)` never asks the same helper twice, so this is bounded by the number
+    /// of helpers still to ask.
     private func poll<C: Clock<Duration>>(
         _ instances: [RunningInstance],
         helpers: inout HelperRequests?,
@@ -521,8 +528,9 @@ final class UninstallerModel {
             if open.isEmpty {
                 return open
             }
-            if !justAsked.isEmpty, grace == nil {
-                grace = now.advanced(by: interval)
+            if !justAsked.isEmpty {
+                let candidate = now.advanced(by: interval)
+                grace = grace.map { max($0, candidate) } ?? candidate
             }
             let roundDeadline = grace.map { max($0, deadline) } ?? deadline
             if now >= roundDeadline {

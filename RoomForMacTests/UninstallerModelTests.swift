@@ -75,6 +75,9 @@ private enum Fixture {
         pid: 102, name: "Alpha Helper", bundlePath: "\(alphaPath)/Contents/Frameworks/Alpha Helper.app", isNested: true
     )
     static let betaMain = RunningInstance(pid: 201, name: "Beta", bundlePath: betaPath, isNested: false)
+    static let betaHelper = RunningInstance(
+        pid: 202, name: "Beta Helper", bundlePath: "\(betaPath)/Contents/Frameworks/Beta Helper.app", isNested: true
+    )
 
     /// The `app` event a real run writes when it checks an app again.
     static func scanned(_ preview: AppPreview) -> Step {
@@ -788,6 +791,62 @@ struct UninstallerModelTests {
         #expect(harness.model.drawer.shownSummary?.removed.map(\.path) == [Fixture.alphaPath])
         #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.alphaPath)"])
         #expect(running.forceTerminated.isEmpty, "the helper was force-quit without confirmation")
+    }
+
+    /// Fix round 2 finding 2: `poll(...)` handles every instance across the whole plan
+    /// in one call, so an early app's helper must not "use up" the grace mechanism for a
+    /// later app's helper that is only freshly asked at the deadline.
+    @Test func eachAppsHelperGetsItsOwnGraceEvenAfterAnEarlierOneWasAlreadyAsked() async throws {
+        let running = FakeRunningApps()
+        running.launch(Fixture.alphaMain, of: Fixture.alphaPath)                            // quits at once
+        running.launch(Fixture.alphaHelper, of: Fixture.alphaPath, quitsOnTerminate: false)  // asked early
+        running.launch(Fixture.betaMain, of: Fixture.betaPath, quitsOnTerminate: false)      // quits late
+        running.launch(Fixture.betaHelper, of: Fixture.betaPath, quitsOnTerminate: false)    // asked late
+        let service = Fixture.service(uninstall: [
+            Fixture.scanned(Fixture.alphaPreview), Fixture.scanned(Fixture.betaPreview),
+            Fixture.removed(Fixture.alphaPreview, bytes: 126_000_000), Fixture.removed(Fixture.betaPreview, bytes: 60_000_000),
+        ])
+        let harness = makeHarness(service, running: running)
+        let plan = try await review(harness, selecting: [Fixture.alphaPath, Fixture.betaPath])
+
+        await harness.model.confirm()
+        #expect(harness.model.drawer == .quitting(
+            plan, waitingFor: [Fixture.alphaMain, Fixture.alphaHelper, Fixture.betaMain, Fixture.betaHelper]
+        ))
+        await harness.clock.waitForSleepers(2)            // the re-list and the first poll
+        // Alpha's main quits at once (the fake's default): its helper is asked early,
+        // while Beta's main is still open.
+        #expect(running.terminated == [Fixture.alphaMain.pid, Fixture.betaMain.pid, Fixture.alphaHelper.pid])
+
+        // Alpha's helper quits soon after being asked, long before the deadline — its
+        // early grace must not be the only one this call ever grants.
+        running.quit(Fixture.alphaHelper.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        await harness.clock.waitForSleepers(2)
+        #expect(harness.model.drawer == .quitting(plan, waitingFor: [Fixture.betaMain, Fixture.betaHelper]))
+
+        // Advance to just before the 10 s quit deadline, with Beta's main still open.
+        await harness.clock.advance(by: .milliseconds(9_800))
+        await harness.clock.waitForSleepers(2)
+        #expect(harness.model.drawer == .quitting(plan, waitingFor: [Fixture.betaMain, Fixture.betaHelper]))
+
+        // Beta's main exits right at the deadline: its helper is asked for the first
+        // time in what would otherwise be the poll's last round — even though Alpha's
+        // helper was already asked (and resolved) long before.
+        running.quit(Fixture.betaMain.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        #expect(running.terminated == [
+            Fixture.alphaMain.pid, Fixture.betaMain.pid, Fixture.alphaHelper.pid, Fixture.betaHelper.pid,
+        ])
+
+        // Beta's helper quits within the one extra poll interval it should be granted:
+        // no Force Quit question should follow.
+        running.quit(Fixture.betaHelper.pid)
+        await harness.clock.advance(by: .milliseconds(100))
+        await harness.model.waitForWork()
+        #expect(harness.model.drawer.shownSummary?.removed.map(\.path) == [Fixture.alphaPath, Fixture.betaPath])
+        #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.alphaPath)|\(Fixture.betaPath)"])
+        #expect(running.forceTerminated.isEmpty, "a helper was force-quit without confirmation")
     }
 
     @Test func appsStillOpenAfterForceQuitAreHeldBack() async throws {
