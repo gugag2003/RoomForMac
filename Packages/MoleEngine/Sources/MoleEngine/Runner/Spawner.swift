@@ -19,7 +19,9 @@ enum SpawnError: Error, Equatable {
 }
 
 /// Launches engine commands with `posix_spawn` so each one leads its own
-/// process group (cancellation reaches every child), starts with default
+/// process group (a stop signals every child that stays in that group; helpers
+/// the engine wraps with `timeout` get a group of their own and are ended by
+/// their wrapper forwarding SIGTERM), starts with default
 /// signal handling, reads stdin from /dev/null, and inherits no descriptors
 /// from the app beyond the ones set up here.
 enum Spawner {

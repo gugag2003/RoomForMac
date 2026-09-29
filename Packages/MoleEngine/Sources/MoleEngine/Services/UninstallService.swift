@@ -77,10 +77,11 @@ public struct UninstallService: Sendable {
     /// What uninstalling these apps would remove. Changes nothing.
     ///
     /// - Paths are sent as `normalizedAppPaths` sends them.
-    /// - The engine exits 1 when every app that reached its scan was blocked
-    ///   there (an official uninstaller, manual removal). When every
-    ///   requested path is accounted for by an `app_blocked` event, that is an
-    ///   answer, and the preview returns those blocks.
+    /// - With the amended patch 0004 the engine exits 0 when every requested
+    ///   app is blocked (an official uninstaller, manual removal); an older
+    ///   engine exits 1 there, and a code-1 exit whose `app_blocked` events
+    ///   cover every request is still accepted as that answer. Either way the
+    ///   preview returns those blocks.
     /// - A cancelled caller gets `CancellationError`, a stopped run
     ///   `EngineError.cancelled`: never a partial preview.
     /// - A requested path the engine did not report makes the preview

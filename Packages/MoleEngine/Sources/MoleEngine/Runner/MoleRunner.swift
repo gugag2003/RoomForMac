@@ -77,6 +77,9 @@ public struct MoleRunner: EngineRunning {
                         for line in buffer.append(chunk) { continuation.yield(line) }
                     }
                 }
+                // The leader is reaped: from here the group is never signalled again, since its
+                // id may be reused, even if a member outlived the leader (protocol doc, "Stopping
+                // a run").
                 process.markExited()
                 command.control?.detach(process)
                 for line in buffer.finish() { continuation.yield(line) }

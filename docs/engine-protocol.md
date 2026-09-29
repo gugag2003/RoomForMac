@@ -411,11 +411,18 @@ These rules belong to `Packages/MoleEngine`; the engine needs no patch for them.
 - **Host stop.** `EngineRunControl.stop()` sends `SIGTERM`, then `SIGCONT`, to the engine's
   process group, so a suspended group ends at once. The host keeps reading until the process
   exits, delivers every line written before the exit, and then ends the stream with
-  `EngineError.cancelled`. `SIGKILL` follows after the grace period (5 s) if the group is still
-  alive. Cancelling the consuming Task instead is a hard abort: lines not yet read are dropped,
-  and the group gets the same `SIGTERM`, `SIGCONT` and, after the grace period, `SIGKILL`. A
-  stop is final: a command whose control was already stopped spawns nothing and ends with
-  `cancelled`.
+  `EngineError.cancelled`. `SIGKILL` follows after the grace period (5 s), to the group, if the
+  engine's leader process has not exited by then; once the leader is reaped the group is not
+  signalled again, because its id may be reused, so a group member that outlived the leader and
+  ignores `SIGTERM` is not killed. Cancelling the consuming Task instead is a hard abort: lines
+  not yet read are dropped, and the group gets the same `SIGTERM`, `SIGCONT` and, after the grace
+  period, `SIGKILL` under the same condition. A stop is final: a command whose control was
+  already stopped spawns nothing and ends with `cancelled`.
+- **Helpers in their own group.** The engine's `run_with_timeout` runs a helper under GNU
+  `timeout` or its perl fallback (`lib/core/timeout.sh`), and both put the helper in a new process
+  group. The host's group signals (`SIGSTOP`, `SIGCONT`, `SIGKILL`) never reach such a helper; it
+  ends when its wrapper forwards the `SIGTERM` the wrapper receives. A helper whose wrapper was
+  killed, or that ignores `SIGTERM`, can outlive the run as an orphan.
 - **Host suspend.** `EngineRunControl.suspend()` sends `SIGSTOP` to the process group, and
   `resume()` sends `SIGCONT`. A suspend requested before the process starts applies as soon as
   it starts, and `resume()` clears it. After a stop, or once the process has exited, neither

@@ -6,7 +6,11 @@ import Foundation
 ///
 /// A stop happens at most once: SIGTERM, then SIGCONT so a suspended group
 /// handles the SIGTERM at once, then SIGKILL after the grace period unless
-/// the process has been reaped by then.
+/// the leader process has been reaped by then. The SIGKILL is skipped once
+/// the leader is reaped, even if another group member is still alive, and it
+/// never reaches helpers the engine runs under `timeout` or its perl fallback,
+/// which put them in a group of their own; those end when their wrapper
+/// forwards SIGTERM (docs/engine-protocol.md, "Stopping a run").
 final class ProcessControl: @unchecked Sendable {
     enum StopReason: Sendable {
         /// The consuming Task was cancelled.
