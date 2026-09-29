@@ -4,6 +4,12 @@
     "%@" : {
 
     },
+    "%@ is using a lot of CPU" : {
+
+    },
+    "%@ is using a lot of memory" : {
+
+    },
     "%@/s" : {
 
     },
@@ -111,6 +117,9 @@
     "Admin access" : {
 
     },
+    "All clear" : {
+
+    },
     "Allow" : {
 
     },
@@ -174,7 +183,22 @@
     "Background items" : {
 
     },
+    "Battery cycle count is high" : {
+
+    },
+    "Battery health is low" : {
+
+    },
+    "Battery needs service soon" : {
+
+    },
     "Browsers" : {
+
+    },
+    "CPU load is high" : {
+
+    },
+    "CPU temperature is high" : {
 
     },
     "Caches" : {
@@ -316,6 +340,9 @@
     "Credits" : {
 
     },
+    "Critical memory pressure" : {
+
+    },
     "Denied" : {
 
     },
@@ -326,6 +353,18 @@
 
     },
     "Device backups & firmware" : {
+
+    },
+    "Disk activity is high" : {
+
+    },
+    "Disk almost full" : {
+
+    },
+    "Disk almost full: %@ free" : {
+
+    },
+    "Disk may be failing" : {
 
     },
     "Done" : {
@@ -453,6 +492,9 @@
     "Getting ready…" : {
 
     },
+    "Heavy disk activity" : {
+
+    },
     "Helper" : {
 
     },
@@ -460,6 +502,12 @@
 
     },
     "Hide items" : {
+
+    },
+    "High CPU load" : {
+
+    },
+    "High memory use" : {
 
     },
     "Homebrew" : {
@@ -572,6 +620,12 @@
 
     },
     "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
+
+    },
+    "Memory pressure" : {
+
+    },
+    "Memory pressure is high" : {
 
     },
     "Message: %@" : {
@@ -782,6 +836,9 @@
     "Removing this app needs administrator access, which comes in a later update." : {
 
     },
+    "Restart recommended" : {
+
+    },
     "Reveal in Finder" : {
 
     },
@@ -981,6 +1038,9 @@
 
     },
     "Some sizes couldn't be measured, so totals are at least what's shown. Full Disk Access gives more complete results." : {
+
+    },
+    "Some things need a look" : {
 
     },
     "Something else removed it first. It isn't counted." : {
@@ -1225,7 +1285,13 @@
     "Xcode's simulator service didn't answer. Open Xcode once, then try again." : {
 
     },
+    "Your Mac is running hot" : {
+
+    },
     "Your Trash shows as empty, even when it isn't." : {
+
+    },
+    "Your disk may be failing. Back up now." : {
 
     },
     "Your free cleanup is used up" : {
