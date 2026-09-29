@@ -63,7 +63,7 @@ struct UninstallSummaryView: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
-            if summary.showsEmptyTrashHint {
+            if summary.offersOpenTrash {
                 GlassButton("Open Trash", prominence: .secondary, action: openTrash)
                     .accessibilityIdentifier(AccessibilityID.uninstallerOpenTrash)
             }
@@ -75,10 +75,11 @@ struct UninstallSummaryView: View {
 
 extension UninstallSummaryView {
     /// "Moved 1.2 GB to the Trash"; "Moved to the Trash" when the apps that moved had no known
-    /// size; "Nothing was moved to the Trash" when none moved.
+    /// size; "Some files were moved to the Trash" when no app finished but a run cut short had
+    /// already moved an app's bundle (final review F3); "Nothing was moved to the Trash" otherwise.
     static func headline(_ summary: UninstallSummary) -> LocalizedStringResource {
         if summary.removed.isEmpty {
-            return "Nothing was moved to the Trash"
+            return summary.offersOpenTrash ? "Some files were moved to the Trash" : "Nothing was moved to the Trash"
         }
         guard summary.movedToTrashBytes > 0 else {
             return "Moved to the Trash"
@@ -144,12 +145,20 @@ extension UninstallSummaryView {
                         }
                     }
                 }
-                let skipped = UninstallSummaryView.heldBack(summary, reason: .sharesNameWithOpenApp)
-                if !skipped.isEmpty {
+                let sharesName = UninstallSummaryView.heldBack(summary, reason: .sharesNameWithOpenApp)
+                let pattern = UninstallSummaryView.heldBack(summary, reason: .nameIsAPattern)
+                if !sharesName.isEmpty || !pattern.isEmpty {
                     group("Skipped", systemImage: "arrow.uturn.right") {
-                        ForEach(skipped) { app in
+                        ForEach(sharesName) { app in
                             UninstallDrawer.NameLine(
                                 name: app.name, detail: "Another open app has the same name", trailing: nil
+                            )
+                        }
+                        ForEach(pattern) { app in
+                            UninstallDrawer.NameLine(
+                                name: app.name,
+                                detail: "Its name could also match other apps, so RoomForMac couldn't close it safely",
+                                trailing: nil
                             )
                         }
                     }

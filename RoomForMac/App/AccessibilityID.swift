@@ -205,6 +205,12 @@ extension AccessibilityID {
         "uninstaller.row.\(bundleId)"
     }
 
+    /// The row of an app whose bundle ID another row shares, or that has none:
+    /// "uninstaller.row.<bundleId>.<slug of path>", or "uninstaller.row.<slug of path>".
+    static func uninstallerRow(_ bundleId: String, path: String) -> String {
+        bundleId.isEmpty ? "uninstaller.row.\(slug(path))" : "\(uninstallerRow(bundleId)).\(slug(path))"
+    }
+
     static let uninstallerDrawer = "uninstaller.drawer"
     /// **Move to Trash**.
     static let uninstallerConfirm = "uninstaller.confirm"

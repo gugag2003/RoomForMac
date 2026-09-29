@@ -157,7 +157,8 @@ struct UninstallerModelTests {
         gate: any RemovalGate = ScriptedRemovalGate([]),
         running: FakeRunningApps = FakeRunningApps(),
         queue: DestructiveRunQueue = DestructiveRunQueue(),
-        relistDelay: Duration = .seconds(3_600)
+        relistDelay: Duration = .seconds(3_600),
+        hostAppPath: String = Fixture.hostPath + "/"
     ) -> Harness {
         let recorder = RecordingRemovalRecorder()
         let reporter = RecordingRunReporter()
@@ -180,7 +181,7 @@ struct UninstallerModelTests {
                 fileExists: { existing.value.contains($0) },
                 isWritableDirectory: { $0 != Fixture.lockedFolder }
             ),
-            hostAppPath: Fixture.hostPath + "/",
+            hostAppPath: hostAppPath,
             loadSort: { preferences.uninstallerSort.flatMap(AppSortOrder.init(rawValue:)) ?? .size },
             saveSort: { preferences.uninstallerSort = $0.rawValue },
             clock: clock,
@@ -254,6 +255,34 @@ struct UninstallerModelTests {
         }
         #expect(harness.model.selection.isEmpty)
         #expect(harness.model.drawer == .closed)
+    }
+
+    /// Final review F1: the running RoomForMac is hidden by its real path or its file
+    /// identity, not by how the engine spelled the path: a link into ~/Applications, or the
+    /// same path written another way, is still RoomForMac.
+    @Test func rowsHideRoomForMacThroughALinkOrAnotherSpelling() async throws {
+        func copy(of app: InstalledApp, at path: String) -> InstalledApp {
+            InstalledApp(
+                name: app.name, bundleId: app.bundleId, source: app.source, uninstallName: app.uninstallName,
+                path: path, size: app.size, sizeKb: app.sizeKb, lastUsedEpoch: app.lastUsedEpoch
+            )
+        }
+        let respelled = [copy(of: Fixture.host, at: "/Applications/./RoomForMac.app"), copy(of: Fixture.host, at: "/Applications//RoomForMac.app")]
+        let spelled = makeHarness(ScriptedUninstallService(apps: .success(Fixture.listed + respelled)))
+        await loadList(spelled)
+        #expect(spelled.model.rows.map(\.id) == Fixture.listed.map(\.path))
+
+        let bundle = Bundle.main.bundlePath
+        let link = logs.url.appending(path: "RoomForMac Link.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: bundle))
+        let linked = makeHarness(
+            ScriptedUninstallService(apps: .success([Fixture.alpha, copy(of: Fixture.host, at: link.path)])),
+            hostAppPath: bundle
+        )
+        await loadList(linked)
+        #expect(linked.model.rows.map(\.id) == [Fixture.alphaPath])
+        linked.model.toggle(link.path)
+        #expect(linked.model.selection.isEmpty)
     }
 
     @Test func aListIsReportedWithItsDurationAndLogged() async {
@@ -943,6 +972,29 @@ struct UninstallerModelTests {
         #expect(running.calls.contains(.sameNameProcesses("AlphaApp", Fixture.alphaPath)))
         #expect(running.calls.contains(.sameNameProcesses("Beta", Fixture.betaPath)), "no CFBundleExecutable: the app's name")
         #expect(!running.calls.contains(.instances(Fixture.alphaPath)))
+        #expect(running.terminated.isEmpty, "the held-back app was asked to quit")
+    }
+
+    /// Final review F2: the engine's `pkill -x` reads an executable name with pattern
+    /// characters as a regular expression, so such an app is held back even when no other
+    /// process matches it now.
+    @Test func anAppWhoseExecutableNameIsAPatternIsHeldBackAndNotSent() async throws {
+        let running = FakeRunningApps()
+        running.launch(Fixture.alphaMain, of: Fixture.alphaPath)
+        running.setExecutable("alpha.us", for: Fixture.alphaPath)
+        let service = Fixture.service(uninstall: [
+            Fixture.scanned(Fixture.betaPreview), Fixture.removed(Fixture.betaPreview, bytes: 60_000_000),
+        ])
+        let harness = makeHarness(service, running: running)
+        _ = try await review(harness, selecting: [Fixture.alphaPath, Fixture.betaPath])
+
+        await harness.model.confirm()
+        await harness.model.waitForWork()
+
+        let summary = try #require(harness.model.drawer.shownSummary)
+        #expect(summary.heldBack == [HeldBackApp(preview: Fixture.alphaPreview, reason: .nameIsAPattern)])
+        #expect(summary.removed.map(\.path) == [Fixture.betaPath])
+        #expect(uninstallCalls(harness) == ["uninstall:\(Fixture.betaPath)"])
         #expect(running.terminated.isEmpty, "the held-back app was asked to quit")
     }
 

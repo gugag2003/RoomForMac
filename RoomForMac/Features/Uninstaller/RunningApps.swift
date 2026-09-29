@@ -26,9 +26,10 @@ struct RunningApps: Sendable {
     /// none. The engine then matches processes by the app's name instead.
     var executableName: @Sendable (_ appPath: String) -> String?
     /// Processes outside `appPath` that the engine's `pkill -x <executable>`
-    /// would also end: their executable file or their process name is
-    /// `executable`. RoomForMac's own process counts too, because removing
-    /// another copy of RoomForMac would end it.
+    /// would also end: one of their names matches `executable` the way `pkill`
+    /// matches it (see `sameNameProcesses(executable:canonicalAppPath:among:ownPid:)`).
+    /// RoomForMac's own process counts wherever it runs from, because removing
+    /// RoomForMac, or another copy of it, would end it.
     var sameNameProcesses: @Sendable (_ executable: String, _ appPath: String) -> [Int32]
     /// Asks the app to quit, as Quit in its menu would. True when the request
     /// was delivered, which does not mean it has quit.
@@ -59,7 +60,10 @@ struct RunningApps: Sendable {
             return name
         },
         sameNameProcesses: { executable, appPath in
-            sameNameProcesses(executable: executable, canonicalAppPath: canonicalPath(appPath), among: liveProcesses())
+            sameNameProcesses(
+                executable: executable, canonicalAppPath: canonicalPath(appPath), among: liveProcesses(),
+                ownPid: ProcessInfo.processInfo.processIdentifier
+            )
         },
         terminate: { pid in
             guard mayEnd(pid, ownPid: ProcessInfo.processInfo.processIdentifier) else {
@@ -108,9 +112,27 @@ extension RunningApps {
         let pid: Int32
         /// The executable's full path (`proc_pidpath`), or nil when macOS will not say.
         let path: String?
-        /// The process name the kernel keeps (`proc_name`), which `pkill -x`
-        /// matches: the name the executable was started under.
+        /// The process name the kernel keeps (`proc_name`, up to 32 characters):
+        /// the name the executable was started under.
         let name: String?
+        /// The kernel's short command name (`p_comm`, cut to 16 characters), which
+        /// `pkill` compares on some macOS versions.
+        var comm: String? = nil
+        /// The file name of `argv[0]`, which `pgrep` and `pkill` compare on macOS 27
+        /// when they can read the process's arguments. It is whatever the process
+        /// was started with.
+        var argumentName: String? = nil
+
+        /// Every name `pkill -x` might compare, without duplicates.
+        var names: [String] {
+            var names: [String] = []
+            for name in [path.map { ($0 as NSString).lastPathComponent }, name, comm, argumentName] {
+                if let name, !name.isEmpty, !names.contains(name) {
+                    names.append(name)
+                }
+            }
+            return names
+        }
     }
 
     /// The candidates that belong to the app at `canonicalAppPath`: the same
@@ -138,23 +160,29 @@ extension RunningApps {
     }
 
     /// The processes `pkill -x executable` would end that do not belong to
-    /// the app: their executable file's name or their process name is
-    /// `executable`, and their executable is not inside `canonicalAppPath`.
-    /// A process whose path macOS will not give counts when its name matches,
-    /// because it could be anywhere.
-    static func sameNameProcesses(executable: String, canonicalAppPath: String, among processes: [ProcessEntry]) -> [Int32] {
+    /// the app.
+    ///
+    /// - A process matches when `executable`, read as `pkill` reads it, matches
+    ///   one of its `names` whole: a POSIX extended regular expression, compiled
+    ///   with `regcomp` as `pkill` compiles it. A name that does not compile as a
+    ///   pattern matches only itself. Every name is tried, because macOS has
+    ///   compared `p_comm`, the process name and `argv[0]` (final review F2).
+    /// - A process whose executable is inside `canonicalAppPath` belongs to the
+    ///   app, except `ownPid`: RoomForMac's own process always counts, so an
+    ///   app that is RoomForMac, even through a link, is never sent (final
+    ///   review F1).
+    /// - A process whose path macOS will not give counts when a name matches,
+    ///   because it could be anywhere.
+    static func sameNameProcesses(executable: String, canonicalAppPath: String, among processes: [ProcessEntry], ownPid: Int32) -> [Int32] {
         guard !executable.isEmpty else {
             return []
         }
+        let matches = PkillPattern(executable)
         return processes.compactMap { process in
-            guard process.pid > 0 else {
+            guard process.pid > 0, process.names.contains(where: matches.matches) else {
                 return nil
             }
-            let fileName = process.path.map { ($0 as NSString).lastPathComponent }
-            guard fileName == executable || process.name == executable else {
-                return nil
-            }
-            if let path = process.path {
+            if process.pid != ownPid, let path = process.path {
                 let canonical = canonicalPath(path)
                 if canonical == canonicalAppPath || isInside(canonical, canonicalAppPath) {
                     return nil
@@ -162,6 +190,30 @@ extension RunningApps {
             }
             return process.pid
         }
+    }
+
+    /// Whether `executable` holds a character that a POSIX extended regular
+    /// expression treats specially (`. [ ] ( ) * + ? { } | ^ $ \`). The engine's
+    /// `pkill -x` then matches other names too ("zoom.us" also matches
+    /// "zoomXus"), so such an app is always held back (final review F2).
+    static func isPattern(_ executable: String) -> Bool {
+        executable.contains { #".[]()*+?{}|^$\"#.contains($0) }
+    }
+
+    /// Whether `path` is the bundle at `hostPath`: the same real path
+    /// (`canonicalPath`, so a link or another spelling of the path counts), or
+    /// the same file (`.fileResourceIdentifierKey`). The Uninstaller hides the
+    /// running RoomForMac this way (Ruling 13, final review F1).
+    static func isSameBundle(_ path: String, as hostPath: String) -> Bool {
+        if canonicalPath(path) == canonicalPath(hostPath) {
+            return true
+        }
+        guard let identifier = fileIdentifier(URL(fileURLWithPath: path)),
+              let host = fileIdentifier(URL(fileURLWithPath: hostPath))
+        else {
+            return false
+        }
+        return identifier.isEqual(host)
     }
 
     /// Whether `live` may end `pid`: never RoomForMac's own process, and never
@@ -198,10 +250,14 @@ extension RunningApps {
         }
     }
 
-    /// Every process on this Mac, with its executable's path and its name.
+    /// Every process on this Mac, with its executable's path and every name
+    /// `pkill` might compare. Reading never changes anything.
     static func liveProcesses() -> [ProcessEntry] {
         allProcessIDs().map { pid in
-            ProcessEntry(pid: pid, path: processPath(pid), name: processName(pid))
+            ProcessEntry(
+                pid: pid, path: processPath(pid), name: processName(pid),
+                comm: processCommand(pid), argumentName: argumentName(pid)
+            )
         }
     }
 
@@ -239,6 +295,48 @@ extension RunningApps {
         return String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
     }
 
+    /// `p_comm` (`proc_bsdinfo.pbi_comm`), or nil when macOS will not say.
+    private static func processCommand(_ pid: Int32) -> String? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
+            return nil
+        }
+        let command = withUnsafeBytes(of: info.pbi_comm) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return command.isEmpty ? nil : command
+    }
+
+    /// The file name of `argv[0]` (`KERN_PROCARGS2`), or nil when macOS will not
+    /// give the arguments, as for other users' processes.
+    private static func argumentName(_ pid: Int32) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
+        var argumentMax: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctl(&mib, 2, &argumentMax, &size, nil, 0) == 0, argumentMax > 0 else {
+            return nil
+        }
+        var buffer = [UInt8](repeating: 0, count: Int(argumentMax))
+        mib = [CTL_KERN, KERN_PROCARGS2, pid]
+        size = buffer.count
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else {
+            return nil
+        }
+        // argc, the executable's path, the NULs that pad it, then argv[0].
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }
+        while index < size, buffer[index] == 0 { index += 1 }
+        let start = index
+        while index < size, buffer[index] != 0 { index += 1 }
+        guard index > start else {
+            return nil
+        }
+        let argument = String(decoding: buffer[start..<index], as: UTF8.self)
+        let name = (argument as NSString).lastPathComponent
+        return name.isEmpty ? nil : name
+    }
+
     private static func processName(_ pid: Int32) -> String? {
         var buffer = [UInt8](repeating: 0, count: Int(MAXCOMLEN) * 2 + 1)
         let length = proc_name(pid, &buffer, UInt32(buffer.count))
@@ -246,5 +344,44 @@ extension RunningApps {
             return nil
         }
         return String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+    }
+}
+
+/// `pkill -x <pattern>` as macOS runs it: the pattern is a POSIX extended
+/// regular expression (`regcomp` with `REG_EXTENDED`), and a name matches only
+/// when the match covers all of it. A pattern that does not compile matches
+/// only a name equal to it.
+private struct PkillPattern {
+    let matches: (String) -> Bool
+
+    init(_ pattern: String) {
+        let regex = UnsafeMutablePointer<regex_t>.allocate(capacity: 1)
+        guard regcomp(regex, pattern, REG_EXTENDED) == 0 else {
+            regex.deallocate()
+            matches = { $0 == pattern }
+            return
+        }
+        let compiled = Compiled(regex)
+        matches = { name in
+            name.withCString { text in
+                var match = regmatch_t()
+                return regexec(compiled.regex, text, 1, &match, 0) == 0
+                    && match.rm_so == 0 && Int(match.rm_eo) == strlen(text)
+            }
+        }
+    }
+
+    /// Frees the compiled pattern with the last closure that uses it.
+    private final class Compiled {
+        let regex: UnsafeMutablePointer<regex_t>
+
+        init(_ regex: UnsafeMutablePointer<regex_t>) {
+            self.regex = regex
+        }
+
+        deinit {
+            regfree(regex)
+            regex.deallocate()
+        }
     }
 }

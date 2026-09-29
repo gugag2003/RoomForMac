@@ -129,6 +129,13 @@ struct UninstallSummary: Sendable, Equatable {
         movedToTrashBytes > 0
     }
 
+    /// Whether the summary offers **Open Trash**: an app moved, or a run cut short had
+    /// already moved an app's bundle (final review F3). Such a bundle's bytes stay
+    /// uncharged, which favours the user.
+    var offersOpenTrash: Bool {
+        !removed.isEmpty || notFinished.contains { $0.bundleGone }
+    }
+
     /// The path-free report for `RunReporter.cleanupFinished` (Ruling 22).
     /// Every selected app that did not reach the Trash counts as not removed:
     /// failed, not finished, held back, needing a password, or blocked.

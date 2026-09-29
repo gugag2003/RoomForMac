@@ -123,9 +123,73 @@ struct RunningAppsTests {
             RunningApps.ProcessEntry(pid: 9, path: Path.foo + "/Contents/Helpers/Foo", name: "Foo"),
             RunningApps.ProcessEntry(pid: 0, path: nil, name: "Foo"),
         ]
-        #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes)
+        #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes, ownPid: 42)
             == [2, 4, 6, 7, 8])
-        #expect(RunningApps.sameNameProcesses(executable: "", canonicalAppPath: Path.foo, among: processes).isEmpty)
+        #expect(RunningApps.sameNameProcesses(executable: "", canonicalAppPath: Path.foo, among: processes, ownPid: 42).isEmpty)
+    }
+
+    /// Final review F2: `pkill -x` reads the executable name as an extended regular
+    /// expression that must match a whole name, and macOS may compare it with the
+    /// 16-character `p_comm` or with the file name of `argv[0]`.
+    @Test func sameNameProcessesMatchTheWayPkillDoes() {
+        let processes = [
+            // "." matches any character: `pkill -x zoom.us` also ends "zoomXus".
+            RunningApps.ProcessEntry(pid: 1, path: "/nonexistent/bin/zoomXus", name: "zoomXus"),
+            // `p_comm` keeps 16 characters, so a longer name also answers to its first 16.
+            RunningApps.ProcessEntry(
+                pid: 2, path: "/nonexistent/bin/LongProcessNameHere", name: "LongProcessNameHere", comm: "LongProcessNameH"
+            ),
+            // Started with `argv[0]` set to another name, which `pgrep -x` reads.
+            RunningApps.ProcessEntry(
+                pid: 3, path: "/nonexistent/bin/other", name: "other", comm: "other", argumentName: "Foo"
+            ),
+            RunningApps.ProcessEntry(pid: 4, path: "/nonexistent/bin/Food", name: "Food", comm: "Food", argumentName: "Food"),
+            // A name that does not compile as a pattern matches itself, literally.
+            RunningApps.ProcessEntry(pid: 5, path: "/nonexistent/bin/Foo(", name: "Foo("),
+        ]
+        func clashes(_ executable: String) -> [Int32] {
+            RunningApps.sameNameProcesses(executable: executable, canonicalAppPath: Path.foo, among: processes, ownPid: 42)
+        }
+        #expect(clashes("zoom.us") == [1])
+        #expect(clashes("LongProcessNameH") == [2])
+        #expect(clashes("Foo") == [3])
+        #expect(clashes("Foo(") == [5])
+        #expect(clashes("Fo") == [], "the pattern must match a whole name")
+    }
+
+    /// Final review F1: RoomForMac's own process is a clash even when it runs from inside
+    /// the app, so an app that is RoomForMac itself is always held back.
+    @Test func roomForMacsOwnProcessIsAlwaysAClash() {
+        let processes = [
+            RunningApps.ProcessEntry(pid: 1, path: Path.foo + "/Contents/MacOS/Foo", name: "Foo"),
+            RunningApps.ProcessEntry(pid: 8, path: Path.foo + "/Contents/MacOS/Foo", name: "Foo"),
+        ]
+        #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes, ownPid: 8) == [8])
+        #expect(RunningApps.sameNameProcesses(executable: "Foo", canonicalAppPath: Path.foo, among: processes, ownPid: 42).isEmpty)
+    }
+
+    @Test(arguments: ["zoom.us", "Notepad++", "What?", "a|b", "(x)", "[x]", "x{2}", "^x", "x$", #"a\b"#, "a*"])
+    func aNameWithPatternCharactersIsAPattern(_ name: String) {
+        #expect(RunningApps.isPattern(name))
+    }
+
+    @Test func plainNamesAreNoPattern() {
+        for name in ["Foo", "Microsoft Word", "Visual Studio Code", "zoom_us", "My-App", "Äpp 2", ""] {
+            #expect(!RunningApps.isPattern(name), "\(name)")
+        }
+    }
+
+    @Test func theSameBundleIsFoundThroughALinkOrAnotherSpelling() throws {
+        let real = directory.url.appending(path: "Real.app")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = directory.url.appending(path: "Link.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        #expect(RunningApps.isSameBundle(link.path, as: real.path))
+        #expect(RunningApps.isSameBundle(real.path + "/", as: link.path))
+        #expect(RunningApps.isSameBundle("/nonexistent/./A.app", as: "/nonexistent/A.app/"))
+        #expect(!RunningApps.isSameBundle("/nonexistent/B.app", as: "/nonexistent/A.app"))
+        #expect(!RunningApps.isSameBundle(directory.url.appending(path: "Other.app").path, as: real.path))
     }
 
     @Test func liveNeverEndsRoomForMacOrANonProcess() {
@@ -166,10 +230,24 @@ struct RunningAppsTests {
 
         #expect(RunningApps.live.executableName(bundle) == executable)
         #expect(RunningApps.live.executableName("/nonexistent/Nothing.app") == nil)
-        // This process runs the bundle's own executable, so for this bundle it is no clash…
-        #expect(!RunningApps.live.sameNameProcesses(executable, bundle).contains(me))
-        // …but for another app with the same executable name it is: `pkill -x` would end it.
+        // RoomForMac's own process is always a clash, even for its own bundle (final review F1)…
+        #expect(RunningApps.live.sameNameProcesses(executable, bundle).contains(me))
+        // …and for another app with the same executable name: `pkill -x` would end it.
         #expect(RunningApps.live.sameNameProcesses(executable, "/nonexistent/Other.app").contains(me))
+    }
+
+    /// Final review F1: a link to the running bundle (an app linked into ~/Applications)
+    /// resolves to this process's own bundle, and this process still counts as a clash.
+    @Test func aLinkToThisTestHostStillCountsItsOwnProcess() throws {
+        let bundle = Bundle.main.bundlePath
+        let me = ProcessInfo.processInfo.processIdentifier
+        let executable = try #require(Bundle.main.infoDictionary?["CFBundleExecutable"] as? String)
+        let link = directory.url.appending(path: "RoomForMac Link.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: bundle))
+
+        #expect(RunningApps.isSameBundle(link.path, as: bundle))
+        #expect(RunningApps.live.sameNameProcesses(executable, link.path).contains(me))
+        #expect(!RunningApps.live.instances(link.path).contains { $0.pid == me })
     }
 }
 

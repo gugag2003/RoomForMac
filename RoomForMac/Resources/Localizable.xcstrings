@@ -730,6 +730,9 @@
     "It was replaced or moved while cleaning, so it was left alone to be safe." : {
 
     },
+    "Its name could also match other apps, so RoomForMac couldn't close it safely" : {
+
+    },
     "Kept" : {
 
     },
@@ -1322,6 +1325,9 @@
 
     },
     "Some files RoomForMac needs are missing or damaged." : {
+
+    },
+    "Some files were moved to the Trash" : {
 
     },
     "Some folders can't be measured or cleaned without it." : {

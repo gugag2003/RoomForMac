@@ -17,8 +17,9 @@ struct UninstallerDependencies: Sendable {
     /// `AppModel.isOnboarded`: no engine command starts before onboarding ends.
     var isAllowed: @MainActor @Sendable () -> Bool
     var files: FileProbes
-    /// The running RoomForMac bundle. It is never listed: the engine would end RoomForMac
-    /// in the middle of its own run.
+    /// The running RoomForMac bundle. It is never listed, however the engine spells its
+    /// path (`RunningApps.isSameBundle`): the engine would end RoomForMac in the middle of
+    /// its own run.
     var hostAppPath: String
     var loadSort: @Sendable () -> AppSortOrder
     var saveSort: @Sendable (AppSortOrder) -> Void
@@ -198,12 +199,13 @@ final class UninstallerModel {
         }
     }
 
-    /// New rows, without the running RoomForMac. A selected app that is gone or no longer
+    /// New rows, without the running RoomForMac, found by its real path or file identity
+    /// rather than by how the engine spelled it (final review F1). A selected app that is gone or no longer
     /// removable leaves the selection, and the drawer previews what is left.
     private func show(_ apps: [InstalledApp]) {
-        let host = CleanSelection.normalize(dependencies.hostAppPath)
+        let host = dependencies.hostAppPath
         rows = apps
-            .filter { host.isEmpty || CleanSelection.normalize($0.path) != host }
+            .filter { host.isEmpty || !RunningApps.isSameBundle($0.path, as: host) }
             .map { app in
                 AppRow(app: app, access: AppRow.access(
                     for: app,
@@ -327,7 +329,8 @@ final class UninstallerModel {
     /// removed before step 1 allows it (critique B1):
     /// 1. `RemovalGate`: anything but `.allow` sets `gateDecision` and stays in `review`;
     /// 2. the `DestructiveRunQueue` lease: a refusal stays in `review`;
-    /// 3. apps whose executable name another open process shares are held back;
+    /// 3. apps whose executable name another open process shares, or that is a pattern to
+    ///    the engine's `pkill -x`, are held back;
     /// 4. the other apps' main instances are asked to quit, then each app's nested helpers
     ///    once its main instances are gone.
     ///
@@ -348,10 +351,7 @@ final class UninstallerModel {
         self.lease = lease
         reviewedPlan = plan
         var working = plan
-        let clashing = sameNameClashes(in: working)
-        if !clashing.isEmpty {
-            working.holdBack(clashing, reason: .sharesNameWithOpenApp)
-        }
+        holdBackNameClashes(in: &working)
         beginQuitting(working)
     }
 
@@ -414,20 +414,32 @@ final class UninstallerModel {
         }
     }
 
-    /// The removable apps whose executable name another process shares. The engine ends an
-    /// app with `pkill -x <CFBundleExecutable>`, or its name when it has none, which would
-    /// end that process too (Ruling 14).
-    private func sameNameClashes(in plan: UninstallPlan) -> Set<String> {
+    /// Holds back the removable apps the engine's `pkill -x` could not end alone. The engine
+    /// ends an app with `pkill -x <CFBundleExecutable>`, or its name when it has none, and
+    /// `pkill` reads that name as a regular expression (Ruling 14, final review F2):
+    /// - a name with pattern characters could match other processes, now or by the time the
+    ///   engine runs, so that app is held back as `.nameIsAPattern`;
+    /// - an app whose name another process matches, RoomForMac's own included, is held back
+    ///   as `.sharesNameWithOpenApp`.
+    private func holdBackNameClashes(in plan: inout UninstallPlan) {
         let running = dependencies.running
+        var patterns: Set<String> = []
         var clashing: Set<String> = []
         for app in plan.removable {
             let path = app.preview.path
             let executable = running.executableName(path).flatMap { $0.isEmpty ? nil : $0 } ?? app.preview.name
-            if !executable.isEmpty, !running.sameNameProcesses(executable, path).isEmpty {
+            if RunningApps.isPattern(executable) {
+                patterns.insert(path)
+            } else if !executable.isEmpty, !running.sameNameProcesses(executable, path).isEmpty {
                 clashing.insert(path)
             }
         }
-        return clashing
+        if !patterns.isEmpty {
+            plan.holdBack(patterns, reason: .nameIsAPattern)
+        }
+        if !clashing.isEmpty {
+            plan.holdBack(clashing, reason: .sharesNameWithOpenApp)
+        }
     }
 
     /// Asks the plan's running apps to quit, or removes at once when none runs.
@@ -579,10 +591,7 @@ final class UninstallerModel {
     /// (Review Focus 3, fix round 1 finding 1).
     private func remove(_ plan: UninstallPlan) async {
         var plan = plan
-        let clashing = sameNameClashes(in: plan)
-        if !clashing.isEmpty {
-            plan.holdBack(clashing, reason: .sharesNameWithOpenApp)
-        }
+        holdBackNameClashes(in: &plan)
         guard !plan.removable.isEmpty else {
             await finishRun(plan: plan, summary: showSummaryWithoutRun(plan), diagnostics: nil)
             return

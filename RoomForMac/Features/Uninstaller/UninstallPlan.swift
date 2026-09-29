@@ -136,6 +136,10 @@ enum HeldBackReason: Sendable, Equatable {
     /// Another open process has the same executable name, and the engine's
     /// `pkill -x` would end that process too (Ruling 14).
     case sharesNameWithOpenApp
+    /// Its executable name holds regular-expression characters ("zoom.us"), so the
+    /// engine's `pkill -x`, which reads the name as a pattern, could end other
+    /// processes too. Held back whether or not one runs now.
+    case nameIsAPattern
 }
 
 struct HeldBackApp: Sendable, Equatable {

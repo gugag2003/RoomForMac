@@ -41,9 +41,11 @@ struct AppListView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 2) {
+                            let identifiers = Self.rowIdentifiers(rows)
                             ForEach(rows) { row in
                                 Row(
                                     row: row,
+                                    identifier: identifiers[row.id],
                                     isSelected: selection.contains(row.id),
                                     locked: locked,
                                     icons: icons,
@@ -138,6 +140,24 @@ extension AppListView {
         return String(localized: "Last used \(relative)", locale: locale)
     }
 
+    /// Each row's accessibility identifier, by row id: "uninstaller.row.<bundleId>", with a
+    /// suffix made from the path when another row has the same bundle ID or it has none, so
+    /// no two rows share one (final review F4).
+    static func rowIdentifiers(_ rows: [AppRow]) -> [String: String] {
+        var counts: [String: Int] = [:]
+        for row in rows {
+            counts[row.app.bundleId, default: 0] += 1
+        }
+        var identifiers: [String: String] = [:]
+        for row in rows {
+            let bundleId = row.app.bundleId
+            identifiers[row.id] = !bundleId.isEmpty && counts[bundleId] == 1
+                ? AccessibilityID.uninstallerRow(bundleId)
+                : AccessibilityID.uninstallerRow(bundleId, path: row.id)
+        }
+        return identifiers
+    }
+
     /// What an empty list says: no app matches the trimmed search, or there is nothing to show.
     static func emptyText(search: String) -> LocalizedStringResource {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -152,6 +172,8 @@ extension AppListView {
     /// draw it: `ImageRenderer` leaves a `ScrollView`'s content blank.
     struct Row: View {
         let row: AppRow
+        /// From `rowIdentifiers`; nil falls back to the bundle ID alone.
+        var identifier: String? = nil
         let isSelected: Bool
         let locked: Bool
         let icons: AppIconCache
@@ -173,7 +195,7 @@ extension AppListView {
             .buttonStyle(.plain)
             .disabled(!isSelectable)
             .onHover { isHovered = $0 }
-            .accessibilityIdentifier(AccessibilityID.uninstallerRow(row.app.bundleId))
+            .accessibilityIdentifier(identifier ?? AccessibilityID.uninstallerRow(row.app.bundleId))
             .accessibilityValue(isSelected ? Text("Selected") : Text("Not selected"))
             .task(id: row.id) {
                 icon = await icons.icon(for: row.id)

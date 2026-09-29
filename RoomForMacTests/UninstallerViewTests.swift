@@ -359,6 +359,61 @@ struct UninstallerViewTests {
             #expect(!Fixture.nothingMovedSummary.showsEmptyTrashHint)
         }
 
+        /// Final review F3: a run cut short after an app's bundle moved has put something in
+        /// the Trash, so the summary neither says nothing moved nor hides **Open Trash**.
+        @Test func aRunCutShortAfterABundleMovedPointsToTheTrash() {
+            let halfway = Fixture.app("Halfway")
+            let plan = UninstallPlan.make(UninstallPreview(apps: [halfway]), id: Fixture.runID, allowsAdministrator: false)
+            func summary(bundleGone: Bool) -> UninstallSummary {
+                UninstallSummary.make(
+                    plan: plan, tally: UninstallRunTally(appPaths: plan.enginePaths), runError: EngineError.timedOut,
+                    diagnostics: nil, fileExists: { _ in !bundleGone }
+                )
+            }
+            let gone = summary(bundleGone: true)
+            #expect(gone.notFinished.map(\.bundleGone) == [true])
+            #expect(gone.movedToTrashBytes == 0)
+            #expect(String(localized: UninstallSummaryView.headline(gone)) == "Some files were moved to the Trash")
+            #expect(gone.offersOpenTrash)
+            #expect(!gone.showsEmptyTrashHint)
+
+            let kept = summary(bundleGone: false)
+            #expect(String(localized: UninstallSummaryView.headline(kept)) == "Nothing was moved to the Trash")
+            #expect(!kept.offersOpenTrash)
+
+            #expect(Fixture.movedSummary.offersOpenTrash)
+            #expect(Fixture.movedWithoutSizeSummary.offersOpenTrash)
+            #expect(!Fixture.nothingMovedSummary.offersOpenTrash)
+        }
+
+        /// Final review F4: two copies of one app, and apps without a bundle ID, each get
+        /// their own row identifier; an app whose bundle ID is unique keeps the plain one.
+        @Test func rowIdentifiersStayUniqueForCopiesAndAppsWithoutABundleID() {
+            func row(_ bundleId: String, _ path: String) -> AppRow {
+                AppRow(
+                    app: InstalledApp(
+                        name: "App", bundleId: bundleId, source: "App", uninstallName: "App",
+                        path: path, size: "1MB", sizeKb: 1_024, lastUsedEpoch: nil
+                    ),
+                    access: .removable
+                )
+            }
+            let rows = [
+                row("com.example.inkwell", "/Applications/Inkwell.app"),
+                row("com.example.inkwell", "/Users/me/Applications/Inkwell.app"),
+                row("", "/Applications/Tool.app"),
+                row("", "/Applications/Other Tool.app"),
+                row("com.example.quill", "/Applications/Quill.app"),
+            ]
+            let identifiers = AppListView.rowIdentifiers(rows)
+            #expect(Set(rows.compactMap { identifiers[$0.id] }).count == rows.count)
+            #expect(identifiers["/Applications/Quill.app"] == "uninstaller.row.com.example.quill")
+            #expect(identifiers["/Applications/Inkwell.app"] == "uninstaller.row.com.example.inkwell.applications-inkwell-app")
+            #expect(identifiers["/Users/me/Applications/Inkwell.app"]
+                == "uninstaller.row.com.example.inkwell.users-me-applications-inkwell-app")
+            #expect(identifiers["/Applications/Tool.app"] == "uninstaller.row.applications-tool-app")
+        }
+
         @Test func theSummarySplitsHeldBackAppsByReason() {
             let summary = Fixture.fullSummary
             #expect(UninstallSummaryView.heldBack(summary, reason: .stillOpen).map(\.name) == ["Busy"])
