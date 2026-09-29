@@ -236,3 +236,10 @@ extension AccessibilityID {
     /// "Status paused: …", while the monitor retries the engine.
     static let statusFailure = "status.failure"
 }
+
+// MARK: - Notifications (Plan 3 Task 20)
+
+extension AccessibilityID {
+    /// Settings → General: "Notify me when a scan or cleanup finishes".
+    static let settingsNotifyWhenDone = "settings.general.notifyWhenDone"
+}

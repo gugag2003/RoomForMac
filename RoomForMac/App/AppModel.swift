@@ -59,6 +59,22 @@ final class AppModel {
     /// `dependencies.runReporter`; `makeFeatures` sets the final one.
     private(set) var reporter: any RunReporter
 
+    /// Posts a notification when a run ends while RoomForMac is in the background
+    /// (Ruling 20). `makeFeatures(_:)` builds it, before the composite reporter.
+    private(set) var runNotifier: RunNotifier?
+
+    /// The `notificationsWanted` preference, mirrored so views see it change.
+    /// `setNotifyWhenDone(_:)` and `completeOnboarding(startFirstScan:)` keep it current.
+    private var notificationsWanted: Bool
+
+    /// The General switch "Notify me when a scan or cleanup finishes", which the notifier reads
+    /// as each run ends. It is `notificationsWanted`, except while onboarding runs: then it is
+    /// the Extras choice, which `OnboardingFlow.finish` writes to `notificationsWanted`, so the
+    /// switch and Extras always show the same value.
+    var notifyWhenDone: Bool {
+        onboardingFlow?.choices.notifications ?? notificationsWanted
+    }
+
     /// Live Status readings for the Status section and the menu-bar extra, built by
     /// `makeFeatures(_:)` once the engine is ready. It opens no collector until
     /// onboarding is complete (Ruling 10), and one collector serves both (Ruling 16).
@@ -88,6 +104,7 @@ final class AppModel {
             ? nil
             : OnboardingFlow(preferences: preferences, permissions: permissions, needsMoveStep: dependencies.needsMoveStep)
         runQueue = DestructiveRunQueue()
+        notificationsWanted = preferences.notificationsWanted
         reporter = dependencies.runReporter
     }
 
@@ -199,9 +216,36 @@ final class AppModel {
         )
         statusMonitor.setAllowed(isOnboarded)
         self.statusMonitor = statusMonitor
-        reporter = CompositeRunReporter([dependencies.runReporter, statusMonitor])
+        let runNotifier = makeRunNotifier()
+        self.runNotifier = runNotifier
+        reporter = CompositeRunReporter([dependencies.runReporter, runNotifier, statusMonitor])
         smartClean = SmartCleanModel(dependencies: smartCleanDependencies(service: services.clean))
         uninstaller = UninstallerModel(dependencies: uninstallerDependencies(service: services.uninstall))
+    }
+
+    /// Sets the General switch "Notify me when a scan or cleanup finishes". After onboarding
+    /// it writes `notificationsWanted`. While onboarding runs it changes the Extras choice
+    /// instead, which is saved at once and which `OnboardingFlow.finish` writes to
+    /// `notificationsWanted`: the preferences the app reads change only there (Plan 2).
+    func setNotifyWhenDone(_ on: Bool) {
+        if let onboardingFlow {
+            onboardingFlow.choices.notifications = on
+            return
+        }
+        dependencies.preferences.notificationsWanted = on
+        notificationsWanted = on
+    }
+
+    /// The notifier over this model's switch, the permission center and the dependencies'
+    /// poster. It holds this model weakly, because the model owns it.
+    private func makeRunNotifier() -> RunNotifier {
+        let permissions = permissions
+        return RunNotifier(
+            wanted: { [weak self] in self?.notifyWhenDone ?? false },
+            permission: { permissions.state(.notifications) },
+            isAppActive: dependencies.isAppActive,
+            poster: dependencies.notifications
+        )
     }
 
     /// Smart Clean's dependencies over this model's seams. `isAllowed` reads `isOnboarded`
@@ -258,6 +302,7 @@ final class AppModel {
         onboardingFlow = nil
         selection = .smartClean
         pendingFirstScan = startFirstScan
+        notificationsWanted = preferences.notificationsWanted
         statusMonitor?.setAllowed(true)
     }
 }

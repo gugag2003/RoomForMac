@@ -76,19 +76,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The app's own delegate, over the dependencies for how this process was started.
     override convenience init() {
-        self.init(model: AppModel(dependencies: .forMode(.current)), router: WindowRouter())
+        self.init(
+            model: AppModel(dependencies: .forMode(.current)),
+            router: WindowRouter(),
+            installsNotificationDelegate: true
+        )
     }
 
     init(
         model: AppModel,
         router: WindowRouter,
-        ask: @escaping @MainActor (TerminationPrompt) -> Bool = AppDelegate.runAlert
+        ask: @escaping @MainActor (TerminationPrompt) -> Bool = AppDelegate.runAlert,
+        installsNotificationDelegate: Bool = false
     ) {
         self.model = model
         self.router = router
         self.ask = ask
         launchSuppressed = model.startsInMenuBar
         super.init()
+        if installsNotificationDelegate {
+            installNotificationDelegate()
+        }
     }
 
     /// Starts the engine check, which a suppressed window would otherwise never start, and

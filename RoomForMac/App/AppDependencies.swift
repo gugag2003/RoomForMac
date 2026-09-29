@@ -39,6 +39,12 @@ struct AppDependencies {
     var removalRecorder: any RemovalRecorder = NoOpRemovalRecorder()
     var runReporter: any RunReporter = NoOpRunReporter()
     var now: @Sendable () -> Date = { Date() }
+    /// Posts run notifications (Ruling 20). The default posts nothing; `live()` passes the
+    /// notification center.
+    var notifications: NotificationPoster = .none
+    /// Whether RoomForMac is the active app, read as a run ends: a run that ends while it is
+    /// posts no notification. The default reads `NSApp`, which has no side effect.
+    var isAppActive: @MainActor () -> Bool = { NSApplication.shared.isActive }
 
     /// How Smart Clean names its rows (Task 10's table). The default never asks Launch
     /// Services for an app's name, so unit tests stay off the system; `live()` does.
@@ -82,6 +88,7 @@ struct AppDependencies {
             hostAppPath: Bundle.main.bundlePath,
             sensors: .live,
             logStore: EngineLogStore(directory: AppLogLocation.directory()),
+            notifications: .live,
             cleanItemLabel: { item in
                 CleanItemLabeler.label(
                     for: item, home: NSHomeDirectory(), appName: CleanItemLabeler.appName(bundleIdentifier:)

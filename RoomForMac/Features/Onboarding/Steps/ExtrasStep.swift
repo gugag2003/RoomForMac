@@ -34,7 +34,7 @@ struct ExtrasStep: View {
             GlassCard(cornerRadius: 24, padding: 24) {
                 VStack(alignment: .leading, spacing: 14) {
                     ExtrasToggle(isOn: $flow.choices.notifications, identifier: AccessibilityID.extrasNotifications) {
-                        Text("Notify me when a cleanup finishes")
+                        Text("Notify me when a scan or cleanup finishes")
                     }
                     Divider()
                     ExtrasToggle(isOn: $flow.choices.launchAtLogin, identifier: AccessibilityID.extrasLaunchAtLogin) {

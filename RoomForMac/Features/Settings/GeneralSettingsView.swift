@@ -98,6 +98,23 @@ struct GeneralSettingsView: View {
         }
     }
 
+    /// "Notify me when a scan or cleanup finishes" (Ruling 20), present only with a model.
+    var notifyWhenDoneRow: NotifyWhenDoneRow? {
+        model.map { NotifyWhenDoneRow(model: $0) }
+    }
+
+    /// The notify switch. It saves the choice before anything waits
+    /// (`AppModel.setNotifyWhenDone`), so the switch flips at once. Turning it on while macOS
+    /// has not asked yet then shows the permission prompt; macOS asks only once, and the
+    /// Notifications row below the switch shows the answer.
+    static func setNotifyWhenDone(_ on: Bool, model: AppModel) async {
+        model.setNotifyWhenDone(on)
+        guard on, model.permissions.state(.notifications) == .notDetermined else {
+            return
+        }
+        await model.permissions.request(.notifications)
+    }
+
     static func notificationAction(for state: PermissionState) -> NotificationAction {
         state == .notDetermined ? .request : .openSettings
     }
@@ -152,6 +169,9 @@ struct GeneralSettingsView: View {
             }
 
             Section {
+                if let notifyWhenDoneRow {
+                    notifyWhenDoneRow
+                }
                 LabeledContent {
                     HStack(spacing: 10) {
                         PermissionChip(state: notifications)
@@ -227,5 +247,32 @@ struct MenuBarSettingRow: View {
             Text("Quick gauges, free space and Quick Scan, one click away.")
         }
         .accessibilityIdentifier(AccessibilityID.settingsMenuBar)
+    }
+}
+
+/// "Notify me when a scan or cleanup finishes" (Ruling 20). The switch saves through
+/// `GeneralSettingsView.setNotifyWhenDone(_:model:)`. `Task.immediate` runs its first part
+/// inside the setter, so the preference is written before the switch draws again; only the
+/// permission prompt waits.
+struct NotifyWhenDoneRow: View {
+    let model: AppModel
+
+    var isOn: Binding<Bool> {
+        Binding(
+            get: { model.notifyWhenDone },
+            set: { on in
+                Task.immediate {
+                    await GeneralSettingsView.setNotifyWhenDone(on, model: model)
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        Toggle(isOn: isOn) {
+            Text("Notify me when a scan or cleanup finishes")
+            Text("Notifications appear only while you're using another app.")
+        }
+        .accessibilityIdentifier(AccessibilityID.settingsNotifyWhenDone)
     }
 }

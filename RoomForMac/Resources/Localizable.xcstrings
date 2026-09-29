@@ -4,6 +4,9 @@
     "%@" : {
 
     },
+    "%@ can be cleaned" : {
+
+    },
     "%@ down" : {
 
     },
@@ -101,6 +104,28 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld items can be cleaned" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item can be cleaned"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items can be cleaned"
                 }
               }
             }
@@ -256,6 +281,9 @@
     "At least" : {
 
     },
+    "At least %@ can be cleaned" : {
+
+    },
     "Back" : {
 
     },
@@ -381,6 +409,15 @@
 
     },
     "Cleaning was interrupted." : {
+
+    },
+    "Cleanup finished" : {
+
+    },
+    "Cleanup ran into a problem" : {
+
+    },
+    "Cleanup stopped" : {
 
     },
     "Cloud & Office" : {
@@ -563,6 +600,28 @@
     },
     "Free space" : {
 
+    },
+    "Freed %@ · %lld items" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Freed %1$@ · %2$lld item"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Freed %1$@ · %2$lld items"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "Freed %@ · %lld items removed" : {
       "localizations" : {
@@ -767,6 +826,28 @@
     "Moved %@ to the Trash" : {
 
     },
+    "Moved %@ to the Trash · %lld apps" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Moved %1$@ to the Trash · %2$lld app"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Moved %1$@ to the Trash · %2$lld apps"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Moved to the Trash" : {
 
     },
@@ -812,6 +893,9 @@
     "No apps to show" : {
 
     },
+    "No apps were moved to the Trash" : {
+
+    },
     "No reading yet" : {
 
     },
@@ -851,7 +935,13 @@
     "Nothing to clean" : {
 
     },
+    "Nothing to clean right now" : {
+
+    },
     "Nothing was moved to the Trash" : {
+
+    },
+    "Nothing was removed" : {
 
     },
     "Nothing was removed." : {
@@ -863,7 +953,10 @@
     "Notifications" : {
 
     },
-    "Notify me when a cleanup finishes" : {
+    "Notifications appear only while you're using another app." : {
+
+    },
+    "Notify me when a scan or cleanup finishes" : {
 
     },
     "Old Time Machine backups can only be deleted with your password, which RoomForMac doesn't do yet." : {
@@ -1136,6 +1229,9 @@
 
     },
     "Scan again" : {
+
+    },
+    "Scan finished" : {
 
     },
     "Scan progress" : {
@@ -1419,6 +1515,15 @@
 
     },
     "Unexpected removals:" : {
+
+    },
+    "Uninstall finished" : {
+
+    },
+    "Uninstall ran into a problem" : {
+
+    },
+    "Uninstall stopped" : {
 
     },
     "Uninstaller" : {
