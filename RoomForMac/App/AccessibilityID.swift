@@ -70,6 +70,22 @@ extension AccessibilityID {
     }
 }
 
+// MARK: - Menu-bar extra (Plan 3 Task 19)
+
+extension AccessibilityID {
+    static let menuBarPanel = "menuBar.panel"
+    static let menuBarOpenApp = "menuBar.openApp"
+    static let menuBarQuickScan = "menuBar.quickScan"
+    static let menuBarFreeSpace = "menuBar.freeSpace"
+    /// "Quit RoomForMac" in the panel.
+    static let menuBarQuit = "menuBar.quit"
+
+    /// A gauge in the panel: "menuBar.gauge.<rawValue>".
+    static func menuBarGauge(_ kind: StatusCardKind) -> String {
+        "menuBar.gauge.\(kind.rawValue)"
+    }
+}
+
 // MARK: - Settings (Task 14)
 
 extension AccessibilityID {
@@ -83,7 +99,7 @@ extension AccessibilityID {
     static let settingsApproveLoginItem = "settings.general.approveLoginItem"
     static let settingsNotifications = "settings.general.notifications"
     static let settingsNotificationsAction = "settings.general.notifications.action"
-    static let settingsMenuBarNote = "settings.general.menuBarNote"
+    static let settingsMenuBar = "settings.general.menuBar"
 
     // Permissions (the cards keep their permission.* identifiers)
     static let settingsMoveByHand = "settings.permissions.moveByHand"

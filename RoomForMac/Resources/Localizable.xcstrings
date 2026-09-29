@@ -175,9 +175,6 @@
     "1 GB of free cleanup, once" : {
 
     },
-    "A menu bar extra with quick gauges arrives with Status in the next update." : {
-
-    },
     "A random install ID made on this Mac, so events from one install can be counted together. It is not linked to you." : {
 
     },
@@ -209,6 +206,12 @@
 
     },
     "An app may have this database open, so it was left alone." : {
+
+    },
+    "An uninstall can't be stopped midway. RoomForMac quits as soon as it finishes." : {
+
+    },
+    "An uninstall is still running" : {
 
     },
     "Another copy of RoomForMac is already open in %@. Quit it, then try again." : {
@@ -351,6 +354,9 @@
 
     },
     "Cleaning ended without a report. Some items may have been removed." : {
+
+    },
+    "Cleaning is still running" : {
 
     },
     "Cleaning ran into a problem." : {
@@ -553,6 +559,9 @@
 
     },
     "Found: %@" : {
+
+    },
+    "Free space" : {
 
     },
     "Freed %@ · %lld items removed" : {
@@ -803,6 +812,9 @@
     "No apps to show" : {
 
     },
+    "No reading yet" : {
+
+    },
     "No swap used" : {
 
     },
@@ -869,6 +881,9 @@
     "Open App Management" : {
 
     },
+    "Open RoomForMac" : {
+
+    },
     "Open RoomForMac at login" : {
 
     },
@@ -927,6 +942,18 @@
 
     },
     "Protected from removal" : {
+
+    },
+    "Quick Scan" : {
+
+    },
+    "Quick gauges, free space and Quick Scan, one click away." : {
+
+    },
+    "Quit RoomForMac" : {
+
+    },
+    "Quit When Done" : {
 
     },
     "Quit the app it belongs to, then clean again." : {
@@ -1087,6 +1114,9 @@
     "RoomForMac stopped it after waiting too long. Try again." : {
 
     },
+    "RoomForMac stops cleaning after the item it is removing now, then quits. Items it already removed stay removed." : {
+
+    },
     "RoomForMac tries again in a moment." : {
 
     },
@@ -1148,6 +1178,9 @@
 
     },
     "Share anonymous usage data" : {
+
+    },
+    "Show RoomForMac in the menu bar" : {
 
     },
     "Show details" : {
@@ -1231,6 +1264,9 @@
     "Started: %@" : {
 
     },
+    "Starting…" : {
+
+    },
     "Status" : {
 
     },
@@ -1254,6 +1290,9 @@
 
     },
     "Stop" : {
+
+    },
+    "Stop and Quit" : {
 
     },
     "Stopped" : {

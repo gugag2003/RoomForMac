@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Settings → General: open at login, notifications, and a note about the menu-bar extra.
+/// Settings → General: open at login, notifications, and the menu-bar extra's switch.
 /// Both states, and where the app is, are re-read when the tab appears and whenever RoomForMac
 /// becomes active again, since each can change outside the app.
 struct GeneralSettingsView: View {
@@ -29,7 +29,8 @@ struct GeneralSettingsView: View {
     }
 
     /// The switch's subtitle. Settings → Permissions reuses it for its (never shown) login case.
-    /// Plan 3's menu-bar extra makes a login launch quiet and can say so then.
+    /// With the menu-bar extra on, a login launch stays in the menu bar only if macOS marks it
+    /// as one (manual check U5), so the subtitle still promises only that RoomForMac opens.
     static let loginItemSubtitle: LocalizedStringKey = "RoomForMac opens when you log in."
 
     /// What the notifications button does.
@@ -43,12 +44,26 @@ struct GeneralSettingsView: View {
     private let permissions: PermissionCenter
     private let loginItem: LoginItemChecker?
     private let openURL: @MainActor (URL) -> Void
+    private let model: AppModel?
     @State private var isChangingLoginItem = false
 
-    init(permissions: PermissionCenter, loginItem: LoginItemChecker?, openURL: @escaping @MainActor (URL) -> Void) {
+    /// `model` adds the menu-bar extra's switch. Settings passes it; without one (Plan 2's
+    /// tests) the tab has no switch.
+    init(
+        permissions: PermissionCenter,
+        loginItem: LoginItemChecker?,
+        openURL: @escaping @MainActor (URL) -> Void,
+        model: AppModel? = nil
+    ) {
         self.permissions = permissions
         self.loginItem = loginItem
         self.openURL = openURL
+        self.model = model
+    }
+
+    /// "Show RoomForMac in the menu bar", present only with a model.
+    var menuBarRow: MenuBarSettingRow? {
+        model.map { MenuBarSettingRow(model: $0) }
     }
 
     /// A registered login item always shows, so it can be turned off. Otherwise a copy that is
@@ -164,16 +179,10 @@ struct GeneralSettingsView: View {
                 .accessibilityIdentifier(AccessibilityID.settingsNotifications)
             }
 
-            Section {
-                Label {
-                    Text("A menu bar extra with quick gauges arrives with Status in the next update.")
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "menubar.rectangle")
-                        .foregroundStyle(Palette.textSecondary)
+            if let menuBarRow {
+                Section {
+                    menuBarRow
                 }
-                .accessibilityIdentifier(AccessibilityID.settingsMenuBarNote)
             }
         }
         .formStyle(.grouped)
@@ -199,5 +208,24 @@ struct GeneralSettingsView: View {
         await permissions.refresh(.moveToApplications)
         await permissions.refresh(.launchAtLogin)
         await permissions.refresh(.notifications)
+    }
+}
+
+/// "Show RoomForMac in the menu bar" (Ruling 17). The switch writes through
+/// `AppModel.setMenuBarEnabled(_:)`, which saves the preference; the extra appears or goes
+/// at once, because its `isInserted` reads the same model.
+struct MenuBarSettingRow: View {
+    let model: AppModel
+
+    var isOn: Binding<Bool> {
+        Binding(get: { model.menuBarEnabled }, set: { model.setMenuBarEnabled($0) })
+    }
+
+    var body: some View {
+        Toggle(isOn: isOn) {
+            Text("Show RoomForMac in the menu bar")
+            Text("Quick gauges, free space and Quick Scan, one click away.")
+        }
+        .accessibilityIdentifier(AccessibilityID.settingsMenuBar)
     }
 }

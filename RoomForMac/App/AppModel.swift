@@ -1,3 +1,4 @@
+import Foundation
 import MoleEngine
 import Observation
 
@@ -22,9 +23,24 @@ final class AppModel {
     var selection: SidebarSection = .smartClean
     private(set) var isOnboarded: Bool
 
-    /// Set when onboarding ends with "Start first scan". Smart Clean (Plan 3)
-    /// starts the scan and clears it.
+    /// Set when onboarding ends with "Start first scan", and by the menu-bar extra's
+    /// Quick Scan (`requestQuickScan()`). Smart Clean starts the scan and clears it.
     var pendingFirstScan = false
+
+    /// Whether the menu-bar extra is on: `AppPreferences.menuBarEnabled`, mirrored so views
+    /// observe it. Only `setMenuBarEnabled(_:)` changes it.
+    private(set) var menuBarEnabled: Bool
+
+    /// Whether this launch started in the menu bar: the extra was on and onboarding done
+    /// when the model was made, so the main window's launch was suppressed (Ruling 18).
+    let startsInMenuBar: Bool
+
+    /// The last link `receive(_:)` recognized, until `takeDeepLink()` (Plan 5) takes it.
+    private(set) var pendingDeepLink: DeepLink?
+
+    /// What `syncMenuBarDemand()` last told the Status monitor; nil before a monitor exists.
+    /// Tests read it, because the monitor does not expose its demands.
+    @ObservationIgnored private(set) var sentMenuBarDemand: Bool?
 
     /// Every approval the app tracks. Onboarding and Settings → Permissions share it.
     let permissions: PermissionCenter
@@ -63,8 +79,11 @@ final class AppModel {
         let preferences = dependencies.preferences
         let permissions = PermissionCenter(checkers: dependencies.permissionCheckers, preferences: preferences)
         let isOnboarded = preferences.onboardingCompleted
+        let menuBarEnabled = preferences.menuBarEnabled
         self.permissions = permissions
         self.isOnboarded = isOnboarded
+        self.menuBarEnabled = menuBarEnabled
+        startsInMenuBar = menuBarEnabled && isOnboarded
         onboardingFlow = isOnboarded
             ? nil
             : OnboardingFlow(preferences: preferences, permissions: permissions, needsMoveStep: dependencies.needsMoveStep)
@@ -86,9 +105,82 @@ final class AppModel {
             let services = dependencies.makeServices(installation)
             self.services = services
             makeFeatures(services)
+            syncMenuBarDemand()
         case .failure(let problem):
             engine = .broken(problem)
         }
+    }
+
+    // MARK: Menu-bar extra, Quick Scan and links (Task 19)
+
+    /// Whether the menu-bar extra is in the menu bar for the Status monitor: switched on,
+    /// onboarding done and the engine ready (Ruling 17).
+    var menuBarInserted: Bool {
+        guard menuBarEnabled, isOnboarded, case .ready = engine else {
+            return false
+        }
+        return true
+    }
+
+    /// What the item's `isInserted` reads (`MenuBarInsertion`): `menuBarInserted`, and also
+    /// true while a launch that started in the menu bar waits for its engine check or has a
+    /// broken engine. The item's label carries the window router's bridge, so the suppressed
+    /// window can still open at launch, from the Dock and from a link (Ruling 18).
+    var menuBarItemShown: Bool {
+        guard menuBarEnabled, isOnboarded else {
+            return false
+        }
+        if case .ready = engine {
+            return true
+        }
+        return startsInMenuBar
+    }
+
+    /// Turns the extra on or off. Writes the preference only when the value changes, then
+    /// tells the Status monitor whether the item is inserted.
+    func setMenuBarEnabled(_ enabled: Bool) {
+        guard enabled != menuBarEnabled else {
+            return
+        }
+        menuBarEnabled = enabled
+        dependencies.preferences.menuBarEnabled = enabled
+        syncMenuBarDemand()
+    }
+
+    /// Quick Scan from the menu-bar extra: shows Smart Clean and asks it for a scan, which it
+    /// starts unless it is busy (`SmartCleanModel.consumePendingScan(from:)`).
+    func requestQuickScan() {
+        selection = .smartClean
+        pendingFirstScan = true
+    }
+
+    /// Keeps `url` when it is a link RoomForMac knows (`DeepLink.parse`); ignores it otherwise.
+    func receive(_ url: URL) {
+        guard let link = DeepLink.parse(url) else {
+            return
+        }
+        pendingDeepLink = link
+    }
+
+    /// The pending link, once (Plan 5).
+    func takeDeepLink() -> DeepLink? {
+        guard let link = pendingDeepLink else {
+            return nil
+        }
+        pendingDeepLink = nil
+        return link
+    }
+
+    /// Keeps the monitor's `.menuBarInserted` demand equal to `menuBarInserted`; the demand
+    /// runs its free-space timer (Ruling 16). Called once `start()` has made the monitor, when
+    /// onboarding completes and when the switch changes.
+    private func syncMenuBarDemand() {
+        guard let statusMonitor else {
+            return
+        }
+        let inserted = menuBarInserted
+        statusMonitor.setDemand(.menuBarInserted, inserted)
+        sentMenuBarDemand = inserted
     }
 
     /// Builds the feature models over `services`. `start()` calls it once, right
@@ -162,6 +254,7 @@ final class AppModel {
         preferences.onboardingCompleted = true
         preferences.onboardingStep = nil
         isOnboarded = true
+        syncMenuBarDemand()
         onboardingFlow = nil
         selection = .smartClean
         pendingFirstScan = startFirstScan

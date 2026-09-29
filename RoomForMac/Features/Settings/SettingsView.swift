@@ -40,7 +40,8 @@ struct SettingsView: View {
                 GeneralSettingsView(
                     permissions: model.permissions,
                     loginItem: model.dependencies.loginItem,
-                    openURL: model.dependencies.openURL
+                    openURL: model.dependencies.openURL,
+                    model: model
                 )
                 .accessibilityIdentifier(AccessibilityID.settingsTab(.general))
             } label: {

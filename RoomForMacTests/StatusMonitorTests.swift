@@ -761,6 +761,8 @@ struct StatusMonitorWiringTests {
     ) -> AppModel {
         let preferences = temporary.preferences
         preferences.onboardingCompleted = onboarded
+        // No menu-bar extra: its demand reads the free space on its own (Task 19).
+        preferences.menuBarEnabled = false
         let check = engine ?? .success(installation)
         var dependencies = AppDependencies(preferences: preferences, engineCheck: { check }, openURL: { _ in })
         let service = service

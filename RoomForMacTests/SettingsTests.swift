@@ -713,3 +713,49 @@ extension SettingsTests {
         }
     }
 }
+
+// MARK: - Menu-bar switch (Plan 3 Task 19)
+
+extension SettingsTests {
+    /// General's "Show RoomForMac in the menu bar", which replaces Plan 2's note. ImageRenderer
+    /// draws a Form's rows blank ("Settings views"), so these check the row itself.
+    @MainActor
+    @Suite("Menu-bar switch")
+    struct MenuBarSwitch {
+        /// Held by the suite so the defaults outlive every use inside a test.
+        let defaults: TemporaryDefaults
+
+        init() throws {
+            defaults = try TemporaryDefaults()
+        }
+
+        @Test func theSwitchShowsOnlyWithAModel() {
+            let model = SettingsTests.model(defaults: defaults)
+            let withoutModel = GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in })
+            #expect(withoutModel.menuBarRow == nil)
+            let withModel = GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in }, model: model)
+            #expect(withModel.menuBarRow?.model === model)
+        }
+
+        @Test func theSwitchTurnsTheExtraOnAndOff() throws {
+            let model = SettingsTests.model(defaults: defaults)
+            let row = try #require(
+                GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in }, model: model).menuBarRow
+            )
+            #expect(row.isOn.wrappedValue)
+
+            row.isOn.wrappedValue = false
+            #expect(model.menuBarEnabled == false)
+            #expect(defaults.preferences.menuBarEnabled == false)
+            #expect(row.isOn.wrappedValue == false)
+
+            row.isOn.wrappedValue = true
+            #expect(model.menuBarEnabled)
+            #expect(defaults.preferences.menuBarEnabled)
+        }
+
+        @Test func theSwitchHasItsIdentifier() {
+            #expect(AccessibilityID.settingsMenuBar == "settings.general.menuBar")
+        }
+    }
+}

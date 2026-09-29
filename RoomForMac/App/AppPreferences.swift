@@ -14,6 +14,7 @@ struct AppPreferences: @unchecked Sendable {
         static let onboardingChoices = "onboarding.choices"
         static let analyticsEnabled = "analytics.enabled"
         static let notificationsWanted = "notifications.wanted"
+        static let menuBarEnabled = "menuBar.enabled"
         static let lastKnownStatePrefix = "permissions.lastKnown."
         static let uninstallerSort = "uninstaller.sort"
         static let cleanSectionTimings = "clean.sectionTimings"
@@ -73,6 +74,13 @@ struct AppPreferences: @unchecked Sendable {
     var notificationsWanted: Bool {
         get { bool(forKey: Key.notificationsWanted, default: false) }
         nonmutating set { defaults.set(newValue, forKey: Key.notificationsWanted) }
+    }
+
+    /// Whether the menu-bar extra shows once onboarding is done: on unless the user turned it
+    /// off in Settings or took it out of the menu bar (Ruling 17).
+    var menuBarEnabled: Bool {
+        get { bool(forKey: Key.menuBarEnabled, default: true) }
+        nonmutating set { defaults.set(newValue, forKey: Key.menuBarEnabled) }
     }
 
     /// Seconds each Smart Clean section took in the latest scans, by the engine's section name,
