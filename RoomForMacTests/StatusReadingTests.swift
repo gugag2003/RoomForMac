@@ -203,3 +203,153 @@ struct StatusSensorsWiringTests {
         #expect(live.battery is PowerSourceBatteryReader)
     }
 }
+
+// MARK: - Readings
+
+@Suite("Status reading", .timeLimit(.minutes(1)))
+struct StatusReadingTests {
+    private static let now = Date(timeIntervalSince1970: 1_790_485_800)
+
+    private func read(
+        _ snapshot: SystemSnapshot,
+        lastEnriched: SystemSnapshot? = nil,
+        gpuUsage: Double? = 14,
+        pressure: MemoryPressure = .normal,
+        hasBattery: Bool = true,
+        freeSpace: FreeSpace? = StatusFixtures.freeSpace
+    ) -> StatusReading {
+        StatusReading.make(
+            snapshot: snapshot, lastEnriched: lastEnriched, gpuUsage: gpuUsage, pressure: pressure,
+            hasBattery: hasBattery, freeSpace: freeSpace, now: Self.now
+        )
+    }
+
+    @Test func aFullSnapshotFillsEveryCard() throws {
+        let full = try StatusFixtures.full()
+        let reading = read(full, pressure: .warning)
+        #expect(reading.date == full.collectedAt)
+        #expect(reading.isEnriched)
+        #expect(reading.cpu == StatusReading.CPU(usage: 90.27311997492306, cores: 8, load1: 29.505859375))
+        #expect(reading.memory == StatusReading.Memory(
+            used: 13_644_939_264, total: 17_179_869_184, available: 3_534_929_920, swapUsed: 5_323_554_816, pressure: .warning
+        ))
+        #expect(reading.disk == StatusReading.Disk(
+            total: 245_107_195_904, used: 239_859_499_008, free: 5_843_042_304, smartFailing: false,
+            readMBs: 118.89806577481494, writeMBs: 2.0247541948407464
+        ))
+        #expect(reading.network == StatusReading.Network(
+            rxMBs: 0.048274993896484375, txMBs: 0.07493019104003906, busiestInterface: "en0"
+        ))
+        #expect(reading.gpu == StatusReading.GPU(name: "Apple M2", cores: 8, usage: 14))
+        #expect(reading.battery == StatusReading.Battery(percent: 100, status: "charged", cycleCount: 232, capacityPercent: 93))
+        #expect(reading.health?.headline == .cpuHigh(process: "proc"))
+    }
+
+    @Test func aFastSnapshotBorrowsFromTheLastEnrichedOne() throws {
+        let fast = try StatusFixtures.fast()
+        var full = try StatusFixtures.full()
+        full.thermal?.cpuTemp = 58
+        let reading = read(fast, lastEnriched: full)
+        #expect(reading.date == fast.collectedAt)
+        #expect(reading.isEnriched)
+        // Its own live values.
+        #expect(reading.cpu == StatusReading.CPU(usage: 43.20027447657813, cores: 8, load1: 29.505859375, temperature: 58))
+        #expect(reading.memory?.used == 13_551_894_528)
+        #expect(reading.network?.rxMBs == 0.017042160034179688)
+        #expect(reading.disk?.readMBs == 0)
+        // Borrowed: the GPU name, the battery and the corrected disk.
+        #expect(reading.gpu == StatusReading.GPU(name: "Apple M2", cores: 8, usage: 14))
+        #expect(reading.battery == StatusReading.Battery(percent: 100, status: "charged", cycleCount: 232, capacityPercent: 93))
+        #expect(reading.disk?.used == 239_859_499_008)
+        // Its score comes from partial data, so there is no health line.
+        #expect(reading.health == nil)
+    }
+
+    @Test func aFastSnapshotAloneHasNothingToBorrow() throws {
+        let fast = try StatusFixtures.fast()
+        let reading = read(fast, gpuUsage: nil)
+        #expect(!reading.isEnriched)
+        #expect(reading.cpu?.usage == 43.20027447657813)
+        #expect(reading.gpu == nil)
+        #expect(reading.battery == nil)
+        #expect(reading.health == nil)
+        #expect(reading.disk?.used == 239_859_208_192)
+        // The app's GPU reading alone still makes a card, without a name yet.
+        #expect(read(fast, gpuUsage: 9).gpu == StatusReading.GPU(name: "", cores: nil, usage: 9))
+    }
+
+    @Test func anEnrichedSnapshotKeepsItsOwnValues() throws {
+        let full = try StatusFixtures.full()
+        var older = full
+        older.batteries?[0].percent = 40
+        older.gpu?[0].name = "Other GPU"
+        let reading = read(full, lastEnriched: older)
+        #expect(reading.battery?.percent == 100)
+        #expect(reading.gpu?.name == "Apple M2")
+    }
+
+    @Test func theAppsSensorsReplaceTheEnginesReadings() throws {
+        // The engine reports the GPU's usage as -1 and the pressure as "".
+        let full = try StatusFixtures.full()
+        #expect(read(full, gpuUsage: nil).gpu?.usage == nil)
+        #expect(read(full, gpuUsage: 37.5).gpu?.usage == 37.5)
+        #expect(read(full, gpuUsage: 140).gpu?.usage == 100)
+        #expect(read(full, pressure: .critical).memory?.pressure == .critical)
+        #expect(read(full, pressure: .unknown).memory?.pressure == .unknown)
+    }
+
+    @Test func aMacWithoutAnInternalBatteryHasNoBatteryCard() throws {
+        // The capture lists a battery, as the engine also does for a UPS.
+        let full = try StatusFixtures.full()
+        #expect(read(full, hasBattery: false).battery == nil)
+        #expect(read(full, hasBattery: true).battery != nil)
+    }
+
+    @Test func theDiskShowsTheAppsFreeSpaceWhenItHasOne() throws {
+        let full = try StatusFixtures.full()
+        #expect(read(full).disk?.free == 5_843_042_304)
+        #expect(read(full, freeSpace: nil).disk?.free == 5_247_696_896)
+    }
+
+    @Test func aCPUTemperatureOfZeroIsIgnored() throws {
+        var full = try StatusFixtures.full()
+        #expect(full.thermal?.cpuTemp == 0)
+        #expect(read(full).cpu?.temperature == nil)
+        full.thermal?.cpuTemp = 71.5
+        #expect(read(full).cpu?.temperature == 71.5)
+    }
+
+    @Test func aSnapshotWithoutADateIsDatedWhenItArrived() throws {
+        var full = try StatusFixtures.full()
+        full.collectedAt = nil
+        #expect(read(full).date == Self.now)
+    }
+
+    @Test func theNetworkCardSumsTheInterfacesAndNamesTheBusiest() throws {
+        var full = try StatusFixtures.full()
+        full.network?[1].rxRateMbs = 2
+        full.network?[1].txRateMbs = 0.5
+        let network = try #require(read(full).network)
+        #expect(network.rxMBs == 0.048274993896484375 + 2)
+        #expect(network.txMBs == 0.07493019104003906 + 0.5)
+        #expect(network.busiestInterface == "en3")
+        for index in 0..<3 {
+            full.network?[index].rxRateMbs = 0
+            full.network?[index].txRateMbs = 0
+        }
+        #expect(read(full).network == StatusReading.Network(rxMBs: 0, txMBs: 0, busiestInterface: nil))
+    }
+}
+
+@Suite("Status card kinds")
+struct StatusCardKindTests {
+    @Test func theCardsComeInTheSpecsOrder() {
+        #expect(StatusCardKind.allCases.map(\.rawValue) == ["cpu", "gpu", "memory", "disk", "network", "battery"])
+        #expect(StatusCardKind.allCases.map { String(localized: $0.title) } == ["CPU", "GPU", "Memory", "Disk", "Network", "Battery"])
+    }
+
+    @Test(arguments: StatusCardKind.allCases)
+    func everyCardSymbolExists(_ kind: StatusCardKind) {
+        #expect(NSImage(systemSymbolName: kind.systemImage, accessibilityDescription: nil) != nil)
+    }
+}

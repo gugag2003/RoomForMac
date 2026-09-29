@@ -183,6 +183,9 @@
     "Background items" : {
 
     },
+    "Battery" : {
+
+    },
     "Battery cycle count is high" : {
 
     },
@@ -193,6 +196,9 @@
 
     },
     "Browsers" : {
+
+    },
+    "CPU" : {
 
     },
     "CPU load is high" : {
@@ -355,6 +361,9 @@
     "Device backups & firmware" : {
 
     },
+    "Disk" : {
+
+    },
     "Disk activity is high" : {
 
     },
@@ -481,6 +490,9 @@
 
     },
     "Full Disk Access is on" : {
+
+    },
+    "GPU" : {
 
     },
     "General" : {
@@ -622,6 +634,9 @@
     "Make sure Full Disk Access is on for RoomForMac. The item may also be locked, and part of it may already be gone." : {
 
     },
+    "Memory" : {
+
+    },
     "Memory pressure" : {
 
     },
@@ -668,6 +683,9 @@
 
     },
     "Needs your password" : {
+
+    },
+    "Network" : {
 
     },
     "No account, no card." : {
