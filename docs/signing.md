@@ -113,11 +113,11 @@ The DR must stay the same while the code changes:
 ```bash
 before_dr="$(dr "$APP")" && before_cdh="$(cdh "$APP")"
 # Change any visible string, for example a Text in
-# RoomForMac/Features/Status/StatusPlaceholderView.swift, and rebuild with the
+# RoomForMac/Features/Settings/AboutView.swift, and rebuild with the
 # xcodebuild command above.
 after_dr="$(dr "$APP")" && after_cdh="$(cdh "$APP")"
 [ -n "$before_dr" ] && [ "$before_dr" = "$after_dr" ] && [ "$before_cdh" != "$after_cdh" ] && echo "stable: same DR, new code"
-git checkout -- RoomForMac/Features/Status/StatusPlaceholderView.swift
+git checkout -- RoomForMac/Features/Settings/AboutView.swift
 ```
 
 Then check that the grants survive:

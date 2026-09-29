@@ -1,17 +1,37 @@
 # RoomForMac engine protocol (v1)
 
 RoomForMac drives its bundled, patched Mole engine (`build/engine`, shipped as
-`RoomForMac.app/Contents/Resources/engine`) through environment variables and reads
-machine-readable results. This is the contract between `patches/mole/` and
-`Packages/MoleEngine`.
+`RoomForMac.app/Contents/Resources/engine`, with its two Go tools in `Contents/Helpers`
+behind `engine/bin` symlinks) through environment variables and reads machine-readable results.
+This is the contract between `patches/mole/` and `Packages/MoleEngine`.
+
+## Patches and host-side rules
+
+The engine is Mole `V1.56.0` with six patches, which `scripts/build-engine.sh` applies in
+order. `VERSION` records the Mole tag and commit, a hash of the patch files and their count
+(`patch_count=6`), and the app checks them at launch.
+
+| Patch (`patches/mole/`) | Adds | Section |
+|---|---|---|
+| `0001-Add-host-integration-helpers-for-GUI-front-ends.patch` | `lib/core/host.sh`, `MOLE_GUI_HOST`, `MOLE_NO_AUTH` | Host variables |
+| `0002-Stream-machine-readable-clean-events-for-GUI-hosts.patch` | clean events in `MOLE_JSON_EVENTS_FILE` | Clean events |
+| `0003-Honour-exact-path-host-selections-in-clean.patch` | `MOLE_SELECTION_FILE` | Selections |
+| `0004-Add-a-host-driven-uninstall-mode.patch` | the host-driven uninstall, amended in Plan 3 with `leftover_items` and an exit 0 when every requested app is blocked | Uninstall |
+| `0005-Add-analyze-trash-list-for-GUI-front-ends.patch` | `analyze-go --trash-list` | Analyzer Trash list |
+| `0006-Report-removed-sizes-in-clean-result-events.patch` | `size_kb` on `removed` clean results | Clean results |
+
+Three parts need no patch: the `status-bin/` stubs that `scripts/build-engine.sh` writes
+(Status helpers), the upstream variable `MOLE_UNINSTALL_INLINE_DU_MAX_COLD_ROWS` (Uninstall),
+and the host's stop, suspend, diagnostics and log (the last section).
 
 ## Invoking the engine
 
 | Purpose | Executable | Output |
 |---|---|---|
 | Smart Clean preview | `bin/clean.sh --dry-run` | events file |
+| Smart Clean fresh sizes | `bin/clean.sh --dry-run` with `MOLE_SELECTION_FILE` | events file |
 | Smart Clean run | `bin/clean.sh` with `MOLE_SELECTION_FILE` | events file |
-| App inventory | `bin/uninstall.sh --list` | JSON array on stdout |
+| App inventory | `bin/uninstall.sh --list` with `MOLE_UNINSTALL_INLINE_DU_MAX_COLD_ROWS=100000` | JSON array on stdout |
 | Uninstall preview / run | `bin/uninstall.sh [--dry-run]` with `MOLE_UNINSTALL_APP_PATHS_FILE` | events file |
 | Disk level | `bin/analyze-go --json [PATH]` | one JSON document on stdout |
 | Move to Trash | `bin/analyze-go --trash-list FILE` | events on stdout |
@@ -58,12 +78,16 @@ or symlinked selection file allows nothing.
 
 ## JSON conventions
 
-- One object per line, UTF-8, first key `"v":1`. Hosts skip lines they cannot parse and types they do not know.
+- One object per line, UTF-8, first key `"v":1`. Hosts skip lines they cannot parse, types they do not know and other `v` values, and ignore keys they do not know. Patch 0006 and the amended 0004 only add keys, so `v` stays 1.
 - Strings escape `"`, `\`, `\n`, `\r`, `\t`, and other control bytes as `\u00XX`.
 - Sizes are integer kilobytes (`size_kb`, `freed_kb`) of at most 9007199254740991 (2^53 − 1,
   the largest count whose bytes fit in a signed 64-bit integer); booleans are JSON booleans.
   A larger size makes its line malformed, so hosts skip it.
-- A run is complete only when its `summary` event arrived and the process exited 0.
+- A clean run, or a Trash-list run, is complete only when its `summary` event arrived and the
+  process exited 0; `RunCompletion` (last section) classifies every other ending. Uninstall runs
+  write no `summary`: hosts judge them by the exit status and one outcome per requested app
+  (Uninstall host notes). `uninstall --list` prints one JSON array and `status-go` one snapshot
+  per line; neither writes events.
 
 ## Clean events (`bin/clean.sh`, patch 0002)
 
@@ -73,7 +97,7 @@ or symlinked selection file allows nothing.
 | `candidate` | a dry run finds an item (live progress; may repeat or overlap) | `section`, `path`, `size_kb`, `size_known` |
 | `item` | end of a dry run: the deduplicated preview | `section`, `path`, `size_kb`, `count`, `size_known`, `covered_by` (nearest previewed ancestor whose size already includes this item, or `null`) |
 | `result` | real runs: one outcome per path, mirrored from `log_operation` | `command`, `action` (`removed` / `skipped` / `failed`), `path`, `detail`, and on `removed` results `size_kb` when measured (patch 0006) |
-| `summary` | end of every run | `command`, `dry_run`, `items`, `size_kb`, `partial`, `exit` |
+| `summary` | end of a run that finished its cleanup pass (see below) | `command`, `dry_run`, `items`, `size_kb`, `partial`, `exit` |
 
 Hosts total a preview from `item` events whose `covered_by` is `null`, and charge only
 `result` events with `action: removed` whose `path` is one of the paths they selected.
@@ -197,8 +221,12 @@ Verified against the patched `V1.56.0` engine; `MoleEngine`'s `CleanService`,
 | `app_result` | `path`, `name`, `status` (`removed` / `failed`), `freed_kb`, `reason` |
 
 `uninstall --list` (stdout is a pipe → JSON array) adds `size_kb` and `last_used_epoch` to each app.
-While admin access is off, apps with `needs_sudo` or `brew_cask` cannot be removed (the batch
-needs a sudo session); hosts show them as needing a password and never send them.
+While admin access is off, apps with `needs_sudo` or `brew_cask` cannot be removed: the batch
+needs a sudo session, so a single such app in the paths file makes the whole run exit 1 before
+anything is removed (its `app` events arrive, and no `app_result` does). Hosts show these apps
+as needing a password and never send them. In Trash mode `needs_sudo` means the app's parent
+folder is not writable: for a standard user that is every app in `/Applications`, while a
+root-owned app in `/Applications` needs no password for an administrator.
 
 Details:
 
@@ -268,6 +296,18 @@ Details:
 - A real run writes no `summary`. `UninstallRunTally` gives each requested app one outcome: the
   first `app_result` wins, an app without one was not handled, and an `app_result` for a path
   nobody requested is kept apart for the diagnostics and never charged.
+- Removed apps and leftovers go to the Trash: `uninstall` defaults `MOLE_DELETE_MODE` to
+  `trash`, and Trash mode fails closed instead of deleting permanently. The engine moves items
+  itself: a direct move for `/Applications/*.app` and for the folders directly inside
+  `~/Library/Containers`, `Group Containers` and `Application Scripts`; one batched rename for
+  most other leftovers; and `/usr/bin/trash` for the rest, one item at a time. It asks Finder
+  (an Apple event) only when those fail, and retries an app bundle through Finder when macOS
+  privacy controls refuse its direct move. Directly moved items have no Finder "Put Back" record.
+- To quit an app that is still running, the engine's `force_kill_app` skips its AppleScript
+  Quit under `MOLE_GUI_HOST` and sends `pkill -x <executable name>`, then `pkill -9 -x`. That
+  also ends any other process whose executable has the same name, so RoomForMac quits apps
+  itself before a run and never sends an app whose executable name another running process
+  shares.
 
 ## Analyzer Trash list (`bin/analyze-go --trash-list FILE`, patch 0005)
 
@@ -280,10 +320,18 @@ Details:
 
 `bin/status-go --watch --interval <n>s` (whole seconds, at least 1) writes one JSON snapshot per
 line on stdout until the host ends it; it exits by itself only when stdout closes. It runs with
-`status-bin/` first on `PATH` (see Status helpers). A host keeps one process for the whole app
-run and pauses it with `SIGSTOP` and `SIGCONT` to its process group instead of restarting it: a
+`status-bin/` first on `PATH` (see Status helpers). A host keeps one process and pauses it with
+`SIGSTOP` and `SIGCONT` to its process group instead of restarting it when demand changes: a
 new process starts cold again (no rates, no enrichment, an empty `network_history`). A host stop
 is `SIGTERM` followed by `SIGCONT`, so a paused process ends at once.
+
+RoomForMac's cadence (Plan 3 Ruling 16, as revised on 2026-09-27): the process is live while the
+Status section is on screen or the menu-bar panel is open, and paused otherwise, including while
+only the menu-bar extra is shown with its panel closed, because the extra's label shows no live
+numbers. A faster cadence applies at once; a pause waits 30 s. After 5 minutes paused the
+process is stopped, and the next demand starts a new one, so at most one runs at a time.
+`StatusMonitor` also supports a 10 s background cadence (resume, take one snapshot, suspend),
+which `StatusCadence.resolve` does not use in M2.
 
 **Timing** (measured on macOS 27 with `--interval 2s`):
 - The first line arrives about 0.13 s after the start. It is a *fast* collect and is not
@@ -359,7 +407,14 @@ These rules belong to `Packages/MoleEngine`; the engine needs no patch for them.
   process group, so a suspended group ends at once. The host keeps reading until the process
   exits, delivers every line written before the exit, and then ends the stream with
   `EngineError.cancelled`. `SIGKILL` follows after the grace period (5 s) if the group is still
-  alive. Cancelling the consuming Task instead is a hard abort: lines not yet read are dropped.
+  alive. Cancelling the consuming Task instead is a hard abort: lines not yet read are dropped,
+  and the group gets the same `SIGTERM`, `SIGCONT` and, after the grace period, `SIGKILL`. A
+  stop is final: a command whose control was already stopped spawns nothing and ends with
+  `cancelled`.
+- **Host suspend.** `EngineRunControl.suspend()` sends `SIGSTOP` to the process group, and
+  `resume()` sends `SIGCONT`. A suspend requested before the process starts applies as soon as
+  it starts, and `resume()` clears it. After a stop, or once the process has exited, neither
+  sends anything. Only Status suspends its process (see Live status).
 - **A stream stopped by the host has no `summary`.** Mole's `TERM` trap exits 143 without writing
   one (see Clean events). The exception is a stop that raced the end of the run: a `summary`
   with `exit` 0 that arrived before the stop means the run finished.
