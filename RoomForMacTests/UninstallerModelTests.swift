@@ -1091,3 +1091,74 @@ struct UninstallerModelTests {
         #expect(harness.reporter.scans.count == 2, "the list from before the removal was reported")
     }
 }
+
+@MainActor
+@Suite("Uninstaller in the app model", .timeLimit(.minutes(1)))
+struct UninstallerWiringTests {
+    private let temporary: TemporaryDefaults
+    private let directory: TemporaryDirectory
+    private let installation: EngineInstallation
+
+    init() throws {
+        temporary = try TemporaryDefaults()
+        directory = try TemporaryDirectory()
+        let root = try EngineLayout.make(in: directory.url, version: EngineLayout.version(for: .expected))
+        installation = try EngineInstallation(root: root)
+    }
+
+    private func makeAppModel(
+        _ service: ScriptedUninstallService, reporter: RecordingRunReporter = RecordingRunReporter()
+    ) -> AppModel {
+        let installation = installation
+        var dependencies = AppDependencies(
+            preferences: temporary.preferences,
+            engineCheck: { .success(installation) },
+            openURL: { _ in }
+        )
+        dependencies.makeServices = { _ in
+            EngineServices(clean: EngineServices.unavailable.clean, uninstall: service, status: EngineServices.unavailable.status)
+        }
+        dependencies.files = FileProbes(fileExists: { _ in false }, isWritableDirectory: { _ in true })
+        dependencies.hostAppPath = Fixture.hostPath
+        dependencies.runReporter = reporter
+        return AppModel(dependencies: dependencies)
+    }
+
+    @Test func theEngineCheckBuildsTheUninstallerWhichWaitsForOnboarding() async throws {
+        let service = ScriptedUninstallService(apps: .success(Fixture.apps))
+        let reporter = RecordingRunReporter()
+        let appModel = makeAppModel(service, reporter: reporter)
+        #expect(appModel.uninstaller == nil)
+
+        await appModel.start()
+        let uninstaller = try #require(appModel.uninstaller)
+        uninstaller.load()
+        #expect(uninstaller.list == .idle)
+        #expect(service.calls.isEmpty)
+
+        appModel.completeOnboarding(startFirstScan: false)
+        uninstaller.load()
+        await uninstaller.waitForList()
+        #expect(service.calls == ["list"])
+        #expect(uninstaller.rows.map(\.id) == Fixture.listed.map(\.path))
+        #expect(reporter.scans.map(\.feature) == [.uninstaller])
+
+        let other = try #require(appModel.runQueue.begin(.smartClean, stop: nil))
+        #expect(uninstaller.blockedBy == .smartClean)
+        other.end()
+        #expect(uninstaller.blockedBy == nil)
+    }
+
+    @Test func theSortOrderSurvivesARelaunch() async throws {
+        let first = makeAppModel(ScriptedUninstallService(apps: .success(Fixture.apps)))
+        await first.start()
+        let uninstaller = try #require(first.uninstaller)
+        #expect(uninstaller.query.sort == .size)
+        uninstaller.query.sort = .lastUsed
+        #expect(temporary.preferences.uninstallerSort == AppSortOrder.lastUsed.rawValue)
+
+        let second = makeAppModel(ScriptedUninstallService(apps: .success(Fixture.apps)))
+        await second.start()
+        #expect(second.uninstaller?.query.sort == .lastUsed)
+    }
+}

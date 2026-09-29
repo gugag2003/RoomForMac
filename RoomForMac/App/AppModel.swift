@@ -47,6 +47,10 @@ final class AppModel {
     /// start engine commands until onboarding is complete.
     private(set) var smartClean: SmartCleanModel?
 
+    /// The Uninstaller, built by `makeFeatures(_:)` once the engine is ready. It lists,
+    /// previews and removes nothing until onboarding is complete.
+    private(set) var uninstaller: UninstallerModel?
+
     @ObservationIgnored private var hasStarted = false
 
     init(dependencies: AppDependencies) {
@@ -93,6 +97,7 @@ final class AppModel {
     func makeFeatures(_ services: EngineServices) {
         reporter = dependencies.runReporter
         smartClean = SmartCleanModel(dependencies: smartCleanDependencies(service: services.clean))
+        uninstaller = UninstallerModel(dependencies: uninstallerDependencies(service: services.uninstall))
     }
 
     /// Smart Clean's dependencies over this model's seams. `isAllowed` reads `isOnboarded`
@@ -112,6 +117,29 @@ final class AppModel {
             label: dependencies.cleanItemLabel,
             loadTimings: { SectionTimings(stored: preferences.cleanSectionTimings) },
             saveTimings: { preferences.cleanSectionTimings = $0.durations },
+            now: dependencies.now
+        )
+    }
+
+    /// The Uninstaller's dependencies over this model's seams. `isAllowed` reads `isOnboarded`
+    /// on every call, so the feature starts nothing before onboarding completes (Ruling 10).
+    /// The sort order lives in preferences under `uninstaller.sort` (Task 13); the clock and
+    /// the timings keep their defaults.
+    private func uninstallerDependencies(service: any UninstallServicing) -> UninstallerDependencies {
+        let preferences = dependencies.preferences
+        return UninstallerDependencies(
+            service: service,
+            running: dependencies.runningApps,
+            gate: dependencies.removalGate,
+            recorder: dependencies.removalRecorder,
+            reporter: reporter,
+            logStore: dependencies.logStore,
+            runQueue: runQueue,
+            isAllowed: { [weak self] in self?.isOnboarded ?? false },
+            files: dependencies.files,
+            hostAppPath: dependencies.hostAppPath,
+            loadSort: { preferences.uninstallerSort.flatMap(AppSortOrder.init(rawValue:)) ?? .size },
+            saveSort: { preferences.uninstallerSort = $0.rawValue },
             now: dependencies.now
         )
     }
