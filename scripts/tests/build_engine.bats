@@ -4,7 +4,11 @@
 # engine lock tests run a scratch copy of build-engine.sh (see fake_root).
 #
 # Tests never raise a real system prompt: `status-go --json` asks Finder for the
-# disk's free space, so it runs only with RFM_ALLOW_PROMPTS=1 (CI sets it).
+# disk's free space, so it runs only with RFM_ALLOW_PROMPTS=1 (CI sets it). The
+# status stubs run from a copy whose real tools are spies (status_stub_spy.bash),
+# so a broken stub fails a test instead of querying Bluetooth or Finder.
+
+load status_stub_spy
 
 setup_file() {
     ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -53,19 +57,31 @@ setup_file() {
 }
 
 @test "the status osascript stub fails at once without output" {
-    run "$ENGINE_OUT/status-bin/osascript" -e \
+    spy_stub "$ENGINE_OUT/status-bin/osascript"
+    run env PATH="$SPY_PATH" "$SPIED" -e \
         'tell application "Finder" to return {free space of startup disk, capacity of startup disk}'
     [ "$status" -eq 1 ]
     [ -z "$output" ]
+    [ ! -s "$SPY_LOG" ]
 }
 
 @test "the status system_profiler stub refuses the Bluetooth data type" {
-    run "$ENGINE_OUT/status-bin/system_profiler" SPBluetoothDataType
+    spy_stub "$ENGINE_OUT/status-bin/system_profiler"
+    run env PATH="$SPY_PATH" "$SPIED" SPBluetoothDataType
     [ "$status" -eq 1 ]
     [ -z "$output" ]
-    run "$ENGINE_OUT/status-bin/system_profiler" -json -detailLevel mini SPBluetoothDataType
+    run env PATH="$SPY_PATH" "$SPIED" -json -detailLevel mini SPBluetoothDataType
     [ "$status" -eq 1 ]
     [ -z "$output" ]
+    # Neither call reached the tool, real or spy.
+    [ ! -s "$SPY_LOG" ]
+}
+
+@test "the status system_profiler stub hands every other query to the real tool" {
+    spy_stub "$ENGINE_OUT/status-bin/system_profiler"
+    run env PATH="$SPY_PATH" "$SPIED" -listDataTypes
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SPY_LOG")" = "system_profiler -listDataTypes" ]
 }
 
 @test "the status system_profiler stub runs the real tool for everything else" {

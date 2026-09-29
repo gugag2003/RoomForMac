@@ -10,7 +10,11 @@
 # Tests never raise a real system prompt, so the bundled status tool only runs
 # with -h here: `status-go --json` asks Finder for the disk's free space, which
 # can show an Automation prompt for the terminal. Set RFM_ALLOW_PROMPTS=1 (CI
-# does) to also check its JSON snapshot.
+# does) to also check its JSON snapshot. The bundled status stubs run from a copy
+# whose real tools are spies (status_stub_spy.bash), so a broken stub fails a test
+# instead of querying Bluetooth or Finder.
+
+load status_stub_spy
 
 setup_file() {
     if [[ -z "${APP:-}" ]]; then
@@ -80,13 +84,17 @@ signer() {
 }
 
 @test "the bundled status stubs refuse Finder and Bluetooth" {
-    run "$ENGINE/status-bin/osascript" -e \
+    spy_stub "$ENGINE/status-bin/osascript"
+    run env PATH="$SPY_PATH" "$SPIED" -e \
         'tell application "Finder" to return {free space of startup disk, capacity of startup disk}'
     [ "$status" -eq 1 ]
     [ -z "$output" ]
-    run "$ENGINE/status-bin/system_profiler" SPBluetoothDataType
+    [ ! -s "$SPY_LOG" ]
+    spy_stub "$ENGINE/status-bin/system_profiler"
+    run env PATH="$SPY_PATH" "$SPIED" SPBluetoothDataType
     [ "$status" -eq 1 ]
     [ -z "$output" ]
+    [ ! -s "$SPY_LOG" ]
 }
 
 @test "each helper is signed as com.roomformac.RoomForMac.engine.<tool>" {
