@@ -457,3 +457,76 @@ fingerprint_file_ok() {
     [ -f "$ROOT/Config/signing-identity.sha1" ] || skip "the owner commits Config/signing-identity.sha1 (owner step A3)"
     fingerprint_file_ok "$ROOT/Config/signing-identity.sha1"
 }
+
+# SHA-256 of ThirdParty/Sparkle/LICENSE at tag 2.10.0 of the Sparkle repository (Task 3, Step 1).
+SPARKLE_LICENSE_SHA256=389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe
+
+# --- Sparkle (Plan 6, Task 3) -----------------------------------------------
+
+@test "ThirdParty/Sparkle/LICENSE is the file at Sparkle's tag 2.10.0" {
+    local actual
+    actual="$(shasum -a 256 "$ROOT/ThirdParty/Sparkle/LICENSE" | cut -d' ' -f1)"
+    [ "$actual" = "$SPARKLE_LICENSE_SHA256" ]
+}
+
+@test "project.yml pins Sparkle exactly, and only the app target links it" {
+    run ruby -ryaml -e '
+        spec = YAML.load_file(ARGV[0])
+        sparkle = spec.fetch("packages").fetch("Sparkle")
+        expected = { "url" => "https://github.com/sparkle-project/Sparkle", "exactVersion" => ARGV[1] }
+        abort "wrong Sparkle package: #{sparkle.inspect}" unless sparkle == expected
+        targets = spec.fetch("targets")
+        packages = ->(name) { targets.fetch(name).fetch("dependencies", []).map { |d| d["package"] }.compact }
+        abort "the app must link Sparkle" unless packages.call("RoomForMac").include?("Sparkle")
+        %w[RoomForMacTests RoomForMacUITests].each do |name|
+            abort "#{name} must not link Sparkle" if packages.call(name).include?("Sparkle")
+        end
+        link = targets.fetch("RoomForMac").fetch("dependencies").find { |d| d["package"] == "Sparkle" }
+        abort "the product must be Sparkle: #{link.inspect}" unless link["product"] == "Sparkle"
+        abort "Sparkle must not set embed: Xcode embeds it itself: #{link.inspect}" if link.key?("embed")
+    ' "$ROOT/project.yml" "$(source "$ROOT/scripts/lib/sparkle.sh" && echo "$SPARKLE_VERSION")"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "project.yml runs Prepare Sparkle after Embed engine and bundles ThirdParty as a resource folder" {
+    run ruby -ryaml -e '
+        app = YAML.load_file(ARGV[0]).fetch("targets").fetch("RoomForMac")
+        phases = app.fetch("postBuildScripts")
+        names = phases.map { |p| p["name"] }
+        abort "phases: #{names.inspect}" unless names.include?("Embed engine") && names.include?("Prepare Sparkle")
+        abort "Prepare Sparkle must run after Embed engine" unless names.index("Prepare Sparkle") > names.index("Embed engine")
+        phase = phases.find { |p| p["name"] == "Prepare Sparkle" }
+        abort "wrong script: #{phase["script"]}" unless phase["script"] == %q("${SRCROOT}/scripts/prepare-sparkle.sh")
+        abort "the phase must run on every build" unless phase["basedOnDependencyAnalysis"] == false
+        framework = "$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Sparkle.framework/Versions/B"
+        inputs = ["#{framework}/Sparkle", "#{framework}/_CodeSignature"]
+        abort "the phase must wait for Xcode to copy and sign Sparkle.framework: #{phase["inputFiles"].inspect}" unless phase["inputFiles"] == inputs
+        folder = app.fetch("sources").find { |s| s.is_a?(Hash) && s["path"] == "ThirdParty" }
+        expected = { "path" => "ThirdParty", "type" => "folder", "buildPhase" => "resources" }
+        abort "ThirdParty entry: #{folder.inspect}" unless folder == expected
+    ' "$ROOT/project.yml"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "NOTICE and CREDITS.md name Sparkle at the pinned version and point to its license" {
+    local version
+    version="$(source "$ROOT/scripts/lib/sparkle.sh" && echo "$SPARKLE_VERSION")"
+    grep -qx 'Software updates' "$ROOT/NOTICE"
+    grep -q 'https://sparkle-project.org' "$ROOT/NOTICE"
+    grep -q 'ThirdParty/Sparkle/LICENSE' "$ROOT/NOTICE"
+    grep -qx '## Software updates' "$ROOT/CREDITS.md"
+    grep -q "^- Sparkle $version, MIT, https://sparkle-project.org\$" "$ROOT/CREDITS.md"
+}
+
+@test "the String Catalog has the title of Sparkle's license in About" {
+    run python3 -c '
+import json
+import sys
+
+strings = json.load(open(sys.argv[1]))["strings"]
+sys.exit(0 if "Updates License (Sparkle)" in strings else 1)
+' "$ROOT/RoomForMac/Resources/Localizable.xcstrings"
+    [ "$status" -eq 0 ]
+}

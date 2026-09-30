@@ -50,10 +50,10 @@ extension SettingsTests {
         }
 
         @Test func orderIdsAndTitles() {
-            #expect(LegalDocument.allCases == [.license, .notice, .credits, .moleLicense])
-            #expect(LegalDocument.allCases.map(\.id) == ["license", "notice", "credits", "moleLicense"])
+            #expect(LegalDocument.allCases == [.license, .notice, .credits, .moleLicense, .sparkleLicense])
+            #expect(LegalDocument.allCases.map(\.id) == ["license", "notice", "credits", "moleLicense", "sparkleLicense"])
             #expect(LegalDocument.allCases.map { String(localized: $0.title) }
-                == ["RoomForMac License", "Notice", "Credits", "Engine License (Mole)"])
+                == ["RoomForMac License", "Notice", "Credits", "Engine License (Mole)", "Updates License (Sparkle)"])
         }
 
         @Test(arguments: LegalDocument.allCases)
@@ -67,16 +67,21 @@ extension SettingsTests {
         @Test func documentsSitWhereTheBuildPutsThem() throws {
             let resources = try #require(Bundle.main.resourceURL).resolvingSymlinksInPath().path
             let paths = LegalDocument.allCases.map { $0.url(in: .main)?.resolvingSymlinksInPath().path }
-            #expect(paths == ["LICENSE", "NOTICE", "CREDITS.md", "engine/LICENSE"].map { "\(resources)/\($0)" })
+            #expect(paths == ["LICENSE", "NOTICE", "CREDITS.md", "engine/LICENSE", "ThirdParty/Sparkle/LICENSE"]
+                .map { "\(resources)/\($0)" })
         }
 
         @Test func documentsHaveTheirContent() throws {
             #expect(try #require(LegalDocument.license.text(in: .main)).contains("GNU GENERAL PUBLIC LICENSE"))
-            #expect(try #require(LegalDocument.notice.text(in: .main)).contains("https://github.com/tw93/mole"))
+            let notice = try #require(LegalDocument.notice.text(in: .main))
+            #expect(notice.contains("https://github.com/tw93/mole"))
+            #expect(notice.contains("https://sparkle-project.org"))
             #expect(try #require(LegalDocument.moleLicense.text(in: .main)).contains("GNU GENERAL PUBLIC LICENSE"))
+            #expect(try #require(LegalDocument.sparkleLicense.text(in: .main)).contains("Permission is hereby granted, free of charge"))
             let credits = try #require(LegalDocument.credits.text(in: .main))
             #expect(credits.contains("Mole by tw93, GPL-3.0, https://github.com/tw93/mole"))
             #expect(credits.contains("SF Pro and SF Pro Rounded, system fonts, not redistributed."))
+            #expect(LegalDocument.section("Software updates", in: credits)?.hasPrefix("- Sparkle 2.10.0, MIT, https://sparkle-project.org") == true)
         }
 
         @Test func theCreditsHaveTheThreeSections() throws {
@@ -101,14 +106,25 @@ extension SettingsTests {
                 "NOTICE": "notice",
                 "CREDITS.md": "credits",
                 "engine/LICENSE": "engine licence",
+                "ThirdParty/Sparkle/LICENSE": "updates licence",
             ])
-            #expect(LegalDocument.allCases.map { $0.text(in: bundle) } == ["app licence", "notice", "credits", "engine licence"])
+            #expect(LegalDocument.allCases.map { $0.text(in: bundle) }
+                == ["app licence", "notice", "credits", "engine licence", "updates licence"])
         }
 
         @Test func aBlankDocumentReadsAsMissing() throws {
             let bundle = try SettingsTests.makeBundle(in: directory, resources: ["NOTICE": " \n\n "])
             #expect(LegalDocument.notice.url(in: bundle) != nil)
             #expect(LegalDocument.notice.text(in: bundle) == nil)
+        }
+
+        @Test func theUpdatesLicenseNeverFallsBackToAnotherLicense() throws {
+            let bundle = try SettingsTests.makeBundle(in: directory, resources: [
+                "LICENSE": "app licence",
+                "engine/LICENSE": "engine licence",
+            ])
+            #expect(LegalDocument.sparkleLicense.url(in: bundle) == nil)
+            #expect(LegalDocument.sparkleLicense.text(in: bundle) == nil)
         }
 
         @Test func sectionReadsOneMarkdownSection() {
@@ -580,6 +596,7 @@ extension SettingsTests {
             #expect(LegalDocument.allCases.map(AccessibilityID.settingsLegalDocument) == [
                 "settings.about.legal.license", "settings.about.legal.notice",
                 "settings.about.legal.credits", "settings.about.legal.moleLicense",
+                "settings.about.legal.sparkleLicense",
             ])
             #expect(AccessibilityID.settingsLaunchAtLogin == "settings.general.launchAtLogin")
             #expect(AccessibilityID.settingsRevealInFinder == "settings.permissions.revealInFinder")

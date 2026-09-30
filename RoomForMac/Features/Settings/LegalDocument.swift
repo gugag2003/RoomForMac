@@ -2,9 +2,10 @@ import Foundation
 
 /// The legal texts Settings → About lists. `LICENSE`, `NOTICE` and `CREDITS.md` are copied from
 /// the repository root into Contents/Resources (project.yml). Mole's licence ships inside the
-/// engine, at Contents/Resources/engine/LICENSE (Ruling 13).
+/// engine, at Contents/Resources/engine/LICENSE (Ruling 13); Sparkle's ships from
+/// ThirdParty/Sparkle/LICENSE, as Contents/Resources/ThirdParty/Sparkle/LICENSE.
 enum LegalDocument: String, CaseIterable, Identifiable, Sendable {
-    case license, notice, credits, moleLicense
+    case license, notice, credits, moleLicense, sparkleLicense
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum LegalDocument: String, CaseIterable, Identifiable, Sendable {
         case .notice: "Notice"
         case .credits: "Credits"
         case .moleLicense: "Engine License (Mole)"
+        case .sparkleLicense: "Updates License (Sparkle)"
         }
     }
 
@@ -24,6 +26,7 @@ enum LegalDocument: String, CaseIterable, Identifiable, Sendable {
         case .notice: bundle.url(forResource: "NOTICE", withExtension: nil)
         case .credits: bundle.url(forResource: "CREDITS", withExtension: "md")
         case .moleLicense: bundle.url(forResource: "LICENSE", withExtension: nil, subdirectory: "engine")
+        case .sparkleLicense: bundle.url(forResource: "LICENSE", withExtension: nil, subdirectory: "ThirdParty/Sparkle")
         }
     }
 

@@ -13,3 +13,10 @@ release pinned in vendor/mole.
 
 "Mole" and the Mole logo are trademarks of the Mole project. RoomForMac is an
 independent project and is not affiliated with or endorsed by Mole.
+
+Software updates
+----------------
+RoomForMac bundles Sparkle (https://sparkle-project.org), which checks for and
+installs updates. Sparkle is licensed under the MIT License. Its license, with
+the notices of the components it bundles, is in ThirdParty/Sparkle/LICENSE and
+ships inside the app.

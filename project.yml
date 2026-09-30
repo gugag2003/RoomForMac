@@ -35,6 +35,12 @@ settings:
 packages:
   MoleEngine:
     path: Packages/MoleEngine
+  # The one third-party dependency. exactVersion is the pin: Swift Package
+  # Manager checks the binary target's checksum against Sparkle's own manifest.
+  # Only the app target links it.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 
 targets:
   RoomForMac:
@@ -59,6 +65,11 @@ targets:
       - path: NOTICE
         buildPhase: resources
       - path: CREDITS.md
+        buildPhase: resources
+      # The license texts of bundled third-party code, copied as a folder:
+      # Contents/Resources/ThirdParty/Sparkle/LICENSE, for Settings → About.
+      - path: ThirdParty
+        type: folder
         buildPhase: resources
     info:
       path: RoomForMac/Info.plist
@@ -91,6 +102,12 @@ targets:
     dependencies:
       - package: MoleEngine
         product: MoleEngine
+      # No `embed: true`. Sparkle is a dynamic binary framework, so Xcode itself
+      # embeds it in Contents/Frameworks and signs it. An explicit Embed Frameworks
+      # entry makes Xcode 27 copy a second, nonexistent "Sparkle-product" and fail
+      # the build. Prepare Sparkle then finishes the job.
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roomformac.RoomForMac
@@ -119,6 +136,23 @@ targets:
         basedOnDependencyAnalysis: false
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine/VERSION
+      # Deletes Sparkle's XPC services (they are for sandboxed apps) and signs its
+      # nested code again with the identity Xcode signs the app with. Runs before
+      # Xcode signs the app, and after Xcode has copied and signed Sparkle.framework
+      # itself: that copy is not part of a build phase, so only the two declared
+      # inputs (files its Copy and CodeSign produce) order this phase after it;
+      # without them the copy can land after the phase and undo it. The output is
+      # the file the script touches after signing.
+      - name: Prepare Sparkle
+        script: '"${SRCROOT}/scripts/prepare-sparkle.sh"'
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Sparkle.framework/Versions/B/Sparkle
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Sparkle.framework/Versions/B/_CodeSignature
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Sparkle.framework/Versions/B/Autoupdate
     scheme:
       testTargets:
         - RoomForMacTests

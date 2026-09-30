@@ -29,7 +29,8 @@ setup_file() {
     ENGINE="$APP/Contents/Resources/engine"
     HELPERS="$APP/Contents/Helpers"
     SOURCE_ENGINE="${RFM_ENGINE_DIR:-$ROOT/build/engine}"
-    export ROOT APP ENGINE HELPERS SOURCE_ENGINE
+    SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+    export ROOT APP ENGINE HELPERS SOURCE_ENGINE SPARKLE_FRAMEWORK
 }
 
 # "adhoc" for an ad-hoc signature, otherwise the certificate chain.
@@ -41,6 +42,32 @@ signer() {
     else
         grep '^Authority=' <<< "$info"
     fi
+}
+
+# "runtime" when the signature carries the hardened-runtime flag, otherwise "plain".
+runtime_state() {
+    local info
+    info="$(codesign --display --verbose=2 "$1" 2>&1)" || return 1
+    if grep -Eq '^CodeDirectory .* flags=0x[0-9a-f]+\([^)]*runtime' <<< "$info"; then
+        echo runtime
+    else
+        echo plain
+    fi
+}
+
+# The architectures of a Mach-O file, sorted: "arm64 x86_64" for a universal binary.
+archs_of() {
+    lipo -archs "$1" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+# A value of Config/Distribution.xcconfig, read the way the scripts read it.
+dist_value() {
+    (source "$ROOT/scripts/lib/distribution.sh" && distribution_value "$ROOT" "$1")
+}
+
+# plist_value FILE KEY: a top-level value of a property list. Fails when KEY is missing.
+plist_value() {
+    plutil -extract "$2" raw -o - "$1"
 }
 
 @test "the app passes strict deep signature verification" {
@@ -57,6 +84,14 @@ signer() {
         run lipo -archs "$binary"
         [ "$status" -eq 0 ]
         [ "$output" = "x86_64 arm64" ]
+    done
+    # Sparkle's own binaries, whatever order their fat headers list the slices in.
+    local updater
+    updater="$(plist_value "$SPARKLE_FRAMEWORK/Versions/B/Updater.app/Contents/Info.plist" CFBundleExecutable)"
+    [ -n "$updater" ]
+    for binary in "$SPARKLE_FRAMEWORK/Versions/B/Sparkle" "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" \
+        "$SPARKLE_FRAMEWORK/Versions/B/Updater.app/Contents/MacOS/$updater"; do
+        [ "$(archs_of "$binary")" = "arm64 x86_64" ]
     done
 }
 
@@ -155,4 +190,74 @@ signer() {
     run "$ENGINE/bin/status-go" --json
     [ "$status" -eq 0 ]
     [[ "$output" == *'"cpu"'* ]]
+}
+
+# --- Sparkle (Plan 6, Task 3) -----------------------------------------------
+# The Prepare Sparkle phase, the Info.plist keys and the notice. Signer checks
+# compare with the app's own: on an ad-hoc build that is "adhoc" for both, so the
+# runtime-flag check below is what shows an ad-hoc build re-signed Sparkle.
+
+@test "Sparkle.framework is embedded at the pinned version, without any XPC service" {
+    local version
+    version="$(source "$ROOT/scripts/lib/sparkle.sh" && echo "$SPARKLE_VERSION")"
+    [ -d "$SPARKLE_FRAMEWORK/Versions/B" ]
+    [ -f "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" ]
+    [ -d "$SPARKLE_FRAMEWORK/Versions/B/Updater.app" ]
+    run plist_value "$SPARKLE_FRAMEWORK/Versions/B/Resources/Info.plist" CFBundleShortVersionString
+    [ "$status" -eq 0 ]
+    [ "$output" = "$version" ]
+    run find "$APP" \( -name XPCServices -o -name '*.xpc' \)
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "Sparkle.framework is the only framework in the app" {
+    run bash -c 'cd "$1/Contents/Frameworks" && ls -d *.framework' _ "$APP"
+    [ "$status" -eq 0 ]
+    [ "$output" = "Sparkle.framework" ]
+}
+
+@test "Autoupdate, Updater.app and Sparkle.framework are signed by the app's identity" {
+    local app_signer part
+    app_signer="$(signer "$APP")"
+    [ -n "$app_signer" ]
+    for part in "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app" "$SPARKLE_FRAMEWORK"; do
+        [ "$(signer "$part")" = "$app_signer" ]
+    done
+}
+
+@test "Autoupdate, Updater.app and Sparkle.framework have the app's hardened-runtime state" {
+    local app_state part
+    app_state="$(runtime_state "$APP")"
+    [ -n "$app_state" ]
+    for part in "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app" "$SPARKLE_FRAMEWORK"; do
+        [ "$(runtime_state "$part")" = "$app_state" ]
+    done
+}
+
+@test "Info.plist has the feed, the public key slot and the site URL" {
+    local plist="$APP/Contents/Info.plist" feed
+    feed="$(dist_value RFM_FEED_URL)"
+    [ "$(plist_value "$plist" CFBundleIdentifier)" = "com.roomformac.RoomForMac" ]
+    [ "$(plist_value "$plist" SUFeedURL)" = "$feed" ]
+    [[ "$feed" == https://* ]] || return 1
+    [ "$(plist_value "$plist" SUPublicEDKey)" = "$(dist_value RFM_SPARKLE_PUBLIC_KEY)" ]
+    [ "$(plist_value "$plist" SUEnableAutomaticChecks)" = "true" ]
+    [ "$(plist_value "$plist" RFMSiteURL)" = "$(dist_value RFM_SITE_URL)" ]
+}
+
+@test "Info.plist sets none of the Sparkle keys we leave at their defaults" {
+    local plist="$APP/Contents/Info.plist" key
+    [ -n "$(plist_value "$plist" CFBundleIdentifier)" ]
+    for key in SUEnableInstallerLauncherService SUEnableDownloaderService SUVerifyUpdateBeforeExtraction \
+        SURequireSignedFeed SUEnableSystemProfiling SUAutomaticallyUpdate SUScheduledCheckInterval; do
+        if plist_value "$plist" "$key" > /dev/null 2>&1; then
+            echo "Info.plist must not set $key" >&2
+            return 1
+        fi
+    done
+}
+
+@test "the bundled Sparkle license is the repository's" {
+    cmp "$ROOT/ThirdParty/Sparkle/LICENSE" "$APP/Contents/Resources/ThirdParty/Sparkle/LICENSE"
 }
