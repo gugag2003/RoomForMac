@@ -537,3 +537,57 @@ sys.exit(0 if "Updates License (Sparkle)" in strings else 1)
     run grep -Fx 'CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO' "$ROOT/Config/Signing.xcconfig"
     [ "$status" -eq 0 ]
 }
+
+# Sparkle is imported by one file (Plan 6, Task 5): the updater driver. Everything else works with
+# the `UpdaterDriving` protocol, so no unit test can create a Sparkle object. The pattern covers
+# every spelling of an import: `@preconcurrency`, an access level, `@testable`, `import class Sparkle.X`.
+SPARKLE_IMPORT='^[[:space:]]*(@[[:alnum:]_]+[[:space:]]+)*((public|package|internal|private|fileprivate)[[:space:]]+)?import[[:space:]]+([[:alpha:]]+[[:space:]]+)?Sparkle([^[:alnum:]_]|$)'
+SPARKLE_DRIVER=RoomForMac/Features/Updates/SparkleUpdaterDriver.swift
+
+# swift_files_importing_sparkle DIR...: the Swift files under the folders that import Sparkle, one path per line.
+swift_files_importing_sparkle() {
+    grep -rlE --include='*.swift' "$SPARKLE_IMPORT" "$@" 2> /dev/null || true
+}
+
+@test "only the updater driver imports Sparkle" {
+    local files
+    files="$(swift_files_importing_sparkle "$ROOT/RoomForMac")"
+    echo "files importing Sparkle: $files" >&2
+    [ "$files" = "$ROOT/$SPARKLE_DRIVER" ]
+}
+
+@test "the updater driver imports Sparkle as an internal import" {
+    [ -f "$ROOT/$SPARKLE_DRIVER" ]
+    run grep -E "$SPARKLE_IMPORT" "$ROOT/$SPARKLE_DRIVER"
+    [ "$status" -eq 0 ]
+    [ "$output" = "internal import Sparkle" ]
+}
+
+@test "no test file imports Sparkle" {
+    local files
+    files="$(swift_files_importing_sparkle "$ROOT/RoomForMacTests" "$ROOT/RoomForMacUITests")"
+    [ -z "$files" ]
+}
+
+@test "the Sparkle import pattern matches every spelling of an import and nothing else" {
+    local dir="$BATS_TEST_TMPDIR/swift" name
+    mkdir -p "$dir"
+    printf 'import Sparkle\n' > "$dir/plain.swift"
+    printf 'internal import Sparkle\n' > "$dir/internal.swift"
+    printf '  @preconcurrency internal import Sparkle // why\n' > "$dir/preconcurrency.swift"
+    printf '@testable import Sparkle\n' > "$dir/testable.swift"
+    printf 'import class Sparkle.SPUUpdater\n' > "$dir/kind.swift"
+    printf 'import SparkleCore\n' > "$dir/other-module.swift"
+    printf '// import Sparkle\n/// Sparkle is imported elsewhere.\nlet importSparkle = 1\n' > "$dir/mentions.swift"
+    printf 'import Foundation\n' > "$dir/foundation.swift"
+    printf 'import Sparkle\n' > "$dir/not-swift.txt"
+
+    run swift_files_importing_sparkle "$dir"
+    [ "$status" -eq 0 ]
+    for name in plain internal preconcurrency testable kind; do
+        [[ "$output" == *"/$name.swift"* ]] || return 1
+    done
+    for name in other-module mentions foundation not-swift; do
+        [[ "$output" != *"/$name."* ]] || return 1
+    done
+}
