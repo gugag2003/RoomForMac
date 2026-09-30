@@ -17,7 +17,7 @@ setup() {
     TMP="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
     STATE="$TMP/state"
     SCRIPTS="$(cd "$BATS_TEST_DIRNAME/.." && pwd -P)"
-    mkdir -p "$STATE" "$TMP/tmp"
+    mkdir -p "$STATE" "$TMP/tmp" "$TMP/home"
     # The scripts make their working folders (rfm-*) in $TMPDIR, so a test can
     # check that none is left behind.
     export TMPDIR="$TMP/tmp"
@@ -179,11 +179,11 @@ STUB
 @test "ed25519-keypair.swift prints a fresh seed and public key, 32 bytes each in base64" {
     command -v swift > /dev/null || skip "swift is required"
     local pattern='^[A-Za-z0-9+/]{43}= [A-Za-z0-9+/]{43}=$' first
-    run --separate-stderr swift "$SCRIPTS/lib/ed25519-keypair.swift"
+    run --separate-stderr env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-keypair.swift"
     [ "$status" -eq 0 ]
     [[ "$output" =~ $pattern ]] || return 1
     first="$output"
-    run --separate-stderr swift "$SCRIPTS/lib/ed25519-keypair.swift"
+    run --separate-stderr env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-keypair.swift"
     [ "$status" -eq 0 ]
     [ "$output" != "$first" ]
 }
@@ -200,7 +200,7 @@ make_root() {
             cp "$SCRIPTS/$script" "$ROOT/scripts/"
         fi
     done
-    cp "$SCRIPTS"/lib/*.sh "$ROOT/scripts/lib/"
+    cp "$SCRIPTS"/lib/*.sh "$SCRIPTS"/lib/ed25519-verify.swift "$ROOT/scripts/lib/"
     cat > "$ROOT/Config/Distribution.xcconfig" << 'XCCONFIG'
 // Fixture for release_archives.bats: not RoomForMac's real values.
 RFM_REPOSITORY = example/Widget
@@ -616,7 +616,15 @@ if [[ "${STUB_VERIFY:-}" == fail ]]; then
     exit 1
 fi
 STUB
-    chmod +x "$STUBS/generate_appcast" "$STUBS/sign_update"
+    # Stands in for lib/ed25519-verify.swift: a signature "verifies" when the
+    # public key it is given is the one the stub signer is said to hold.
+    cat > "$STUBS/ed25519_verify" << 'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$STATE/ed25519_verify.argv"
+[[ "$1" == "${STUB_SIGNER_PUBLIC:-STUBPUBLIC}" ]]
+STUB
+    chmod +x "$STUBS/generate_appcast" "$STUBS/sign_update" "$STUBS/ed25519_verify"
+    export ED25519_VERIFY="$STUBS/ed25519_verify" RFM_SPARKLE_PUBLIC_KEY=STUBPUBLIC
 }
 
 # make_root and stub_sparkle, for a test of make-appcast.sh.
@@ -959,7 +967,7 @@ XML
     command -v swift > /dev/null || skip "swift is required for the key pair"
     command -v clang > /dev/null || skip "clang is required to build the synthetic apps"
     make_root
-    read -r seed public < <(swift "$SCRIPTS/lib/ed25519-keypair.swift")
+    read -r seed public < <(env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-keypair.swift")
     mkdir -p "$TMP/v1" "$TMP/v2" "$TMP/in/release-notes" "$TMP/out"
     make_fake_app "$TMP/v1" --version 0.0.1 --build 1 --key "$public" > "$TMP/v1.path"
     make_fake_app "$TMP/v2" --version 0.0.2 --build 2 --key "$public" > "$TMP/v2.path"
@@ -970,12 +978,12 @@ XML
     printf '## 0.0.1\n\n- the first release\n' > "$TMP/in/release-notes/0.0.1.md"
     printf '## 0.0.2\n\n- the second release\n' > "$TMP/in/release-notes/0.0.2.md"
 
-    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" "$ROOT/scripts/make-appcast.sh" \
+    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" RFM_SPARKLE_PUBLIC_KEY="$public" HOME="$TMP/home" "$ROOT/scripts/make-appcast.sh" \
         --archive "$TMP/in/RoomForMac-0.0.1.tar.xz" --notes "$TMP/in/release-notes/0.0.1.md" \
         --tag v0.0.1 --out "$TMP/out/appcast-A.xml"
     echo "$output" >&2
     [ "$status" -eq 0 ]
-    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" "$ROOT/scripts/make-appcast.sh" \
+    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" RFM_SPARKLE_PUBLIC_KEY="$public" HOME="$TMP/home" "$ROOT/scripts/make-appcast.sh" \
         --archive "$TMP/in/RoomForMac-0.0.2.tar.xz" --notes "$TMP/in/release-notes/0.0.2.md" \
         --tag v0.0.2 --out "$TMP/out/appcast-B.xml" --previous "$TMP/out/appcast-A.xml"
     echo "$output" >&2
@@ -990,4 +998,63 @@ XML
     printf 'x' >> "$TMP/tampered.tar.xz"
     run bash -c 'printf "%s" "$1" | "$2" --ed-key-file - --verify "$3" "$4"' _ "$seed" "$bin/sign_update" "$TMP/tampered.tar.xz" "$signature"
     [ "$status" -ne 0 ]
+    # The release-key check: right key passes, another key and a tampered file fail.
+    read -r _ other < <(HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-keypair.swift")
+    run env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-verify.swift" "$public" "$signature" "$TMP/in/RoomForMac-0.0.2.tar.xz"
+    [ "$status" -eq 0 ]
+    run env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-verify.swift" "$other" "$signature" "$TMP/in/RoomForMac-0.0.2.tar.xz"
+    [ "$status" -eq 1 ]
+    run env HOME="$TMP/home" swift "$SCRIPTS/lib/ed25519-verify.swift" "$public" "$signature" "$TMP/tampered.tar.xz"
+    [ "$status" -eq 1 ]
+}
+
+@test "make-appcast.sh refuses an item whose signature does not verify under the release public key" {
+    prepare_appcast
+    RFM_SPARKLE_PUBLIC_KEY=OTHERPUBLIC run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"does not verify under the release public key"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
+    no_work_left
+}
+
+@test "make-appcast.sh refuses an empty release public key, configured or overridden" {
+    prepare_appcast
+    RFM_SPARKLE_PUBLIC_KEY= run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"RFM_SPARKLE_PUBLIC_KEY is empty"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
+    # Unset: the fixture configuration's key is empty too.
+    unset RFM_SPARKLE_PUBLIC_KEY
+    run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"RFM_SPARKLE_PUBLIC_KEY is empty"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
+}
+
+@test "make-appcast.sh passes the release public key, the signature and the archive to the verifier" {
+    prepare_appcast
+    run_appcast 1.2.3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok: the item's signature verifies under the release public key"* ]] || return 1
+    [ "$(cat "$STATE/ed25519_verify.argv")" = "STUBPUBLIC $(printf 'A%.0s' {1..86})== $TMP/in/RoomForMac-1.2.3.tar.xz" ]
+}
+
+@test "make-appcast.sh refuses a feed with two items for the new build" {
+    prepare_appcast
+    cat > "$STUBS/dup_appcast" << 'STUB'
+#!/bin/bash
+"$(dirname "$0")/generate_appcast" "$@" || exit $?
+dir="${@: -1}"
+python3 - "$dir/appcast.xml" << 'PY'
+import re, sys
+t = open(sys.argv[1]).read()
+m = re.search(r"[ \t]*<item>.*?</item>\n", t, re.S)
+open(sys.argv[1], "w").write(t[:m.end()] + m.group(0) + t[m.end():])
+PY
+STUB
+    chmod +x "$STUBS/dup_appcast"
+    GENERATE_APPCAST="$STUBS/dup_appcast" SIGN_UPDATE="$STUBS/sign_update" run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"more than one item for build 1002003"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
 }

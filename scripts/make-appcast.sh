@@ -145,6 +145,8 @@ KEY="$(printf '%s' "${SPARKLE_ED_PRIVATE_KEY:-}" | tr -d '[:space:]')"
 case "$KEY" in
     *[!A-Za-z0-9+/=]*) usage_error "SPARKLE_ED_PRIVATE_KEY is not base64" ;;
 esac
+# Only the tools that need the seed get it, on stdin; nothing inherits it.
+unset SPARKLE_ED_PRIVATE_KEY
 [[ -f "$ARCHIVE" ]] || usage_error "no such archive: $ARCHIVE"
 [[ -s "$NOTES" ]] || usage_error "the release notes are missing or empty: $NOTES"
 if [[ -n "$PREVIOUS" && ! -f "$PREVIOUS" ]]; then
@@ -341,6 +343,8 @@ check_item "sparkle:minimumSystemVersion" "$(item_field "$ITEM" sparkle:minimumS
 SIGNATURE_PATTERN='^[A-Za-z0-9+/]{86}==$'
 [[ "$SIGNATURE" =~ $SIGNATURE_PATTERN ]] ||
     die "the new item has no usable sparkle:edSignature (got \"${SIGNATURE:-none}\")"
+[[ "$(grep -c "sparkle:version>$BUILD<" "$STAGE/appcast.xml")" == 1 ]] ||
+    die "the new appcast has more than one item for build $BUILD"
 grep -q '<description' "$ITEM" || die "the new item embeds no release notes (no <description>)"
 if grep -q 'sparkle:hardwareRequirements' "$STAGE/appcast.xml"; then
     die "the appcast carries sparkle:hardwareRequirements; RoomForMac ships a universal build, so no update may be limited to one architecture"
@@ -361,7 +365,26 @@ if [[ -n "$PREVIOUS" ]]; then
     pass "earlier items are unchanged"
 fi
 
+# The signature must verify under the release public key (RFM_SPARKLE_PUBLIC_KEY,
+# the app's SUPublicEDKey), which a seed check alone would not prove.
+if [[ -n "${RFM_SPARKLE_PUBLIC_KEY+set}" ]]; then
+    PUBLIC_KEY="$RFM_SPARKLE_PUBLIC_KEY"
+else
+    PUBLIC_KEY="$(distribution_value "$ROOT" RFM_SPARKLE_PUBLIC_KEY)"
+fi
+[[ -n "$PUBLIC_KEY" ]] || die "RFM_SPARKLE_PUBLIC_KEY is empty; run scripts/make-update-keys.sh and record the public key before a release"
 VERIFY_LOG="$WORK/verify.log"
+if [[ -n "${ED25519_VERIFY:-}" ]]; then
+    "$ED25519_VERIFY" "$PUBLIC_KEY" "$SIGNATURE" "$ARCHIVE" > "$VERIFY_LOG" 2>&1 || VERIFY_FAILED=1
+else
+    swift "$ROOT/scripts/lib/ed25519-verify.swift" "$PUBLIC_KEY" "$SIGNATURE" "$ARCHIVE" > "$VERIFY_LOG" 2>&1 || VERIFY_FAILED=1
+fi
+if [[ -n "${VERIFY_FAILED:-}" ]]; then
+    show "$VERIFY_LOG"
+    die "the signature in the new item does not verify under the release public key RFM_SPARKLE_PUBLIC_KEY"
+fi
+pass "the item's signature verifies under the release public key"
+
 if ! printf '%s' "$KEY" | "$SIGN_UPDATE" --ed-key-file - --verify "$ARCHIVE" "$SIGNATURE" > "$VERIFY_LOG" 2>&1; then
     show "$VERIFY_LOG"
     die "sign_update does not verify $ARCHIVE_NAME against the signature in the new item"
