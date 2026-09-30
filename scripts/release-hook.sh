@@ -72,7 +72,8 @@ if [[ ! -e "$hook" && ! -L "$hook" ]]; then
     printf 'skipped: no release hook %s\n' "$name" >&2
     exit 0
 fi
-if [[ ! -f "$hook" || ! -x "$hook" ]]; then
+# A symlink could point anywhere, so a hook must be a regular file of its own.
+if [[ -L "$hook" || ! -f "$hook" || ! -x "$hook" ]]; then
     printf 'error: release hook %s exists but scripts/release-hooks/%s is not an executable file\n' "$name" "$name" >&2
     exit 1
 fi

@@ -620,6 +620,12 @@ arg=x" ]
     mkdir "$REPO/scripts/release-hooks/token-fixture"
     hook token-fixture 1.2.3
     [ "$status" -eq 1 ]
+    rmdir "$REPO/scripts/release-hooks/token-fixture"
+    printf '#!/bin/sh\necho outside > "%s"\n' "$HOOK_LOG" > "$TMP/outside-hook"
+    chmod +x "$TMP/outside-hook"
+    ln -s "$TMP/outside-hook" "$REPO/scripts/release-hooks/token-fixture"
+    hook token-fixture 1.2.3
+    [ "$status" -eq 1 ]
     [ ! -e "$HOOK_LOG" ]
 }
 
