@@ -162,8 +162,10 @@ create_read_write_image || die "hdiutil could not create the image"
 
 # 5. The custom-icon flag on the volume's root folder.
 say "setting the volume icon flag"
+# The variable is set only once the attach worked, so a failed attach (nothing
+# mounted) never makes the trap keep the temporary folder.
+dmg_attach readwrite "$RW_IMAGE" "$WORK/mount-rw" || die "could not attach the read-write image"
 RW_MOUNT="$WORK/mount-rw"
-dmg_attach readwrite "$RW_IMAGE" "$RW_MOUNT" || die "could not attach the read-write image"
 xattr -wx com.apple.FinderInfo "$FINDER_INFO" "$RW_MOUNT" || die "could not set the volume icon flag"
 dmg_detach "$RW_MOUNT" || die "could not detach the read-write image"
 RW_MOUNT=""
@@ -183,8 +185,8 @@ fi
 
 # 7. Mount the result read-only and check it.
 say "checking the finished image"
+dmg_attach readonly "$FINAL_IMAGE" "$WORK/mount-check" || die "could not attach the finished image"
 CHECK_MOUNT="$WORK/mount-check"
-dmg_attach readonly "$FINAL_IMAGE" "$CHECK_MOUNT" || die "could not attach the finished image"
 
 [[ -d "$CHECK_MOUNT/$APP_NAME" ]] || die "the image has no $APP_NAME"
 if [[ ! -L "$CHECK_MOUNT/Applications" || "$(readlink "$CHECK_MOUNT/Applications")" != /Applications ]]; then
@@ -208,7 +210,7 @@ check_copy .VolumeIcon.icns "$VOLUME_ICON"
 
 has_custom_icon_flag "$CHECK_MOUNT" || die "the image's volume does not carry the custom-icon flag"
 DISK_INFO="$("$DISKUTIL" info "$CHECK_MOUNT" 2>&1)" || die "diskutil info failed: $DISK_INFO"
-[[ "$DISK_INFO" == *"HFS+"* ]] || die "the image is not HFS+"
+printf '%s\n' "$DISK_INFO" | grep -Eq '^ *File System Personality:.*HFS\+' || die "the image is not HFS+"
 if ! VERIFY_LOG="$("$CODESIGN" --verify --deep --strict "$CHECK_MOUNT/$APP_NAME" 2>&1)"; then
     printf '%s\n' "$VERIFY_LOG" >&2
     die "$APP_NAME inside the image does not pass codesign --verify --deep --strict"

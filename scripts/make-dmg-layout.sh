@@ -103,6 +103,7 @@ cleanup() {
         printf 'kept %s\n' "$WORK" >&2
         keep=1
     fi
+    [[ -z "${PACKAGING:-}" ]] || rm -f "$PACKAGING/DS_Store.new"
     if [[ "$keep" -eq 0 ]]; then
         rm -rf "$WORK"
     fi
@@ -132,8 +133,8 @@ say "building a throwaway image with dmgbuild"
 }
 
 say "reading the .DS_Store it wrote"
+dmg_attach readonly "$WORK/layout.dmg" "$WORK/mount" || die "could not attach the throwaway image"
 MOUNT="$WORK/mount"
-dmg_attach readonly "$WORK/layout.dmg" "$MOUNT" || die "could not attach the throwaway image"
 [[ -f "$MOUNT/.DS_Store" ]] || die "dmgbuild's image has no .DS_Store"
 cp "$MOUNT/.DS_Store" "$WORK/DS_Store"
 dmg_detach "$MOUNT" || die "could not detach the throwaway image"

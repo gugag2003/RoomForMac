@@ -24,6 +24,10 @@
 #   STUB_APPLICATIONS_LINK=PATH  the compressed image's Applications link points at PATH
 #   STUB_NO_ICON_FLAG=1    the compressed image lost the volume's Finder info
 #   STUB_CODESIGN_FAIL=1   `codesign --verify` fails for anything inside a check mount
+#   STUB_CODESIGN_HANG=1   `codesign --verify` inside a check mount records its pid in
+#                          $STATE/hung.pid and sleeps (30 s at most), so a test can signal the script
+#   STUB_ATTACH_FAIL=MODE  `hdiutil attach` fails for MODE (readonly or readwrite)
+#   STUB_DETACH_FAIL=1     every `hdiutil detach`, forced or not, fails
 #
 # The codesign stub otherwise runs the real /usr/bin/codesign, on purpose: the
 # copy of the fake app that reaches the fake volume is verified for real.
@@ -162,6 +166,10 @@ case "$verb" in
             echo "stub hdiutil: attach needs -nobrowse -noautoopen -mountpoint and -readonly or -readwrite" >&2
             exit 64
         fi
+        if [[ "${STUB_ATTACH_FAIL:-}" == "$mode" ]]; then
+            echo "hdiutil: attach failed - Resource temporarily unavailable" >&2
+            exit 1
+        fi
         [[ -f "$image" && "$(head -n 1 "$image")" == FAKE-DMG ]] || {
             echo "hdiutil: attach failed - not recognized" >&2
             exit 1
@@ -182,6 +190,10 @@ case "$verb" in
                 *) target="$1"; shift ;;
             esac
         done
+        if [[ "${STUB_DETACH_FAIL:-0}" == 1 ]]; then
+            echo "hdiutil: couldn't unmount \"$target\" - Resource busy" >&2
+            exit 16
+        fi
         if [[ "$force" -eq 0 ]]; then
             count=$(($(cat "$STATE/detaches" 2> /dev/null || echo 0) + 1))
             echo "$count" > "$STATE/detaches"
@@ -255,6 +267,10 @@ STUB
 set -euo pipefail
 : "${STATE:?}"
 printf 'codesign %s\n' "$*" >> "$STATE/calls.log"
+if [[ "${STUB_CODESIGN_HANG:-0}" == 1 && "$*" == *mount-check* ]]; then
+    echo $$ > "$STATE/hung.pid"
+    exec sleep 30
+fi
 if [[ "${STUB_CODESIGN_FAIL:-0}" == 1 && "$*" == *mount-check* ]]; then
     echo "${*: -1}: a sealed resource is missing or invalid" >&2
     exit 1

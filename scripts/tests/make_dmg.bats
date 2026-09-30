@@ -41,7 +41,7 @@ setup() {
     unset FORMAT RFM_DMG_VOLUME_NAME_OVERRIDE PACKAGING CI STUB_CREATE_BUSY \
         STUB_DETACH_BUSY STUB_DISKUTIL_FAIL STUB_CONVERT_FAIL STUB_FORCE_FS STUB_DROP \
         STUB_APPLICATIONS_DIR STUB_APPLICATIONS_LINK STUB_NO_ICON_FLAG STUB_ALTER \
-        STUB_CODESIGN_FAIL STUB_PIP_FAIL STUB_DMGBUILD_FAIL STUB_LAYOUT_VOLUME \
+        STUB_CODESIGN_FAIL STUB_CODESIGN_HANG STUB_ATTACH_FAIL STUB_DETACH_FAIL STUB_PIP_FAIL STUB_DMGBUILD_FAIL STUB_LAYOUT_VOLUME \
         RFM_DMG_KEEP_WORK
     export STATE TMPDIR VOLUME_ICON RFM_DMG_RETRY_DELAY
 }
@@ -787,4 +787,50 @@ PY
 
 @test "the dmgbuild venv falls under the ignored build folder" {
     git -C "$REPO" check-ignore -q build/dmgbuild-venv
+}
+
+@test "a failed attach still removes the temporary folder" {
+    local mode
+    for mode in readwrite readonly; do
+        STUB_ATTACH_FAIL="$mode"
+        export STUB_ATTACH_FAIL
+        run_dmg
+        [ "$status" -eq 1 ]
+        [[ "$stderr" == *"could not attach"* ]] || return 1
+        [[ "$stderr" != *"leaving"* ]] || return 1
+        [ ! -e "$OUT" ]
+        assert_clean
+    done
+}
+
+@test "a TERM in the middle of a run detaches the image and removes the temporary folder" {
+    STUB_CODESIGN_HANG=1
+    export STUB_CODESIGN_HANG
+    PACKAGING="$PKG" "$SCRIPTS/make-dmg.sh" "$APP" "$OUT" > /dev/null 2>&1 &
+    local pid=$! tries=0
+    # Wait (at most about 20 s) until the script is inside the check mount.
+    while [ ! -s "$STATE/hung.pid" ] && [ "$tries" -lt 200 ]; do
+        tries=$((tries + 1))
+        sleep 0.1
+    done
+    [ -s "$STATE/hung.pid" ]
+    [ "$(attached_count)" -eq 1 ]
+    kill -TERM "$pid"
+    kill -TERM "$(cat "$STATE/hung.pid")"
+    local status=0
+    wait "$pid" || status=$?
+    [ "$status" -ne 0 ]
+    [ ! -e "$OUT" ]
+    assert_clean
+}
+
+@test "when even the forced detach fails, the temporary folder is kept and the script says so" {
+    STUB_DETACH_FAIL=1
+    export STUB_DETACH_FAIL
+    run_dmg
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"warning: could not detach "*"; leaving "*" in place"* ]] || return 1
+    [ "$(attached_count)" -ge 1 ]
+    [ -n "$(ls -A "$TMPDIR")" ]
+    [ ! -e "$OUT" ]
 }
