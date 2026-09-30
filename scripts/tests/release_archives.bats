@@ -325,3 +325,160 @@ ABC_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
     [ "$status" -eq 1 ]
     [[ "$output" == *"the disk image is empty"* ]]
 }
+
+# A superproject in $REPO whose submodule vendor/mole is the local repository
+# $UPSTREAM, with the tags v0.1.0 (before the submodule exists) and v1.2.3
+# (with the engine's first commit). The script runs as a copy inside it, and
+# the copy is untracked. Sets REPO, UPSTREAM and SCRIPT.
+make_source_repo() {
+    UPSTREAM="$TMP/mole-upstream"
+    REPO="$TMP/repo"
+    git -c init.defaultBranch=main init -q "$UPSTREAM"
+    printf 'the engine licence\n' > "$UPSTREAM/LICENSE"
+    printf 'engine 1\n' > "$UPSTREAM/mole"
+    git -C "$UPSTREAM" add -A
+    git -C "$UPSTREAM" commit -q -m "engine 1"
+
+    git -c init.defaultBranch=main init -q "$REPO"
+    mkdir -p "$REPO/patches/mole"
+    printf 'the app licence\n' > "$REPO/LICENSE"
+    printf 'the notice\n' > "$REPO/NOTICE"
+    printf 'patch one\n' > "$REPO/patches/mole/0001-first.patch"
+    git -C "$REPO" add LICENSE NOTICE patches
+    git -C "$REPO" commit -q -m "before the engine"
+    git -C "$REPO" tag v0.1.0
+    git -C "$REPO" -c protocol.file.allow=always submodule add -q "$UPSTREAM" vendor/mole
+    git -C "$REPO" commit -q -m "release 1.2.3"
+    git -C "$REPO" tag -a v1.2.3 -m "RoomForMac 1.2.3"
+
+    mkdir -p "$REPO/scripts/lib"
+    cp "$SCRIPTS/make-source-archive.sh" "$REPO/scripts/"
+    cp "$SCRIPTS"/lib/*.sh "$REPO/scripts/lib/"
+    SCRIPT="$REPO/scripts/make-source-archive.sh"
+}
+
+@test "make-source-archive.sh --help prints the usage and exits 0" {
+    make_source_repo
+    run "$SCRIPT" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Usage: scripts/make-source-archive.sh <vX.Y.Z> <out.tar.gz>"* ]]
+}
+
+@test "make-source-archive.sh packs the tag and the engine commit it records under RoomForMac-X.Y.Z/" {
+    make_source_repo
+    local out="$TMP/RoomForMac-1.2.3-source.tar.gz" bytes sum tree
+    run --separate-stderr "$SCRIPT" v1.2.3 "$out"
+    [ "$status" -eq 0 ]
+    bytes="$(wc -c < "$out" | tr -d ' ')"
+    sum="$(shasum -a 256 "$out" | cut -d' ' -f1)"
+    [ "$output" = "$out $bytes $sum" ]
+    [ "$(tar -tzf "$out" | sed -n 1p)" = "RoomForMac-1.2.3/" ]
+    [ "$(tar -tzf "$out" | grep -vc '^RoomForMac-1\.2\.3/')" = "0" ]
+    mkdir "$TMP/unpacked"
+    tar -xzf "$out" -C "$TMP/unpacked"
+    tree="$TMP/unpacked/RoomForMac-1.2.3"
+    [ "$(cat "$tree/LICENSE")" = "the app licence" ]
+    [ "$(cat "$tree/NOTICE")" = "the notice" ]
+    [ "$(cat "$tree/patches/mole/0001-first.patch")" = "patch one" ]
+    [ "$(cat "$tree/vendor/mole/LICENSE")" = "the engine licence" ]
+    [ "$(cat "$tree/vendor/mole/mole")" = "engine 1" ]
+    [ -f "$tree/.gitmodules" ]
+    [ ! -e "$tree/scripts" ]
+    no_work_left
+}
+
+@test "the source archive comes from git objects and never from the working tree" {
+    make_source_repo
+    local tree
+    # All of this happens after the tag, and none of it may reach the archive.
+    printf 'dirty edit\n' > "$REPO/LICENSE"
+    printf 'secret\n' > "$REPO/untracked.txt"
+    printf 'engine 2\n' > "$REPO/vendor/mole/mole"
+    git -C "$REPO/vendor/mole" commit -q -am "engine 2"
+    printf 'engine 3, not committed\n' > "$REPO/vendor/mole/mole"
+    printf 'more\n' > "$REPO/vendor/mole/added.txt"
+    run "$SCRIPT" v1.2.3 "$TMP/source.tar.gz"
+    [ "$status" -eq 0 ]
+    mkdir "$TMP/unpacked"
+    tar -xzf "$TMP/source.tar.gz" -C "$TMP/unpacked"
+    tree="$TMP/unpacked/RoomForMac-1.2.3"
+    [ "$(cat "$tree/LICENSE")" = "the app licence" ]
+    [ ! -e "$tree/untracked.txt" ]
+    [ "$(cat "$tree/vendor/mole/mole")" = "engine 1" ]
+    [ ! -e "$tree/vendor/mole/added.txt" ]
+}
+
+@test "make-source-archive.sh refuses bad arguments with exit 2 and writes nothing" {
+    make_source_repo
+    run "$SCRIPT"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"expected <vX.Y.Z> <out.tar.gz>"* ]] || return 1
+    run "$SCRIPT" v1.2.3
+    [ "$status" -eq 2 ]
+    run "$SCRIPT" v1.2.3 "$TMP/source.zip"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"the archive name must end in .tar.gz"* ]] || return 1
+    run "$SCRIPT" v1.2.3 "$TMP/no-such-folder/source.tar.gz"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"does not exist"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+    no_work_left
+}
+
+@test "make-source-archive.sh refuses a tag that is not a strict vX.Y.Z or does not exist" {
+    make_source_repo
+    local tag
+    for tag in 1.2.3 v1.2 v01.2.3 v1.2.3-beta; do
+        run "$SCRIPT" "$tag" "$TMP/source.tar.gz"
+        if [ "$status" -ne 1 ] || [[ "$output" != *"the tag must be a strict vX.Y.Z"* ]]; then
+            echo "tag $tag: status $status, output: $output" >&2
+            return 1
+        fi
+    done
+    run "$SCRIPT" v9.9.9 "$TMP/source.tar.gz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tag v9.9.9 does not exist"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+    no_work_left
+}
+
+@test "make-source-archive.sh refuses a tag that records no engine" {
+    make_source_repo
+    run "$SCRIPT" v0.1.0 "$TMP/source.tar.gz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tag v0.1.0 does not record vendor/mole as a submodule"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+}
+
+@test "make-source-archive.sh refuses an engine commit that vendor/mole does not hold" {
+    make_source_repo
+    git -C "$REPO" update-index --cacheinfo "160000,1111111111111111111111111111111111111111,vendor/mole"
+    git -C "$REPO" commit -q -m "point the engine at a commit nobody has"
+    git -C "$REPO" tag v1.2.4
+    run "$SCRIPT" v1.2.4 "$TMP/source.tar.gz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"vendor/mole has no commit 1111111111111111111111111111111111111111, which v1.2.4 records"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+    no_work_left
+}
+
+@test "make-source-archive.sh refuses a checkout without the engine" {
+    make_source_repo
+    rm -rf "$REPO/vendor/mole"
+    run "$SCRIPT" v1.2.3 "$TMP/source.tar.gz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"vendor/mole is not checked out"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+}
+
+@test "make-source-archive.sh refuses a tag whose tree has no engine patches" {
+    make_source_repo
+    git -C "$REPO" rm -q -r patches
+    git -C "$REPO" commit -q -m "drop the patches"
+    git -C "$REPO" tag v1.2.5
+    run "$SCRIPT" v1.2.5 "$TMP/source.tar.gz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no patches/mole/*.patch at v1.2.5"* ]] || return 1
+    [ ! -e "$TMP/source.tar.gz" ]
+    no_work_left
+}
