@@ -141,10 +141,27 @@ physical_path() {
 
 # The seed must never be committed, so DIR may not be inside the repository.
 # Compared without regard to case: the default APFS volume ignores it.
+# The folder is printed in a command the owner may paste, so no control characters.
+case "$DIR" in
+    *[[:cntrl:]]*) usage_error "--dir must not contain control characters or newlines" ;;
+esac
+# A dangling symlink as the last part cannot be created or resolved.
+if [[ -L "$DIR" && ! -e "$DIR" ]]; then
+    usage_error "--dir is a symbolic link that points nowhere: $DIR"
+fi
 DIR="$(physical_path "$DIR")"
 case "$(lower "$DIR")/" in
     "$(lower "$ROOT")"/*) usage_error "--dir must be outside the repository ($ROOT), because anyone with the seed can sign updates that every installed copy accepts" ;;
 esac
+
+# DIR is chmod 700, so it must be a folder of its own: never HOME, /, or any
+# ancestor of HOME or of the repository.
+HOME_PHYSICAL="$(physical_path "$HOME")"
+for protected in "$ROOT" "$HOME_PHYSICAL"; do
+    case "$(lower "$protected")/" in
+        "$(lower "${DIR%/}")"/*) usage_error "--dir must be a folder of its own, not your home folder, / or a folder that contains your home folder or the repository: $DIR" ;;
+    esac
+done
 
 [[ "$(uname -s)" == Darwin ]] || die "macOS only"
 [[ "$(id -u)" -ne 0 ]] || die "run this as your own user, not as root"

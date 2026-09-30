@@ -527,3 +527,35 @@ EOF
     [ ! -e "$STATE/generate_keys.log" ]
     [ ! -e "$UPDATES_DIR" ]
 }
+
+@test "--dir may not be HOME, an ancestor of HOME or the repository, or /; nothing is chmodded" {
+    chmod 755 "$HOME" "$TMP"
+    for d in "$HOME" "$HOME/" "$TMP" "/"; do
+        run "$SCRIPT" --dir "$d"
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"error: --dir must be a folder of its own"* ]] || return 1
+    done
+    [ "$(stat -f %Lp "$HOME")" = 755 ]
+    [ "$(stat -f %Lp "$TMP")" = 755 ]
+    [ -z "$(ls -A "$HOME")" ]
+    [ ! -e "$STATE/generate_keys.log" ]
+}
+
+@test "--dir with a control character or newline is refused before any output" {
+    run "$SCRIPT" --dir "$TMP/up
+dates"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"error: --dir must not contain control characters"* ]] || return 1
+    run "$SCRIPT" --dir "$TMP/up"$'\t'"dates"
+    [ "$status" -eq 2 ]
+    [ ! -e "$STATE/generate_keys.log" ]
+    [ ! -e "$TMP/up" ]
+}
+
+@test "--dir that is a dangling symlink is refused with a clear message" {
+    ln -s "$TMP/nowhere" "$TMP/dangling"
+    run "$SCRIPT" --dir "$TMP/dangling"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"error: --dir is a symbolic link that points nowhere"* ]] || return 1
+    [ ! -e "$STATE/generate_keys.log" ]
+}
