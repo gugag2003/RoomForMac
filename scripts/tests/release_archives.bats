@@ -187,3 +187,141 @@ STUB
     [ "$status" -eq 0 ]
     [ "$output" != "$first" ]
 }
+
+# A copy of the scripts that read Config/Distribution.xcconfig, under
+# $TMP/root, with a fixture configuration that names another repository and
+# site. Sets ROOT.
+make_root() {
+    ROOT="$TMP/root"
+    local script
+    mkdir -p "$ROOT/scripts/lib" "$ROOT/Config"
+    for script in make-appcast.sh release-summary.sh; do
+        if [[ -f "$SCRIPTS/$script" ]]; then
+            cp "$SCRIPTS/$script" "$ROOT/scripts/"
+        fi
+    done
+    cp "$SCRIPTS"/lib/*.sh "$ROOT/scripts/lib/"
+    cat > "$ROOT/Config/Distribution.xcconfig" << 'XCCONFIG'
+// Fixture for release_archives.bats: not RoomForMac's real values.
+RFM_REPOSITORY = example/Widget
+RFM_FEED_URL = https:/$()/github.com/example/Widget/releases/latest/download/appcast.xml
+RFM_SITE_URL = https:/$()/example.github.io/Widget
+RFM_DMG_VOLUME_NAME = RoomForMac
+RFM_SPARKLE_PUBLIC_KEY =
+XCCONFIG
+}
+
+# One field of a JSON document on stdin, by dotted path, printed as text.
+json_get() {
+    python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+for key in sys.argv[1].split("."):
+    value = value[key]
+print(value)
+' "$1"
+}
+
+# SHA-256 of the three bytes "abc", a value that does not come from any tool
+# the script uses.
+ABC_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+
+@test "release-summary.sh --help prints the usage and exits 0" {
+    make_root
+    run "$ROOT/scripts/release-summary.sh" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Usage: scripts/release-summary.sh --dmg <RoomForMac.dmg> --tag vX.Y.Z [--repository OWNER/NAME]"* ]]
+}
+
+@test "release-summary.sh prints latest.json for the disk image on one line" {
+    make_root
+    printf 'abc' > "$TMP/RoomForMac.dmg"
+    run --separate-stderr env RFM_RELEASE_DATE=2026-09-29 "$ROOT/scripts/release-summary.sh" \
+        --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3
+    [ "$status" -eq 0 ]
+    [ "$output" = '{"schema":1,"version":"1.2.3","build":1002003,"minimum_macos":"26.0","date":"2026-09-29","dmg":{"url":"https://github.com/example/Widget/releases/download/v1.2.3/RoomForMac.dmg","size":3,"sha256":"'"$ABC_SHA256"'"}}' ]
+    [ -z "$stderr" ]
+}
+
+@test "release-summary.sh gives valid JSON whose size and digest are the file's" {
+    command -v python3 > /dev/null || skip "python3 is required to parse the JSON"
+    local date_pattern='^20[0-9]{2}-[0-9]{2}-[0-9]{2}$'
+    make_root
+    head -c 100003 /dev/urandom > "$TMP/RoomForMac.dmg"
+    run --separate-stderr "$ROOT/scripts/release-summary.sh" --dmg "$TMP/RoomForMac.dmg" --tag v0.1.0
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "1" ]
+    [ "$(printf '%s' "$output" | json_get schema)" = "1" ]
+    [ "$(printf '%s' "$output" | json_get version)" = "0.1.0" ]
+    [ "$(printf '%s' "$output" | json_get build)" = "1000" ]
+    [ "$(printf '%s' "$output" | json_get minimum_macos)" = "26.0" ]
+    [ "$(printf '%s' "$output" | json_get dmg.size)" = "100003" ]
+    [ "$(printf '%s' "$output" | json_get dmg.sha256)" = "$(shasum -a 256 "$TMP/RoomForMac.dmg" | cut -d' ' -f1)" ]
+    [[ "$(printf '%s' "$output" | json_get date)" =~ $date_pattern ]]
+}
+
+@test "release-summary.sh takes the repository from --repository, else from the configuration" {
+    make_root
+    printf 'abc' > "$TMP/RoomForMac.dmg"
+    run "$ROOT/scripts/release-summary.sh" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"url":"https://github.com/example/Widget/releases/download/v1.2.3/RoomForMac.dmg"'* ]] || return 1
+    run "$ROOT/scripts/release-summary.sh" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3 --repository other/Repo.name
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"url":"https://github.com/other/Repo.name/releases/download/v1.2.3/RoomForMac.dmg"'* ]]
+}
+
+@test "release-summary.sh refuses bad arguments with exit 2" {
+    make_root
+    printf 'abc' > "$TMP/RoomForMac.dmg"
+    local script="$ROOT/scripts/release-summary.sh"
+    run "$script" --tag v1.2.3
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--dmg is required"* ]] || return 1
+    run "$script" --dmg "$TMP/RoomForMac.dmg"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--tag is required"* ]] || return 1
+    run "$script" --dmg "$TMP/RoomForMac.dmg" --tag
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--tag needs a value"* ]] || return 1
+    run "$script" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3 --verbose
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown argument: --verbose"* ]] || return 1
+    run "$script" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3 --repository 'no slash'
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--repository must look like owner/name"* ]] || return 1
+    run env RFM_RELEASE_DATE=yesterday "$script" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"RFM_RELEASE_DATE must be YYYY-MM-DD"* ]]
+}
+
+@test "release-summary.sh refuses a tag that is not a strict vX.Y.Z" {
+    make_root
+    printf 'abc' > "$TMP/RoomForMac.dmg"
+    local tag
+    for tag in 1.2.3 v1.2 v01.2.3 v1.2.3-beta v1.1000.0 v2001.0.0; do
+        run "$ROOT/scripts/release-summary.sh" --dmg "$TMP/RoomForMac.dmg" --tag "$tag"
+        if [ "$status" -ne 1 ] || [[ "$output" != *"the tag must be a strict vX.Y.Z"* ]]; then
+            echo "tag $tag: status $status, output: $output" >&2
+            return 1
+        fi
+    done
+}
+
+@test "release-summary.sh refuses a missing, misnamed or empty disk image" {
+    make_root
+    local script="$ROOT/scripts/release-summary.sh"
+    run "$script" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no such disk image"* ]] || return 1
+    printf 'abc' > "$TMP/Other.dmg"
+    run "$script" --dmg "$TMP/Other.dmg" --tag v1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the disk image must be named RoomForMac.dmg"* ]] || return 1
+    : > "$TMP/RoomForMac.dmg"
+    run "$script" --dmg "$TMP/RoomForMac.dmg" --tag v1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the disk image is empty"* ]]
+}
