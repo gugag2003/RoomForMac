@@ -340,7 +340,9 @@ Back up the whole folder $DIR in your password manager.
 Losing it means a new certificate, and every user granting Full Disk Access
 and Automation again.
 
-CI secrets for release builds (run these yourself when a workflow needs them):
-  gh secret set RFM_SIGNING_P12_BASE64 < "$DIR/identity.p12.base64"
-  gh secret set RFM_SIGNING_P12_PASSWORD < "$DIR/identity.p12.password"
+CI secrets for release builds. Run these yourself, from the repository, once the
+GitHub environment "release" exists (docs/signing.md, "CI secrets"). The secrets
+live only in that environment, never at repository level:
+  gh secret set RFM_SIGNING_P12_BASE64 --env release < "$DIR/identity.p12.base64"
+  gh secret set RFM_SIGNING_P12_PASSWORD --env release < "$DIR/identity.p12.password"
 EOF

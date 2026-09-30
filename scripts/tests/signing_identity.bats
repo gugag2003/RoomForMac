@@ -399,8 +399,10 @@ EOF
 // Written by scripts/make-signing-identity.sh. Never commit this file.
 CODE_SIGN_IDENTITY = RoomForMac Self-Signed
 EOF
-    [[ "$output" == *"gh secret set RFM_SIGNING_P12_BASE64 < \"$SIGNING_DIR/identity.p12.base64\""* ]] || return 1
-    [[ "$output" == *"gh secret set RFM_SIGNING_P12_PASSWORD < \"$SIGNING_DIR/identity.p12.password\""* ]] || return 1
+    [[ "$output" == *"gh secret set RFM_SIGNING_P12_BASE64 --env release < \"$SIGNING_DIR/identity.p12.base64\""* ]] || return 1
+    [[ "$output" == *"gh secret set RFM_SIGNING_P12_PASSWORD --env release < \"$SIGNING_DIR/identity.p12.password\""* ]] || return 1
+    [[ "$output" != *"gh secret set RFM_SIGNING_P12_BASE64 < "* ]] || return 1
+    [[ "$output" != *"gh secret set RFM_SIGNING_P12_PASSWORD < "* ]] || return 1
     [[ "$output" != *"not git-ignored"* ]] || return 1
     [ ! -e "$STATE/gh.log" ]
 }
