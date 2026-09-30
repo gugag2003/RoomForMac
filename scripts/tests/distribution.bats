@@ -530,3 +530,10 @@ sys.exit(0 if "Updates License (Sparkle)" in strings else 1)
 ' "$ROOT/RoomForMac/Resources/Localizable.xcstrings"
     [ "$status" -eq 0 ]
 }
+
+@test "Release turns the hardened runtime on and injects no base entitlements" {
+    run grep -Fx 'ENABLE_HARDENED_RUNTIME[config=Release] = YES' "$ROOT/Config/Signing.xcconfig"
+    [ "$status" -eq 0 ]
+    run grep -Fx 'CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO' "$ROOT/Config/Signing.xcconfig"
+    [ "$status" -eq 0 ]
+}
