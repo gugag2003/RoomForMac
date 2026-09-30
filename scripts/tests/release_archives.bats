@@ -482,3 +482,512 @@ make_source_repo() {
     [ ! -e "$TMP/source.tar.gz" ]
     no_work_left
 }
+
+# A base64 seed that is not a real key: the stubs never check it, and the tests
+# look for it in argv and in output.
+KEY="dGVzdC1zZWVkLW5vdC1hLXJlYWwta2V5LTMyYnl0ZQ=="
+
+# Stand-ins for Sparkle's generate_appcast and sign_update in $TMP/sparkle-bin.
+# They log their arguments and standard input to $STATE. generate_appcast adds
+# one item for the .tar.xz in the folder it is given and keeps the items of an
+# appcast.xml already there, as the real tool does (at most ten in all); with
+# STUB_MODE set it misbehaves in one way at a time. Sets STUBS.
+stub_sparkle() {
+    STUBS="$TMP/sparkle-bin"
+    mkdir -p "$STUBS"
+    cat > "$STUBS/generate_appcast" << 'STUB'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$STATE/generate_appcast.argv"
+cat > "$STATE/generate_appcast.stdin"
+prefix="" link="" dir=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ed-key-file)
+            if [[ "$2" != "-" ]]; then
+                echo "stub generate_appcast: the key must come from standard input" >&2
+                exit 64
+            fi
+            shift
+            ;;
+        --download-url-prefix)
+            prefix="$2"
+            shift
+            ;;
+        --link)
+            link="$2"
+            shift
+            ;;
+        --maximum-deltas | --maximum-versions) shift ;;
+        --embed-release-notes) ;;
+        -*)
+            echo "stub generate_appcast: unknown option $1" >&2
+            exit 64
+            ;;
+        *) dir="$1" ;;
+    esac
+    shift
+done
+ls "$dir" > "$STATE/stage.list"
+mode="${STUB_MODE:-}"
+case "$mode" in
+    fail)
+        echo "generate_appcast: something went wrong" >&2
+        exit 1
+        ;;
+    leak)
+        echo "generate_appcast: cannot read the key $(cat "$STATE/generate_appcast.stdin")" >&2
+        exit 1
+        ;;
+esac
+
+archive="$(ls "$dir"/*.tar.xz)"
+name="$(basename "$archive")"
+version="${name#RoomForMac-}"
+version="${version%.tar.xz}"
+IFS=. read -r major minor patch <<< "$version"
+build=$((major * 1000000 + minor * 1000 + patch))
+cp "$dir/RoomForMac-$version.md" "$STATE/staged.md"
+cp "$dir/RoomForMac-$version.tar.md" "$STATE/staged.tar.md"
+
+item_build="$build" short="$version" minimum="26.0" url="$prefix$name" hardware="" notes="            <description><![CDATA[Release notes of $version]]></description>"
+length="$(wc -c < "$archive" | tr -d ' ')"
+signature="$(printf 'A%.0s' {1..86})=="
+case "$mode" in
+    skipped) echo "Skipped $name: its code signature is invalid" ;;
+    wrong-build) item_build=$((build + 1)) ;;
+    wrong-short) short="9.9.9" ;;
+    wrong-minimum) minimum="25.0" ;;
+    wrong-url) url="https://example.invalid/$name" ;;
+    wrong-length) length=$((length + 1)) ;;
+    bad-signature) signature="c2hvcnQ=" ;;
+    no-notes) notes="" ;;
+    hardware) hardware="            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>" ;;
+esac
+
+new_item() {
+    cat << ITEM
+        <item>
+            <title>$version</title>
+            <pubDate>Tue, 29 Sep 2026 12:00:00 +0000</pubDate>
+            <link>$link</link>
+            <sparkle:version>$item_build</sparkle:version>
+            <sparkle:shortVersionString>$short</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>$minimum</sparkle:minimumSystemVersion>
+$hardware
+$notes
+            <enclosure url="$url" length="$length" type="application/octet-stream" sparkle:edSignature="$signature"/>
+        </item>
+ITEM
+}
+# The earlier items, verbatim and at most nine of them.
+old_items() {
+    sed -n '/^[[:space:]]*<item>[[:space:]]*$/,/^[[:space:]]*<\/item>[[:space:]]*$/p' "$dir/appcast.xml" |
+        awk '/<item>/ { n++ } n <= 9'
+}
+
+if [[ "$mode" != no-appcast ]]; then
+    {
+        echo '<?xml version="1.0" standalone="yes"?>'
+        echo '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">'
+        echo '    <channel>'
+        echo '        <title>RoomForMac</title>'
+        if [[ "$mode" != no-item ]]; then new_item; fi
+        if [[ -f "$dir/appcast.xml" && "$mode" != drop-old ]]; then
+            if [[ "$mode" == alter-old ]]; then
+                old_items | sed 's|<title>\([^<]*\)</title>|<title>\1 </title>|'
+            else
+                old_items
+            fi
+        fi
+        echo '    </channel>'
+        echo '</rss>'
+    } > "$dir/appcast.xml.new"
+    mv "$dir/appcast.xml.new" "$dir/appcast.xml"
+fi
+STUB
+    cat > "$STUBS/sign_update" << 'STUB'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$STATE/sign_update.argv"
+cat > "$STATE/sign_update.stdin"
+if [[ "${STUB_VERIFY:-}" == fail ]]; then
+    echo "sign_update: the signature does not match the archive" >&2
+    exit 1
+fi
+STUB
+    chmod +x "$STUBS/generate_appcast" "$STUBS/sign_update"
+}
+
+# make_root and stub_sparkle, for a test of make-appcast.sh.
+prepare_appcast() {
+    make_root
+    stub_sparkle
+}
+
+# An archive and release notes for X.Y.Z under $TMP/in. The stub never unpacks
+# the archive.
+release_inputs() {
+    mkdir -p "$TMP/in/release-notes"
+    printf 'archive of %s\n' "$1" > "$TMP/in/RoomForMac-$1.tar.xz"
+    printf '## What is new\n\n- release %s\n' "$1" > "$TMP/in/release-notes/$1.md"
+}
+
+# make-appcast.sh for X.Y.Z with the stub tools, writing $TMP/out/appcast-X.Y.Z.xml.
+# Later options replace earlier ones, so a test can override any of them.
+run_appcast() { # X.Y.Z [option…]
+    local version="$1"
+    shift
+    mkdir -p "$TMP/out"
+    release_inputs "$version"
+    run env SPARKLE_BIN="$STUBS" SPARKLE_ED_PRIVATE_KEY="$KEY" "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-$version.tar.xz" --notes "$TMP/in/release-notes/$version.md" \
+        --tag "v$version" --out "$TMP/out/appcast-$version.xml" "$@"
+}
+
+@test "make-appcast.sh --help prints the usage and exits 0" {
+    prepare_appcast
+    run "$ROOT/scripts/make-appcast.sh" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == "Usage: scripts/make-appcast.sh --archive <RoomForMac-X.Y.Z.tar.xz> --notes <release-notes/X.Y.Z.md>"* ]]
+}
+
+@test "make-appcast.sh refuses missing or unusable inputs with exit 2, before any Sparkle tool runs" {
+    prepare_appcast
+    local script="$ROOT/scripts/make-appcast.sh"
+    run env SPARKLE_BIN="$STUBS" SPARKLE_ED_PRIVATE_KEY="$KEY" "$script"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--archive is required"* ]] || return 1
+    run_appcast 1.2.3 --bogus
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown argument: --bogus"* ]] || return 1
+    run_appcast 1.2.3 --notes "$TMP/no-such-notes.md"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"the release notes are missing or empty"* ]] || return 1
+    : > "$TMP/empty-notes.md"
+    run_appcast 1.2.3 --notes "$TMP/empty-notes.md"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"the release notes are missing or empty"* ]] || return 1
+    run_appcast 1.2.3 --archive "$TMP/no-such-archive.tar.xz"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no such archive"* ]] || return 1
+    run_appcast 1.2.3 --previous "$TMP/no-such-appcast.xml"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no such appcast"* ]] || return 1
+    run_appcast 1.2.3 --out "$TMP/no-such-folder/appcast.xml"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"does not exist"* ]] || return 1
+    run_appcast 1.2.3 --repository "not a repository"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--repository must look like owner/name"* ]] || return 1
+    run_appcast 1.2.3 --download-url-prefix "http://example.com/"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--download-url-prefix must be an https URL ending in a slash"* ]] || return 1
+    run_appcast 1.2.3 --download-url-prefix "https://example.com/no-slash"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--download-url-prefix must be an https URL ending in a slash"* ]] || return 1
+    [ ! -e "$STATE/generate_appcast.argv" ]
+    [ ! -e "$STATE/sign_update.argv" ]
+    no_work_left
+}
+
+@test "make-appcast.sh needs the key, and neither prints it nor accepts a malformed one" {
+    prepare_appcast
+    release_inputs 1.2.3
+    local script="$ROOT/scripts/make-appcast.sh" args
+    args=(--archive "$TMP/in/RoomForMac-1.2.3.tar.xz" --notes "$TMP/in/release-notes/1.2.3.md" --tag v1.2.3 --out "$TMP/appcast.xml")
+    run env -u SPARKLE_ED_PRIVATE_KEY SPARKLE_BIN="$STUBS" "$script" "${args[@]}"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"SPARKLE_ED_PRIVATE_KEY is not set"* ]] || return 1
+    run env SPARKLE_ED_PRIVATE_KEY="  " SPARKLE_BIN="$STUBS" "$script" "${args[@]}"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"SPARKLE_ED_PRIVATE_KEY is not set"* ]] || return 1
+    run env SPARKLE_ED_PRIVATE_KEY="not base64 !!" SPARKLE_BIN="$STUBS" "$script" "${args[@]}"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"SPARKLE_ED_PRIVATE_KEY is not base64"* ]] || return 1
+    [[ "$output" != *"not base64 !!"* ]] || return 1
+    [ ! -e "$STATE/generate_appcast.argv" ]
+}
+
+@test "make-appcast.sh refuses an unstrict tag and an archive named for another version" {
+    prepare_appcast
+    local tag
+    for tag in 1.2.3 v1.2 v01.2.3 v1.2.3-beta v1.1000.0; do
+        run_appcast 1.2.3 --tag "$tag"
+        if [ "$status" -ne 1 ] || [[ "$output" != *"the tag must be a strict vX.Y.Z"* ]]; then
+            echo "tag $tag: status $status, output: $output" >&2
+            return 1
+        fi
+    done
+    release_inputs 9.9.9
+    run_appcast 1.2.3 --archive "$TMP/in/RoomForMac-9.9.9.tar.xz"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the archive is named RoomForMac-9.9.9.tar.xz, but tag v1.2.3 needs RoomForMac-1.2.3.tar.xz"* ]] || return 1
+    [ ! -e "$STATE/generate_appcast.argv" ]
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
+    no_work_left
+}
+
+@test "a first release stages the archive and both spellings of its notes and writes a one-item appcast" {
+    prepare_appcast
+    run_appcast 1.2.3
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STATE/stage.list")" = $'RoomForMac-1.2.3.md\nRoomForMac-1.2.3.tar.md\nRoomForMac-1.2.3.tar.xz' ]
+    cmp "$TMP/in/release-notes/1.2.3.md" "$STATE/staged.md"
+    cmp "$TMP/in/release-notes/1.2.3.md" "$STATE/staged.tar.md"
+    [ "$(grep -c '<item>' "$TMP/out/appcast-1.2.3.xml")" = "1" ]
+    [[ "$output" == *"ok: no earlier appcast: this is the first release"* ]] || return 1
+    [[ "$output" == *"ok: generate_appcast accepted RoomForMac-1.2.3.tar.xz"* ]] || return 1
+    [[ "$output" == *"ok: item 1002003: version 1.2.3, minimum macOS 26.0, https://github.com/example/Widget/releases/download/v1.2.3/RoomForMac-1.2.3.tar.xz"* ]] || return 1
+    [[ "$output" == *"ok: sign_update verified RoomForMac-1.2.3.tar.xz against the item's signature"* ]] || return 1
+    [[ "$output" == *"ok: wrote $TMP/out/appcast-1.2.3.xml, items: 1"* ]] || return 1
+    no_work_left
+}
+
+@test "generate_appcast gets the documented options, with the prefix and link taken from the configuration" {
+    prepare_appcast
+    run_appcast 1.2.3
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$STATE/generate_appcast.argv" | tr -d ' ')" = "1" ]
+    [[ "$(cat "$STATE/generate_appcast.argv")" == "--ed-key-file - --download-url-prefix https://github.com/example/Widget/releases/download/v1.2.3/ --link https://example.github.io/Widget/ --embed-release-notes --maximum-deltas 0 --maximum-versions 10 $TMPDIR/rfm-appcast."*"/stage" ]] || return 1
+    [ "$(cat "$STATE/sign_update.argv")" = "--ed-key-file - --verify $TMP/in/RoomForMac-1.2.3.tar.xz $(printf 'A%.0s' {1..86})==" ]
+}
+
+@test "--repository, --download-url-prefix and --link replace the defaults" {
+    prepare_appcast
+    run_appcast 1.2.3 --repository other/Repo
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$STATE/generate_appcast.argv")" == *"--download-url-prefix https://github.com/other/Repo/releases/download/v1.2.3/ "* ]] || return 1
+    rm -f "$STATE/generate_appcast.argv"
+    run_appcast 1.2.3 --download-url-prefix "http://127.0.0.1:8765/" --link "https://example.test/"
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$STATE/generate_appcast.argv")" == *"--download-url-prefix http://127.0.0.1:8765/ --link https://example.test/ "* ]] || return 1
+    grep -q 'enclosure url="http://127.0.0.1:8765/RoomForMac-1.2.3.tar.xz"' "$TMP/out/appcast-1.2.3.xml"
+}
+
+@test "the key reaches the Sparkle tools on standard input only, without whitespace" {
+    prepare_appcast
+    release_inputs 1.2.3
+    run env SPARKLE_BIN="$STUBS" SPARKLE_ED_PRIVATE_KEY="$KEY"$'\n' "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-1.2.3.tar.xz" --notes "$TMP/in/release-notes/1.2.3.md" \
+        --tag v1.2.3 --out "$TMP/appcast.xml"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STATE/generate_appcast.stdin")" = "$KEY" ]
+    [ "$(wc -c < "$STATE/generate_appcast.stdin" | tr -d ' ')" = "${#KEY}" ]
+    [ "$(cat "$STATE/sign_update.stdin")" = "$KEY" ]
+    [[ "$output" != *"$KEY"* ]] || return 1
+    [ "$(cat "$STATE/generate_appcast.argv" "$STATE/sign_update.argv" | grep -cF -- "$KEY")" = "0" ]
+}
+
+@test "a tool that echoes the key has it removed from the script's output" {
+    prepare_appcast
+    export STUB_MODE=leak
+    run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"generate_appcast: cannot read the key [key removed]"* ]] || return 1
+    [[ "$output" != *"$KEY"* ]] || return 1
+    [[ "$output" == *"error: generate_appcast failed"* ]]
+}
+
+@test "a second release keeps the first item byte for byte and stages the previous appcast" {
+    prepare_appcast
+    run_appcast 1.0.0
+    [ "$status" -eq 0 ]
+    run_appcast 1.1.0 --previous "$TMP/out/appcast-1.0.0.xml"
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$STATE/stage.list")" == *"appcast.xml"* ]] || return 1
+    [ "$(grep -c '<item>' "$TMP/out/appcast-1.1.0.xml")" = "2" ]
+    [[ "$output" == *"ok: build 1001000 is above all 1 published builds"* ]] || return 1
+    [[ "$output" == *"ok: earlier items are unchanged"* ]] || return 1
+    # The first release's item, as a block, sits unchanged inside the new appcast.
+    awk '/<item>/ { keep = 1 } keep { print } /<\/item>/ { keep = 0 }' "$TMP/out/appcast-1.0.0.xml" > "$TMP/first-item.xml"
+    awk '/<item>/ { n++ } n == 2 && /<item>/ { keep = 1 } keep { print } /<\/item>/ { keep = 0 }' "$TMP/out/appcast-1.1.0.xml" > "$TMP/second-item.xml"
+    cmp "$TMP/first-item.xml" "$TMP/second-item.xml"
+}
+
+@test "make-appcast.sh refuses a build that is not above every published one" {
+    prepare_appcast
+    run_appcast 1.2.3
+    [ "$status" -eq 0 ]
+    rm -f "$STATE/generate_appcast.argv"
+    run_appcast 1.2.3 --previous "$TMP/out/appcast-1.2.3.xml" --out "$TMP/out/again.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build 1002003 (tag v1.2.3) is not above build 1002003"* ]] || return 1
+    run_appcast 1.2.2 --previous "$TMP/out/appcast-1.2.3.xml" --out "$TMP/out/lower.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build 1002002 (tag v1.2.2) is not above build 1002003"* ]] || return 1
+    run_appcast 1.2.4 --previous "$TMP/out/appcast-1.2.3.xml" --out "$TMP/out/higher.xml"
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/out/again.xml" ]
+    [ ! -e "$TMP/out/lower.xml" ]
+    [ "$(wc -l < "$STATE/generate_appcast.argv" | tr -d ' ')" = "1" ]
+}
+
+@test "make-appcast.sh refuses a previous file that is not an appcast or has no readable items" {
+    prepare_appcast
+    printf 'not xml\n' > "$TMP/junk.xml"
+    run_appcast 1.2.3 --previous "$TMP/junk.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not an appcast"* ]] || return 1
+    # Two items on one line: the script cannot read the layout, so it stops.
+    cat > "$TMP/squashed.xml" << 'XML'
+<rss version="2.0"><channel>
+<item><sparkle:version>1000</sparkle:version></item><item><sparkle:version>2000</sparkle:version></item>
+</channel></rss>
+XML
+    run_appcast 1.2.3 --previous "$TMP/squashed.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cannot read the items of $TMP/squashed.xml"* ]] || return 1
+    [ ! -e "$STATE/generate_appcast.argv" ]
+}
+
+@test "each way the generated appcast can be wrong fails its own check and writes no appcast" {
+    prepare_appcast
+    local entry mode message
+    for entry in \
+        "skipped|generate_appcast skipped an archive" \
+        "fail|generate_appcast failed" \
+        "no-appcast|generate_appcast wrote no appcast.xml" \
+        "no-item|no item with sparkle:version 1002003" \
+        "wrong-build|no item with sparkle:version 1002003 (found: 1002004)" \
+        "wrong-short|the new item's sparkle:shortVersionString is \"9.9.9\", expected \"1.2.3\"" \
+        "wrong-url|the new item's enclosure url is \"https://example.invalid/RoomForMac-1.2.3.tar.xz\"" \
+        "wrong-length|the new item's enclosure length is" \
+        "wrong-minimum|the new item's sparkle:minimumSystemVersion is \"25.0\", expected \"26.0\"" \
+        "bad-signature|the new item has no usable sparkle:edSignature (got \"c2hvcnQ=\")" \
+        "no-notes|the new item embeds no release notes" \
+        "hardware|the appcast carries sparkle:hardwareRequirements"; do
+        mode="${entry%%|*}"
+        message="${entry#*|}"
+        rm -f "$TMP/out/appcast-1.2.3.xml"
+        export STUB_MODE="$mode"
+        run_appcast 1.2.3
+        if [ "$status" -ne 1 ] || [[ "$output" != *"error: "*"$message"* ]] || [ -e "$TMP/out/appcast-1.2.3.xml" ]; then
+            echo "STUB_MODE=$mode: status $status, output: $output" >&2
+            return 1
+        fi
+        no_work_left
+    done
+}
+
+@test "a changed earlier item and a dropped earlier item both fail, naming the item" {
+    prepare_appcast
+    run_appcast 1.0.0
+    [ "$status" -eq 0 ]
+    export STUB_MODE=alter-old
+    run_appcast 1.1.0 --previous "$TMP/out/appcast-1.0.0.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"earlier item 1000000 changed in the new appcast"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.1.0.xml" ]
+    export STUB_MODE=drop-old
+    run_appcast 1.1.0 --previous "$TMP/out/appcast-1.0.0.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"earlier item 1000000 is missing from the new appcast"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.1.0.xml" ]
+}
+
+@test "an item beyond the newest nine may fall out of the feed, as maximum-versions 10 does" {
+    prepare_appcast
+    local patch previous="" feed
+    for patch in 0 1 2 3 4 5 6 7 8 9 10; do
+        feed="$TMP/out/appcast-1.0.$patch.xml"
+        if [ -n "$previous" ]; then
+            run_appcast "1.0.$patch" --previous "$previous"
+        else
+            run_appcast "1.0.$patch"
+        fi
+        if [ "$status" -ne 0 ]; then
+            echo "release 1.0.$patch: status $status, output: $output" >&2
+            return 1
+        fi
+        previous="$feed"
+    done
+    [ "$(grep -c '<item>' "$previous")" = "10" ]
+    [ "$(grep -c '<sparkle:version>1000000<' "$previous")" = "0" ]
+    [ "$(grep -c '<sparkle:version>1000001<' "$previous")" = "1" ]
+    [ "$(grep -c '<sparkle:version>1000010<' "$previous")" = "1" ]
+}
+
+@test "make-appcast.sh fails when sign_update does not verify the archive, and writes no appcast" {
+    prepare_appcast
+    export STUB_VERIFY=fail
+    run_appcast 1.2.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"sign_update: the signature does not match the archive"* ]] || return 1
+    [[ "$output" == *"error: sign_update does not verify RoomForMac-1.2.3.tar.xz against the signature in the new item"* ]] || return 1
+    [ ! -e "$TMP/out/appcast-1.2.3.xml" ]
+    no_work_left
+}
+
+@test "GENERATE_APPCAST and SIGN_UPDATE stand in for the Sparkle folder" {
+    prepare_appcast
+    release_inputs 1.2.3
+    run env -u SPARKLE_BIN HOME="$TMP/home" GENERATE_APPCAST="$STUBS/generate_appcast" SIGN_UPDATE="$STUBS/sign_update" \
+        SPARKLE_ED_PRIVATE_KEY="$KEY" "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-1.2.3.tar.xz" --notes "$TMP/in/release-notes/1.2.3.md" \
+        --tag v1.2.3 --out "$TMP/appcast.xml"
+    [ "$status" -eq 0 ]
+    [ -f "$TMP/appcast.xml" ]
+}
+
+@test "without SPARKLE_BIN or the tool variables it asks for a build that fetches Sparkle" {
+    prepare_appcast
+    release_inputs 1.2.3
+    mkdir -p "$TMP/home"
+    run env -u SPARKLE_BIN -u GENERATE_APPCAST -u SIGN_UPDATE HOME="$TMP/home" SPARKLE_ED_PRIVATE_KEY="$KEY" \
+        "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-1.2.3.tar.xz" --notes "$TMP/in/release-notes/1.2.3.md" \
+        --tag v1.2.3 --out "$TMP/appcast.xml"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build the app once"* ]] || return 1
+    [ ! -e "$TMP/appcast.xml" ]
+}
+
+@test "make-appcast.sh and release-summary.sh state the same minimum macOS" {
+    local appcast summary
+    appcast="$(grep '^MINIMUM_MACOS=' "$SCRIPTS/make-appcast.sh")"
+    summary="$(grep '^MINIMUM_MACOS=' "$SCRIPTS/release-summary.sh")"
+    [ "$appcast" = 'MINIMUM_MACOS="26.0"' ]
+    [ "$summary" = "$appcast" ]
+}
+
+@test "the real Sparkle tools accept a CryptoKit key, extend a feed unchanged and reject a tampered archive" {
+    local bin="${SPARKLE_BIN:-}" seed public app1 app2 signature
+    if [[ ! -x "$bin/generate_appcast" || ! -x "$bin/sign_update" || ! -x "$bin/generate_keys" ]]; then
+        skip "set SPARKLE_BIN to Sparkle's bin folder (CI's app job does)"
+    fi
+    command -v swift > /dev/null || skip "swift is required for the key pair"
+    command -v clang > /dev/null || skip "clang is required to build the synthetic apps"
+    make_root
+    read -r seed public < <(swift "$SCRIPTS/lib/ed25519-keypair.swift")
+    mkdir -p "$TMP/v1" "$TMP/v2" "$TMP/in/release-notes" "$TMP/out"
+    make_fake_app "$TMP/v1" --version 0.0.1 --build 1 --key "$public" > "$TMP/v1.path"
+    make_fake_app "$TMP/v2" --version 0.0.2 --build 2 --key "$public" > "$TMP/v2.path"
+    app1="$(tail -n 1 "$TMP/v1.path")"
+    app2="$(tail -n 1 "$TMP/v2.path")"
+    "$SCRIPTS/make-update-archive.sh" "$app1" "$TMP/in/RoomForMac-0.0.1.tar.xz" > /dev/null
+    "$SCRIPTS/make-update-archive.sh" "$app2" "$TMP/in/RoomForMac-0.0.2.tar.xz" > /dev/null
+    printf '## 0.0.1\n\n- the first release\n' > "$TMP/in/release-notes/0.0.1.md"
+    printf '## 0.0.2\n\n- the second release\n' > "$TMP/in/release-notes/0.0.2.md"
+
+    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-0.0.1.tar.xz" --notes "$TMP/in/release-notes/0.0.1.md" \
+        --tag v0.0.1 --out "$TMP/out/appcast-A.xml"
+    echo "$output" >&2
+    [ "$status" -eq 0 ]
+    run env SPARKLE_BIN="$bin" SPARKLE_ED_PRIVATE_KEY="$seed" "$ROOT/scripts/make-appcast.sh" \
+        --archive "$TMP/in/RoomForMac-0.0.2.tar.xz" --notes "$TMP/in/release-notes/0.0.2.md" \
+        --tag v0.0.2 --out "$TMP/out/appcast-B.xml" --previous "$TMP/out/appcast-A.xml"
+    echo "$output" >&2
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '<item>' "$TMP/out/appcast-A.xml")" = "1" ]
+    [ "$(grep -c '<item>' "$TMP/out/appcast-B.xml")" = "2" ]
+
+    signature="$(grep 'RoomForMac-0.0.2.tar.xz' "$TMP/out/appcast-B.xml" | sed -n 's|.*sparkle:edSignature="\([^"]*\)".*|\1|p')"
+    [ -n "$signature" ]
+    printf '%s' "$seed" | "$bin/sign_update" --ed-key-file - --verify "$TMP/in/RoomForMac-0.0.2.tar.xz" "$signature"
+    cp "$TMP/in/RoomForMac-0.0.2.tar.xz" "$TMP/tampered.tar.xz"
+    printf 'x' >> "$TMP/tampered.tar.xz"
+    run bash -c 'printf "%s" "$1" | "$2" --ed-key-file - --verify "$3" "$4"' _ "$seed" "$bin/sign_update" "$TMP/tampered.tar.xz" "$signature"
+    [ "$status" -ne 0 ]
+}
