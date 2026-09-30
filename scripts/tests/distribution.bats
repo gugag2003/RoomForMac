@@ -545,8 +545,16 @@ SPARKLE_IMPORT='^[[:space:]]*(@[[:alnum:]_]+[[:space:]]+)*((public|package|inter
 SPARKLE_DRIVER=RoomForMac/Features/Updates/SparkleUpdaterDriver.swift
 
 # swift_files_importing_sparkle DIR...: the Swift files under the folders that import Sparkle, one path per line.
+# A missing folder fails loudly, so a search can never pass by finding nothing.
 swift_files_importing_sparkle() {
-    grep -rlE --include='*.swift' "$SPARKLE_IMPORT" "$@" 2> /dev/null || true
+    local dir
+    for dir in "$@"; do
+        [ -d "$dir" ] || {
+            echo "missing folder: $dir" >&2
+            return 1
+        }
+    done
+    grep -rlE --include='*.swift' "$SPARKLE_IMPORT" "$@" || true
 }
 
 @test "only the updater driver imports Sparkle" {
