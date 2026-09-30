@@ -1,0 +1,6 @@
+# actionlint reads this file by itself. xcode-27 is the GitHub-hosted runner
+# label for macOS 27 with Xcode 27 (Plan 2, Ruling 14). Some actionlint
+# releases do not know it yet and would report `label "xcode-27" is unknown`.
+self-hosted-runner:
+  labels:
+    - xcode-27

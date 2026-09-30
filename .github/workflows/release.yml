@@ -1,0 +1,384 @@
+name: Release
+
+# One pushed tag vX.Y.Z runs `build` (the signing secrets, behind the `release`
+# environment's approval), then `publish` (no secrets), `pages` and `fixture`.
+# A manual run with a version is a dry run: `build` only, and nothing is
+# created on GitHub (Plan 6, Ruling 13). Run blocks stay thin: they call
+# scripts/, which bats tests. workflows.bats pins this file's shape.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "X.Y.Z to rehearse; nothing is published"
+        required: true
+        type: string
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, sign and package
+    runs-on: xcode-27
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: read
+    # $GITHUB_ENV does not cross jobs, so the later jobs read these outputs.
+    outputs:
+      tag: ${{ steps.preflight.outputs.tag }}
+      version: ${{ steps.preflight.outputs.version }}
+      build_number: ${{ steps.preflight.outputs.build_number }}
+      strict: ${{ steps.preflight.outputs.strict_release }}
+      fixture: ${{ steps.fixture.outputs.written }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          # A shallow checkout leaves vendor/mole without its tags, and the
+          # preflight needs the default branch and every tag.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # release-preflight.sh prints KEY=VALUE lines (TAG, VERSION, BUILD_NUMBER,
+      # ARCHIVE_NAME, SOURCE_NAME, STRICT_RELEASE, DRY_RUN, APP). They go to
+      # $GITHUB_ENV for this job's steps, and, lower-cased, to the step outputs.
+      - name: Preflight
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          INPUT_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLISHED_TAGS_FILE: ${{ runner.temp }}/published-tags.txt
+        run: |
+          gh release list --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName' > "$PUBLISHED_TAGS_FILE"
+          VISIBILITY="$(gh repo view --json visibility --jq .visibility)"
+          export VISIBILITY
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+              preflight=(scripts/release-preflight.sh --dry-run "$INPUT_VERSION")
+          else
+              preflight=(scripts/release-preflight.sh "$GITHUB_REF_NAME")
+          fi
+          if ! "${preflight[@]}" > "$RUNNER_TEMP/preflight.env"; then
+              cat "$RUNNER_TEMP/preflight.env"
+              exit 1
+          fi
+          grep -E '^[A-Z][A-Z0-9_]*=' "$RUNNER_TEMP/preflight.env" >> "$GITHUB_ENV"
+          awk -F= '{ key = tolower($1); sub(/^[^=]*=/, ""); print key "=" $0 }' "$RUNNER_TEMP/preflight.env" >> "$GITHUB_OUTPUT"
+
+      # No cache: this job holds the signing secrets, so it restores nothing
+      # that another workflow could have written.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: vendor/mole/go.mod
+          cache: false
+
+      - name: Install tools
+        run: brew install xcodegen bats-core
+
+      - name: Show the toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcodegen --version
+          go version
+          bats --version
+          python3 --version
+          gh --version
+
+      # KEYCHAIN and SIGNING_SHA1 go to $GITHUB_ENV. The keychain is removed
+      # again right after the build, whatever happens.
+      - name: Import the signing identity
+        env:
+          RFM_SIGNING_P12_BASE64: ${{ secrets.RFM_SIGNING_P12_BASE64 }}
+          RFM_SIGNING_P12_PASSWORD: ${{ secrets.RFM_SIGNING_P12_PASSWORD }}
+        run: scripts/import-signing-identity.sh create "$RUNNER_TEMP/rfm-signing.keychain-db" >> "$GITHUB_ENV"
+
+      # Plan 5's per-release hook (scripts/release-hooks/token-fixture). Until it
+      # exists the dispatcher skips it with a notice, both variables are empty,
+      # and nothing is written. No flag makes it mandatory yet (Ruling 12).
+      # When the hook lists files, they travel to the fixture job as one tar.
+      # COPYFILE_DISABLE=1 and --no-xattrs keep macOS tar from adding AppleDouble
+      # ._<name> entries, which the fixture job would commit (Task 11's finding).
+      - name: Token fixture (release hook)
+        id: fixture
+        env:
+          RFM_FIXTURE_TOKEN_URL: ${{ vars.RFM_FIXTURE_TOKEN_URL }}
+          RFM_FIXTURE_TOKEN_KEY: ${{ secrets.RFM_FIXTURE_TOKEN_KEY }}
+        run: |
+          paths="$RUNNER_TEMP/fixture-paths.txt"
+          scripts/release-hook.sh token-fixture "$VERSION" "$RUNNER_TEMP/published-tags.txt" "$paths"
+          if [ -s "$paths" ]; then
+              COPYFILE_DISABLE=1 tar --no-xattrs -cf "$RUNNER_TEMP/token-fixture.tar" -T "$paths"
+              echo "written=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "written=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the patched engine
+        run: scripts/ensure-engine.sh
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      # RFM_NO_ENGINE_BUILD=1: the "Prepare engine" phase fails instead of
+      # rebuilding, so the app embeds the engine built above. Command-line
+      # settings override Config/Signing.xcconfig.
+      - name: Universal Release build
+        env:
+          RFM_NO_ENGINE_BUILD: "1"
+        run: >-
+          xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
+          -configuration Release -destination "generic/platform=macOS"
+          -derivedDataPath build/DerivedData
+          MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+          CODE_SIGN_IDENTITY="RoomForMac Self-Signed"
+          OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN"
+          build
+
+      # Nothing after the build signs anything, so the keychain goes now.
+      - name: Remove the signing keychain
+        if: always()
+        run: scripts/import-signing-identity.sh delete "$RUNNER_TEMP/rfm-signing.keychain-db"
+
+      # RFM_ALLOW_PROMPTS=1 also checks the bundled `status-go --json`, as in ci.yml.
+      - name: Check the app
+        env:
+          RFM_ALLOW_PROMPTS: "1"
+        run: |
+          scripts/check-release-app.sh "$APP" --version "$VERSION"
+          APP="$APP" EXPECT_UNIVERSAL=1 EXPECT_HARDENED=1 bats scripts/tests/app_bundle.bats
+
+      - name: Make the disk image
+        run: |
+          mkdir -p build/release
+          scripts/make-dmg.sh "$APP" build/release/RoomForMac.dmg
+
+      # A dry run has no tag, and make-source-archive.sh archives a tag: it gets
+      # a local, throwaway one that is never pushed.
+      - name: Make the update and source archives
+        run: |
+          if [ "$DRY_RUN" = 1 ] && ! git rev-parse --quiet --verify "refs/tags/$TAG" > /dev/null; then
+              git tag "$TAG"
+          fi
+          scripts/make-update-archive.sh "$APP" "build/release/$ARCHIVE_NAME"
+          scripts/make-source-archive.sh "$TAG" "build/release/$SOURCE_NAME"
+
+      # The appcast keeps every earlier item, so the previous one must be found
+      # whenever a release exists: a failed download stops the job here instead
+      # of building a feed that forgets old versions. Only a repository with no
+      # published release starts from nothing. make-appcast.sh then checks that
+      # every old item survives byte for byte.
+      - name: Generate the appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="release-notes/$VERSION.md"
+          if [ "$DRY_RUN" = 1 ] && [ ! -s "$notes" ]; then
+              notes=release-notes/TEMPLATE.md
+          fi
+          args=(--archive "build/release/$ARCHIVE_NAME" --notes "$notes" --tag "$TAG" --out build/release/appcast.xml)
+          if [ -s "$RUNNER_TEMP/published-tags.txt" ]; then
+              gh release download --pattern appcast.xml --dir "$RUNNER_TEMP/previous"
+              args+=(--previous "$RUNNER_TEMP/previous/appcast.xml")
+          fi
+          scripts/make-appcast.sh "${args[@]}"
+
+      # latest.json and SHA256SUMS, then a check that the folder holds exactly
+      # the six release files and that they agree with one another.
+      - name: Write the release summary
+        run: |
+          scripts/release-summary.sh --dmg build/release/RoomForMac.dmg --tag "$TAG" > build/release/latest.json
+          (cd build/release && shasum -a 256 RoomForMac.dmg "$ARCHIVE_NAME" "$SOURCE_NAME" > SHA256SUMS)
+          scripts/release-publish.sh check-files build/release "$VERSION"
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-files
+          path: build/release/
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && 7 || 30 }}
+
+      - name: Upload the token fixture
+        if: steps.fixture.outputs.written == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: token-fixture
+          path: ${{ runner.temp }}/token-fixture.tar
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && 7 || 90 }}
+
+  # No secrets and no checkout credentials here: the job that can write
+  # releases never sees a signing key. The draft is published only once all six
+  # files are attached, so releases/latest/download/* never points at a release
+  # without them.
+  publish:
+    name: Publish the GitHub release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.build.outputs.tag }}
+      VERSION: ${{ needs.build.outputs.version }}
+      BUILD_NUMBER: ${{ needs.build.outputs.build_number }}
+    steps:
+      # The release notes, the scripts and the feed URL come from the tagged commit.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            Config
+            release-notes
+            scripts
+          persist-credentials: false
+
+      - name: Download the release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release-files
+
+      - name: Verify the release files
+        run: scripts/release-publish.sh check-files release-files "$VERSION"
+
+      # A draft left by an earlier failed run is deleted. A published release
+      # for the tag fails the job, and nothing is touched.
+      - name: Replace a leftover draft
+        run: scripts/release-publish.sh replace-draft "$TAG"
+
+      - name: Create the draft release
+        run: >-
+          gh release create "$TAG" --verify-tag --draft
+          --title "RoomForMac $VERSION" --notes-file "release-notes/$VERSION.md"
+          release-files/RoomForMac.dmg
+          "release-files/RoomForMac-$VERSION.tar.xz"
+          "release-files/RoomForMac-$VERSION-source.tar.gz"
+          release-files/appcast.xml
+          release-files/latest.json
+          release-files/SHA256SUMS
+
+      - name: Publish as latest
+        run: gh release edit "$TAG" --draft=false --latest
+
+      # Up to five minutes: the feed URL answers through releases/latest/download.
+      - name: Check the live feed
+        run: scripts/release-publish.sh check-feed "$BUILD_NUMBER"
+
+  # Every Pages deployment replaces the whole site, so this job stages all of
+  # it. The feed is a release asset, never part of the site (Ruling 3).
+  # The needs context holds direct dependencies only: `build` is listed for its
+  # strict output.
+  pages:
+    name: Deploy the site
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release-files
+
+      # From 1.0.0 on, --strict refuses [OWNER: …] placeholders (Ruling 12).
+      - name: Stage the site
+        env:
+          STRICT: ${{ needs.build.outputs.strict }}
+        run: |
+          args=(build/site release-files/latest.json)
+          if [ "$STRICT" = 1 ]; then
+              args+=(--strict)
+          fi
+          scripts/stage-site.sh "${args[@]}"
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build/site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # Runs only when the token-fixture hook wrote files, so never before Plan 5.
+  # It needs the repository setting "Allow GitHub Actions to create and approve
+  # pull requests". The default checkout credentials stay: this job pushes.
+  fixture:
+    name: Open the token-fixture pull request
+    needs: [build, publish]
+    if: github.event_name == 'push' && needs.build.outputs.fixture == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download the token fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: token-fixture
+          path: token-fixture
+
+      - name: Commit and open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          branch="release/token-fixture-$VERSION"
+          tar -tf token-fixture/token-fixture.tar > "$RUNNER_TEMP/fixture-paths.txt"
+          if grep -Eq '(^/|(^|/)\.\.(/|$)|^\.github/)' "$RUNNER_TEMP/fixture-paths.txt"; then
+              echo "::error::the fixture lists a path outside the working tree or under .github"
+              exit 1
+          fi
+          tar -xf token-fixture/token-fixture.tar
+          git switch --create "$branch"
+          git add --pathspec-from-file="$RUNNER_TEMP/fixture-paths.txt"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --message "test(licensing): add the $VERSION token fixture"
+          git push origin "$branch"
+          gh pr create --base "$DEFAULT_BRANCH" --head "$branch" \
+              --title "test(licensing): add the $VERSION token fixture" \
+              --body "The token fixture that the $VERSION release fetched from the live server (spec 7.5.4). Merge it before the next release: the hook refuses to build until every published release has its fixture."
