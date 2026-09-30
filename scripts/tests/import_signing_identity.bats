@@ -50,6 +50,12 @@ case "$1" in
         if [[ "${STUB_CREATE_NO_LIST:-0}" != 1 ]]; then
             printf '%s\n' "$4" >> "$STATE/searchlist"
         fi
+        if [[ "${STUB_CREATE_KILL_PARENT:-0}" == 1 ]]; then
+            # A CI cancellation while the keychain is being made.
+            [[ "$(ps -o command= -p "$PPID")" == *import-signing-identity.sh* ]] ||
+                fail "stub security: refusing to signal $PPID, which is not the script" 64
+            kill -TERM "$PPID"
+        fi
         ;;
     set-keychain-settings)
         [[ $# -eq 4 && "$2" == -lut && "$3" == 21600 ]] || unexpected "$@"
@@ -142,6 +148,12 @@ case "$1" in
         [[ -f "$2" ]] || fail "SecKeychainDelete: The specified keychain could not be found." 50
         rm -f "$2" "$2.unlocked"
         remove_from_list "$2"
+        if [[ "${STUB_DELETE_KILL_PARENT:-0}" == 1 ]]; then
+            # A CI cancellation while the script is cleaning up.
+            [[ "$(ps -o command= -p "$PPID")" == *import-signing-identity.sh* ]] ||
+                fail "stub security: refusing to signal $PPID, which is not the script" 64
+            kill -TERM "$PPID"
+        fi
         ;;
     *)
         echo "stub security: unexpected command: $1" >&2
@@ -190,7 +202,7 @@ STUB
 
 setup() {
     unset RFM_SIGNING_P12_BASE64 RFM_SIGNING_P12_PASSWORD RFM_SIGNING_IDENTITY_NAME RFM_SIGNING_EXPECTED_SHA1
-    unset STUB_CREATE_FAIL STUB_CREATE_NO_LIST STUB_DELETE_FAIL STUB_PARTITION_FAIL STUB_OPENSSL_FAIL STUB_BASE64_FAIL STUB_IMPORT_KILL_PARENT
+    unset STUB_CREATE_FAIL STUB_CREATE_NO_LIST STUB_DELETE_FAIL STUB_PARTITION_FAIL STUB_OPENSSL_FAIL STUB_BASE64_FAIL STUB_IMPORT_KILL_PARENT STUB_CREATE_KILL_PARENT STUB_DELETE_KILL_PARENT
     TMP="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
     REPO="$TMP/repo"
     STATE="$TMP/state"
@@ -293,7 +305,8 @@ assert_no_secrets() {
         "$HOME/Library/Keychains/ci.keychain-db" \
         "$HOME/Library/Keychains/../Keychains/ci.keychain-db" \
         "$HOME/LIBRARY/keychains/ci.keychain-db" \
-        /Library/Keychains/ci.keychain-db; do
+        /Library/Keychains/ci.keychain-db \
+        /System/Library/Keychains/ci.keychain-db; do
         run "$SCRIPT" create "$path"
         [ "$status" -eq 2 ]
         [[ "$output" == *" is inside "*": this script handles only a throwaway keychain"* ]] || return 1
@@ -683,6 +696,8 @@ EOF
     [ -f "$LOGIN_KEYCHAIN" ]
     run "$SCRIPT" delete "$HOME/Library/Keychains/other.keychain-db"
     [ "$status" -eq 2 ]
+    run "$SCRIPT" delete /System/Library/Keychains/ci.keychain-db
+    [ "$status" -eq 2 ]
     [ ! -e "$STATE/security.log" ]
     assert_search_list_untouched
 }
@@ -694,6 +709,118 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"error: could not delete $KEYCHAIN"* ]] || return 1
     [ -f "$KEYCHAIN" ]
+}
+
+@test "create and delete refuse a path whose last part is a symbolic link, before any tool runs" {
+    ln -s "$LOGIN_KEYCHAIN" "$CI_DIR/evil.keychain-db"
+    ln -s "$TMP/nowhere" "$CI_DIR/dangling.keychain-db"
+    ln -s "$HOME/Library/Keychains" "$TMP/keychains-link"
+    local path
+    for path in "$CI_DIR/evil.keychain-db" "$CI_DIR/dangling.keychain-db"; do
+        run "$SCRIPT" delete "$path"
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"is a symbolic link"* ]] || return 1
+        run "$SCRIPT" create "$path"
+        [ "$status" -eq 2 ]
+    done
+    run "$SCRIPT" delete "$TMP/keychains-link/other.keychain-db"
+    [ "$status" -eq 2 ]
+    [ -f "$LOGIN_KEYCHAIN" ]
+    [ -L "$CI_DIR/evil.keychain-db" ]
+    [ ! -e "$STATE/security.log" ]
+    [ ! -e "$STATE/env.log" ]
+}
+
+@test "a folder that cannot be entered is refused, not turned into a path in the root folder" {
+    [ "$(id -u)" -ne 0 ] || skip "root can enter any folder"
+    mkdir "$TMP/locked"
+    chmod 000 "$TMP/locked"
+    run "$SCRIPT" create "$TMP/locked/ci.keychain-db"
+    local create_status="$status" create_output="$output"
+    run "$SCRIPT" delete "$TMP/locked/ci.keychain-db"
+    local delete_status="$status"
+    chmod 700 "$TMP/locked"
+    [ "$create_status" -eq 2 ]
+    [[ "$create_output" == *"error: cannot enter the folder $TMP/locked"* ]] || return 1
+    [ "$delete_status" -eq 2 ]
+    [ ! -e "$STATE/security.log" ]
+}
+
+@test "a path directly under the root folder is not printed with a double slash" {
+    run --separate-stderr "$SCRIPT" delete /rfm-test-never-made.keychain-db
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"the keychain /rfm-test-never-made.keychain-db is already gone"* ]] || return 1
+    [[ "$stderr" != *"//"* ]] || return 1
+}
+
+@test "a control character that only a symbolic link brings in is refused too" {
+    local odd="$TMP/odd"$'\n'"folder"
+    mkdir "$odd"
+    ln -s "$odd" "$TMP/odd-link"
+    run "$SCRIPT" create "$TMP/odd-link/ci.keychain-db"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"the keychain path contains a control character after resolving symbolic links"* ]] || return 1
+    run "$SCRIPT" delete "$TMP/odd-link/ci.keychain-db"
+    [ "$status" -eq 2 ]
+    [ ! -e "$STATE/security.log" ]
+    [ ! -e "$STATE/env.log" ]
+}
+
+@test "delete does not pass the secrets on to security" {
+    create
+    [ "$status" -eq 0 ]
+    : > "$STATE/env.log"
+    run "$SCRIPT" delete "$KEYCHAIN"
+    [ "$status" -eq 0 ]
+    run grep -c ': 0$' "$STATE/env.log"
+    [ "$output" -ge 2 ]
+    run grep -vc ': 0$' "$STATE/env.log"
+    [ "$output" = 0 ]
+}
+
+@test "a signal during create-keychain still deletes the keychain that it made" {
+    run env STUB_CREATE_KILL_PARENT=1 "$SCRIPT" create "$KEYCHAIN"
+    [ "$status" -eq 1 ]
+    grep -qx "delete-keychain $KEYCHAIN" "$STATE/security.log"
+    assert_cleaned_up
+}
+
+@test "a second signal during the cleanup does not cut it short" {
+    run env STUB_PARTITION_FAIL=1 STUB_DELETE_KILL_PARENT=1 "$SCRIPT" create "$KEYCHAIN"
+    [ "$status" -eq 1 ]
+    assert_cleaned_up
+}
+
+@test "create and delete work when the user search list starts empty" {
+    local no_list
+    for no_list in 0 1; do
+        : > "$STATE/searchlist"
+        run env STUB_CREATE_NO_LIST="$no_list" "$SCRIPT" create "$KEYCHAIN"
+        [ "$status" -eq 0 ]
+        [ "$(cat "$STATE/searchlist")" = "$KEYCHAIN" ]
+        : > "$STATE/security.log"
+        run "$SCRIPT" delete "$KEYCHAIN"
+        [ "$status" -eq 0 ]
+        diff "$STATE/security.log" - << EOF
+list-keychains -d user
+delete-keychain $KEYCHAIN
+EOF
+        [ ! -e "$KEYCHAIN" ]
+        [ ! -s "$STATE/searchlist" ]
+        [ -z "$(ls -A "$TMPDIR")" ]
+    done
+}
+
+@test "delete works on a relative path" {
+    cd "$CI_DIR"
+    run "$SCRIPT" create rfm.keychain-db
+    [ "$status" -eq 0 ]
+    run --separate-stderr "$SCRIPT" delete rfm.keychain-db
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"deleting the keychain $CI_DIR/rfm.keychain-db"* ]] || return 1
+    grep -qx "delete-keychain $CI_DIR/rfm.keychain-db" "$STATE/security.log"
+    [ ! -e "$CI_DIR/rfm.keychain-db" ]
+    assert_search_list_untouched
 }
 
 @test "the script never turns shell tracing on" {

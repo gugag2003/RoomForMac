@@ -18,6 +18,12 @@ set -euo pipefail
 set +x
 umask 077
 
+# The secrets leave the environment before anything else runs, so that no tool
+# this script starts, for delete as well as create, inherits them.
+P12_BASE64="${RFM_SIGNING_P12_BASE64:-}"
+P12_PASSWORD="${RFM_SIGNING_P12_PASSWORD:-}"
+unset RFM_SIGNING_P12_BASE64 RFM_SIGNING_P12_PASSWORD
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DEFAULT_NAME="RoomForMac Self-Signed"
 PIN_FILE="$ROOT/Config/signing-identity.sha1"
@@ -103,7 +109,7 @@ valid_name() (
 # folder is resolved with pwd -P and the rest is appended. A '..' in the part
 # that does not exist yet cannot be resolved, so it is refused.
 physical_path() {
-    local path="$1" rest="" leaf
+    local path="$1" rest="" leaf resolved
     [[ "$path" == /* ]] || path="$PWD/$path"
     while [[ ! -d "$path" ]]; do
         leaf="$(basename "$path")"
@@ -111,7 +117,9 @@ physical_path() {
         rest="/$leaf$rest"
         path="$(dirname "$path")"
     done
-    printf '%s%s\n' "$(cd "$path" && pwd -P)" "$rest"
+    resolved="$(cd "$path" && pwd -P)" || refuse "cannot enter the folder $path"
+    [[ "$resolved" != / ]] || resolved=""
+    printf '%s%s\n' "$resolved" "$rest"
 }
 
 count_lines() {
@@ -192,12 +200,20 @@ esac
 # deletes is the file `security` makes: a relative name would land in
 # ~/Library/Keychains, and a name without the suffix would get one added.
 KEYCHAIN="$(physical_path "$KEYCHAIN_ARG")"
+case "$KEYCHAIN" in
+    *[[:cntrl:]]*) usage_error "the keychain path contains a control character after resolving symbolic links" ;;
+esac
 for protected in "${HOME:?}/Library/Keychains" /Library/Keychains /System/Library/Keychains; do
     folder="$(physical_path "$protected")"
     case "$(lower "$KEYCHAIN")/" in
         "$(lower "$folder")"/*) refuse "$KEYCHAIN is inside $folder: this script handles only a throwaway keychain, never the login or a system keychain" ;;
     esac
 done
+
+# physical_path resolves the folder but not the last part, and `security` would
+# follow a link there: delete-keychain on a link to the login keychain removes it.
+[[ ! -L "$KEYCHAIN" ]] ||
+    refuse "$KEYCHAIN is a symbolic link: this script handles only a keychain file of its own making"
 
 [[ -x "$SECURITY" ]] || die "$SECURITY not found"
 
@@ -213,13 +229,10 @@ fi
 
 # --- create -----------------------------------------------------------------
 
-for variable in RFM_SIGNING_P12_BASE64 RFM_SIGNING_P12_PASSWORD; do
-    [[ -n "${!variable:-}" ]] || refuse "$variable is not set; it is a secret of the release environment (docs/signing.md, \"CI secrets\")"
-done
-P12_BASE64="$RFM_SIGNING_P12_BASE64"
-P12_PASSWORD="$RFM_SIGNING_P12_PASSWORD"
-# The tools started below must not inherit the secrets.
-unset RFM_SIGNING_P12_BASE64 RFM_SIGNING_P12_PASSWORD
+[[ -n "$P12_BASE64" ]] ||
+    refuse "RFM_SIGNING_P12_BASE64 is not set; it is a secret of the release environment (docs/signing.md, \"CI secrets\")"
+[[ -n "$P12_PASSWORD" ]] ||
+    refuse "RFM_SIGNING_P12_PASSWORD is not set; it is a secret of the release environment (docs/signing.md, \"CI secrets\")"
 
 NAME="${RFM_SIGNING_IDENTITY_NAME-$DEFAULT_NAME}"
 valid_name "$NAME" ||
@@ -261,7 +274,8 @@ MADE=0
 # signal kills it).
 cleanup() {
     local status=$?
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    trap '' HUP INT TERM
     if [[ -n "$WORK" ]]; then
         rm -rf "$WORK"
     fi
@@ -292,8 +306,14 @@ unset P12_BASE64
 
 # 3. The keychain: it stays unlocked for six hours, longer than a release build.
 say "making the temporary keychain $KEYCHAIN"
+# A signal that arrives while create-keychain runs is only recorded, so that the
+# keychain it made is known (MADE=1) before the script exits and the trap deletes it.
+INTERRUPTED=0
+trap 'INTERRUPTED=1' HUP INT TERM
 "$SECURITY" create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >&2 || die "security create-keychain failed"
 MADE=1
+trap 'exit 1' HUP INT TERM
+[[ "$INTERRUPTED" -eq 0 ]] || exit 1
 "$SECURITY" set-keychain-settings -lut 21600 "$KEYCHAIN" >&2 || die "security set-keychain-settings failed"
 "$SECURITY" unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >&2 || die "security unlock-keychain failed"
 
