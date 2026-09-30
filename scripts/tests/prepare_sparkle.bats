@@ -149,7 +149,7 @@ signings() {
     [ ! -s "$STATE/codesign.log" ]
 }
 
-@test "a missing framework is refused, as when the phase runs before Embed Frameworks" {
+@test "a missing framework is refused, as when the phase runs before Xcode embeds Sparkle" {
     rm -rf "$FRAMEWORK"
     prepare
     [ "$status" -eq 1 ]

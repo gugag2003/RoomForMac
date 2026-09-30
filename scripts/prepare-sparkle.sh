@@ -45,7 +45,8 @@ fi
 # The framework as it is now, what signs it and this script. The stamp holds
 # this value for the finished framework, so a build that changed nothing skips
 # the work, and a framework that Xcode copied again (its XPC services back, its
-# signature Sparkle's own) does not.
+# signature Sparkle's own) does not. In practice Xcode copies the framework on
+# every build, so the skip rarely fires; it is a cheap guard, not a speed-up.
 fingerprint() {
     {
         (cd "$framework" && find . -print0 | LC_ALL=C sort -z | xargs -0 stat -f '%N %z %Fm %p %Y')
