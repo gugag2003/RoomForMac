@@ -75,6 +75,7 @@ private struct MainSplitView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             SectionDetail(section: model.selection, model: model)
+                .detailColumnFrame()
         }
         .background {
             BackdropView(scene: model.selection.backdrop)
@@ -99,5 +100,17 @@ struct SectionDetail: View {
         case .status:
             StatusView(appModel: model)
         }
+    }
+}
+
+extension View {
+    /// Fills the detail column without passing its content's minimum size up to the window.
+    ///
+    /// NavigationSplitView measures the detail's minimum height at a narrow width, where a
+    /// multiline text fixed to its ideal height wraps into thousands of points. That minimum
+    /// became the window content's, so the split view grew taller than the window and the
+    /// sidebar list was laid out above it. The content still gets the column's real size.
+    func detailColumnFrame() -> some View {
+        frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
     }
 }
