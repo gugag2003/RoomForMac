@@ -1,5 +1,11 @@
 CODE_SIGN_STYLE = Manual
 DEVELOPMENT_TEAM =
 CODE_SIGN_IDENTITY = -
+// Hardened runtime is on in Release only. Debug keeps it off, so the XCTest host and
+// local debugging behave as before. Release needs the two entitlements in project.yml.
 ENABLE_HARDENED_RUNTIME = NO
+ENABLE_HARDENED_RUNTIME[config=Release] = YES
+// Xcode adds get-task-allow to a non-archive build's signature on its own. A release
+// must not carry it (it lets any process attach to the app), so Release injects nothing.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
 #include? "Local.xcconfig"

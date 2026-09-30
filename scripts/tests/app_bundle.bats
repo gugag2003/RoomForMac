@@ -7,6 +7,10 @@
 #
 # Without APP every test is skipped, so `bats scripts/tests` still passes.
 #
+# EXPECT_HARDENED=1 (a Release build, which has the hardened runtime on) also checks
+# the runtime flag on the app and its nested code, exactly the two entitlements the
+# app needs, and that no binary carries get-task-allow.
+#
 # Tests never raise a real system prompt, so the bundled status tool only runs
 # with -h here: `status-go --json` asks Finder for the disk's free space, which
 # can show an Automation prompt for the terminal. Set RFM_ALLOW_PROMPTS=1 (CI
@@ -68,6 +72,22 @@ dist_value() {
 # plist_value FILE KEY: a top-level value of a property list. Fails when KEY is missing.
 plist_value() {
     plutil -extract "$2" raw -o - "$1"
+}
+
+# The entitlements $1 is signed with, as sorted "key=value" lines ("com.apple.…=true");
+# nothing when it has none. Fails when codesign cannot read the signature.
+entitlement_pairs() {
+    local xml
+    xml="$(codesign --display --entitlements - --xml "$1" 2> /dev/null)" || return 1
+    [[ -n "$xml" ]] || return 0
+    plutil -p - <<< "$xml" | sed -n 's/^ *"\([^"]*\)" => \(.*\)$/\1=\2/p' | LC_ALL=C sort
+}
+
+# Skips the calling test unless the build is expected to run with the hardened runtime.
+require_hardened() {
+    if [[ "${EXPECT_HARDENED:-0}" != "1" ]]; then
+        skip "set EXPECT_HARDENED=1 to check the hardened runtime of a Release build"
+    fi
 }
 
 @test "the app passes strict deep signature verification" {
@@ -260,4 +280,65 @@ plist_value() {
 
 @test "the bundled Sparkle license is the repository's" {
     cmp "$ROOT/ThirdParty/Sparkle/LICENSE" "$APP/Contents/Resources/ThirdParty/Sparkle/LICENSE"
+}
+
+# --- Hardened runtime (Plan 6, Task 4) ---------------------------------------
+# Only with EXPECT_HARDENED=1, for a Release build: the runtime flag on the app
+# and its nested code (Task 3's runtime_state), the app's two entitlements, and
+# no get-task-allow or helper entitlement anywhere.
+
+@test "the app, the helpers and Sparkle's nested code carry the hardened runtime flag" {
+    require_hardened
+    local target
+    for target in "$APP" "$HELPERS/analyze-go" "$HELPERS/status-go" \
+        "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app" "$SPARKLE_FRAMEWORK"; do
+        if [ "$(runtime_state "$target")" != runtime ]; then
+            echo "no hardened runtime flag: $target" >&2
+            return 1
+        fi
+    done
+}
+
+@test "the app is signed with the two entitlements hardened runtime needs and no others" {
+    require_hardened
+    run entitlement_pairs "$APP"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'com.apple.security.automation.apple-events=true\ncom.apple.security.cs.disable-library-validation=true' ]
+}
+
+@test "no Mach-O in the bundle carries get-task-allow" {
+    require_hardened
+    local file pairs seen=0
+    while IFS= read -r -d '' file; do
+        if ! lipo -archs "$file" > /dev/null 2>&1; then
+            continue
+        fi
+        seen=$((seen + 1))
+        if ! pairs="$(entitlement_pairs "$file")"; then
+            echo "cannot read the entitlements of $file" >&2
+            return 1
+        fi
+        if grep -q 'com.apple.security.get-task-allow' <<< "$pairs"; then
+            echo "get-task-allow: $file" >&2
+            return 1
+        fi
+    done < <(find "$APP/Contents" -type f -print0)
+    # The app, both helpers, Sparkle, Autoupdate and Updater: a find that saw fewer proved nothing.
+    [ "$seen" -ge 6 ]
+}
+
+@test "the helpers, Autoupdate and Updater.app are signed without entitlements" {
+    require_hardened
+    local target pairs
+    for target in "$HELPERS/analyze-go" "$HELPERS/status-go" \
+        "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app"; do
+        if ! pairs="$(entitlement_pairs "$target")"; then
+            echo "cannot read the entitlements of $target" >&2
+            return 1
+        fi
+        if [[ -n "$pairs" ]]; then
+            echo "entitlements on $target: $pairs" >&2
+            return 1
+        fi
+    done
 }

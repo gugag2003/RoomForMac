@@ -98,7 +98,12 @@ targets:
         RFMSkipQuarantineCleanup: $(RFM_SKIP_QUARANTINE_CLEANUP)
     entitlements:
       path: RoomForMac/RoomForMac.entitlements
-      properties: {}
+      # The two entitlements the hardened runtime (on in Release) needs, and no others:
+      # Apple events for the Automation permission, and library validation off because
+      # a self-signed certificate has no Team ID, so Sparkle.framework would not load.
+      properties:
+        com.apple.security.automation.apple-events: true
+        com.apple.security.cs.disable-library-validation: true
     dependencies:
       - package: MoleEngine
         product: MoleEngine
