@@ -9,11 +9,14 @@
 // key can) writes it "/$()/". A bare "//" on a value line starts a comment for
 // Xcode, so a value never contains one.
 //
-// Two of these are fixed for life once the first release is public, because
+// Three of these are fixed for life once the first release is public, because
 // every installed copy carries them: RFM_FEED_URL (compiled into Info.plist as
-// SUFeedURL) and RFM_DMG_VOLUME_NAME (the disk image layout names it).
-// scripts/tests/distribution.bats pins every value, so changing one takes a
-// deliberate test edit.
+// SUFeedURL), RFM_DMG_VOLUME_NAME (the disk image layout names it) and
+// RFM_SPARKLE_PUBLIC_KEY (compiled into Info.plist as SUPublicEDKey). The key's
+// literal is written once by scripts/make-update-keys.sh, and that script's
+// --check option and scripts/check-release-app.sh verify it; the feed, site,
+// repository and volume name are pinned by scripts/tests/distribution.bats, so
+// changing one takes a deliberate test edit.
 
 // The GitHub repository that hosts the releases. GitHub redirects the feed
 // after a rename; docs/releasing.md says what else a move touches.

@@ -23,6 +23,8 @@
 
 version_is_release() {
     local version="${1-}"
+    # shellcheck disable=SC2034 # zsh's =~ writes these into the caller's scope; bash never sets them
+    local MATCH MBEGIN MEND match mbegin mend
     local pattern='^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$'
     [[ "$version" =~ $pattern ]] || return 1
     [[ "${version%%.*}" -le 2000 ]]

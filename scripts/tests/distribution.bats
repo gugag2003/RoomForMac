@@ -72,6 +72,25 @@ bare_slashes() {
     fi
 }
 
+# conditional_names FILE: prints every line of an xcconfig file whose setting name
+# has a "[" (a conditional name such as RFM_A[config=Release]) or a "$" (a name
+# built from another setting) before the "=". Xcode applies those, and
+# distribution_value cannot see them: it would answer with the unconditional
+# value while a Release build uses the other one. It exits 0 when it found none,
+# and 1 for a missing file.
+conditional_names() {
+    local found
+    if [ ! -f "$1" ]; then
+        echo "no such file: $1" >&2
+        return 1
+    fi
+    found="$(grep -n -E '^[[:space:]]*[^/#=]*[[$]' "$1" || true)"
+    if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+        return 1
+    fi
+}
+
 # fingerprint_file_ok FILE: 0 when FILE is exactly 40 hex digits and a newline.
 fingerprint_file_ok() {
     local first40
@@ -128,6 +147,29 @@ fingerprint_file_ok() {
 
 @test "Distribution.xcconfig writes every URL the way Xcode reads it" {
     run bare_slashes "$ROOT/Config/Distribution.xcconfig"
+    [ "$status" -eq 0 ]
+}
+
+@test "the conditional-name check finds what distribution_value cannot see, and only that" {
+    local file="$BATS_TEST_TMPDIR/probe.xcconfig"
+    printf '%s\n' '// RFM_A[config=Release] = a comment may name a condition' \
+        'RFM_A = a[b] $(X) // RFM_A[sdk=macosx*] = 2' '#include? "Local[1].xcconfig"' \
+        'RFM_B = https:/$()/fine' > "$file"
+    conditional_names "$file"
+    printf '%s\n' 'RFM_A = 1' 'RFM_A[config=Release] = 2' > "$file"
+    run conditional_names "$file"
+    [ "$status" -eq 1 ]
+    [ "$output" = "2:RFM_A[config=Release] = 2" ]
+    printf '%s\n' '  RFM_A [sdk=macosx*] = 2' > "$file"
+    run conditional_names "$file"
+    [ "$status" -eq 1 ]
+    printf '%s\n' 'RFM_A$(SUFFIX) = 2' > "$file"
+    run conditional_names "$file"
+    [ "$status" -eq 1 ]
+}
+
+@test "Distribution.xcconfig has no conditional or computed setting names" {
+    run conditional_names "$ROOT/Config/Distribution.xcconfig"
     [ "$status" -eq 0 ]
 }
 
@@ -350,6 +392,21 @@ fingerprint_file_ok() {
     done < <(printf '%s\n' 1.10.0 0.100.0 1.0.10 0.99.99 2.0.0 0.10.1 1.0.100 0.1.0 1.999.999 \
         0.9.9 0.0.1 1.1.0 10.0.0 0.10.0 1.0.1 1.2.3 100.0.0 1.0.0 0.2.0 0.1.1 2000.999.999 | sort -V)
     [ "$previous" -eq 2000999999 ]
+}
+
+@test "version_is_release leaves no variable behind under zsh either" {
+    command -v zsh > /dev/null || skip "zsh is not installed"
+    run zsh -c '
+        source "$1/scripts/lib/version.sh"
+        version_is_release 1.2.3 || echo "1.2.3 refused"
+        version_is_release 2001.0.0 && echo "2001.0.0 accepted"
+        build_number_for 1.2.3
+        for name in MATCH MBEGIN MEND match mbegin mend; do
+            [[ -n ${(P)name+set} ]] && echo "leaked $name"
+        done
+        echo done' _ "$ROOT"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'1002003\ndone' ]
 }
 
 # --- both libraries ----------------------------------------------------------
