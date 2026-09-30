@@ -122,8 +122,10 @@ struct UpdatesSettingsSection: View {
                     .disabled(!canCheckNow)
                     .accessibilityIdentifier(AccessibilityID.settingsUpdatesCheckNow)
                 } label: {
-                    Text(verbatim: lastCheckText())
-                        .foregroundStyle(Palette.textSecondary)
+                    TimelineView(.everyMinute) { context in
+                        Text(verbatim: lastCheckText(now: context.date))
+                            .foregroundStyle(Palette.textSecondary)
+                    }
                 }
             }
         }

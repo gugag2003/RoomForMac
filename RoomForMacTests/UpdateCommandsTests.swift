@@ -14,7 +14,6 @@ struct UpdateCommandsTests {
     @Test func theItemFollowsTheDriver() {
         let driver = FakeUpdaterDriver()
         let updater = UpdatesFixture.updater(driver)
-        _ = UpdateCommands(updater: updater)
         #expect(UpdateCommands.isEnabled(updater) == false, "enabled before the updater started")
 
         // Sparkle can say it is ready while onboarding still runs; the updater has not started.

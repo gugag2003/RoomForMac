@@ -349,15 +349,26 @@ struct AppDelegateTests {
         #expect(AppBundleFixture.hasQuarantine(AppBundleFixture.nestedFile(of: bundle)), "\(state) removed the file's attribute")
     }
 
-    @Test func aStripThatThrowsLeavesTheLaunchWorking() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func aStripThatThrowsLeavesTheLaunchWorking() async throws {
         struct Refused: Error {}
         let bundle = try quarantinedBundle()
+        let log = Locked<[String]>([])
+        let model = loggedModel(log: log)
+        let removed = Locked<[Bool]>([])
+        let delegate = AppDelegate(model: model, router: WindowRouter(), cleanup: {
+            let result = await AppDelegate.stripOwnQuarantine(
+                mode: .normal, location: .installed, info: [:], bundleURL: bundle, strip: { _ in throw Refused() }
+            )
+            removed.append(result)
+        })
 
-        let removed = await AppDelegate.stripOwnQuarantine(
-            mode: .normal, location: .installed, info: [:], bundleURL: bundle, strip: { _ in throw Refused() }
-        )
+        delegate.finishLaunching(appleEvent: LaunchEvents.openApplication(property: nil))
+        await delegate.launchTask?.value
 
-        #expect(removed == false)
+        #expect(removed.value == [false])
+        #expect(log.value == ["engine check"], "the engine check did not run after a throwing strip")
+        model.statusMonitor?.stop()
     }
 
     // MARK: Quit
