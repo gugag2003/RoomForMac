@@ -34,7 +34,7 @@ Every Plan 2 and Plan 3 name this plan consumes was checked against `main` at `f
 
 The research (`.superpowers/plan6-authoring/research/`: `p6-sparkle.md`, `p6-dmg-release-site.md` and `critique.md`: C12–C14, U2, U13, Q11, Q12, §7–§9; git-ignored, on the owner's Mac only) is summarised in the Rulings. The draft scripts it mentions lived in a scratch folder that no longer exists; tasks write their files from the research's text.
 
-**Status:** Written 2026-09-29 from the refreshed skeleton by one author per task, cross-checked in groups, and checked mechanically before execution. Not yet executed.
+**Status:** Written 2026-09-29 from the refreshed skeleton by one author per task, cross-checked in groups, and checked mechanically before execution. Status: built; owner checks outstanding. Executed on `plan6/distribution`, commits `8aa86af..HEAD` (35 commits, Tasks 1-16, a final whole-branch review). `bats scripts/tests` is 569/569. The merge to `main` is recorded by the controller. "Execution rulings (as built)" after the Rulings lists what differs from the code blocks below; the code blocks show the files as the tasks' briefs wrote them.
 
 ## Global Constraints
 
@@ -250,6 +250,27 @@ Each ruling lists what it costs if wrong. Rulings 2, 4, 5, 10 and 16 need the ow
     - No RoomForMac notification says an update exists (Ruling 6). Sparkle draws its own update alert with its bundled localizations.
 
     *If wrong:* one `Commands` group, one view, or one panel button.
+
+## Execution rulings (as built)
+
+Decisions taken while executing the plan; the code blocks in the tasks show the files as briefed.
+
+- **Test counts.** `distribution.bats` grew to 54 by Task 7 (the plan says 32; later counts shift by +3, then +4 from Task 4). `bats scripts/tests` went 196 (Task 7), 273, 334, 383, 481, 522, about 558, and ends at 569/569.
+- **Task 1.** Conditional or computed setting names are forbidden in `Distribution.xcconfig` (pinned by a test); `version_is_release` declares `local MATCH`; the xcconfig comment names all three fixed-for-life values. Step 8's expected output has no empty `RFM_SPARKLE_PUBLIC_KEY` line (xcodebuild never prints one). `0.0.0` is accepted as a release version (build 0).
+- **Task 2.** The keychain script refuses a symlink last part for create and delete, before any tool runs; secrets are captured and unset at the top; a signal during create still deletes the keychain.
+- **Task 3.** No `embed: true` on the Sparkle package (it breaks the Xcode 27 build; Xcode embeds and signs package frameworks itself; pinned by `distribution.bats`), and Prepare Sparkle declares `inputFiles` (`Versions/B/Sparkle`, `_CodeSignature`) so Xcode's own re-copy never runs after it. Later tasks must not mention an Embed Frameworks phase. The first Sparkle fetch took about 30 minutes.
+- **Task 4.** `CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO` was added to `Signing.xcconfig` (Xcode injects `get-task-allow` into non-archive Release builds). The identity spike (S-0, identity-signed S-A, Step 2 identity setup, M3) was skipped as an owner step, per the keychain ruling below. On macOS 27 dyld's message for the S-B control reads "have different Team IDs", so nothing may grep for "no Team ID".
+- **Tasks 5-6.** The import search fails on a missing folder. `startFailure` keeps the full error text, so Settings never shows it raw. "Last checked" uses a `TimelineView`; the throwing-strip test drives the launch; a no-op line was removed.
+- **Task 8.** `--dir` refuses protected folders, ancestors of them, control characters and dangling symlinks.
+- **Task 10.** A failed attach no longer leaks its temp folder; signal and stuck-detach tests were added; the HFS+ line match and `.DS_Store.new` cleanup were fixed.
+- **Task 11.** `make-appcast` verifies the appcast item under the release public key (new `scripts/lib/ed25519-verify.swift`) and refuses a duplicate build number.
+- **Task 12.** A symlinked git hook is refused.
+- **Task 13.** The fixture filter rejects `.git` and non-file entries; `GH_TOKEN` is scoped to the step that needs it; the version match is literal. Pinned actions: checkout v7.0.1, setup-go v7.0.0, upload-artifact v7.0.1, download-artifact v8.0.1, upload-pages-artifact v5.0.0, deploy-pages v5.0.1 (SHAs in `release.yml`). Step 9's pin loop needs `tr -d '\r'` because `gh api` serves `action.yml` with CRLF. The pages job needs `scripts/stage-site.sh` from Task 14. The workflow has never run (private repo, Actions `startup_failure`; owner).
+- **Task 14.** The privacy page says the `/thanks/` reference is in the requested URL; the major version is parsed base 10; `latest.json` is parsed as JSON with python3; `pages.yml` passes `--exclude-pre-releases`; the CSP loop has a floor. Unverified site claims for the owner: the Open Anyway button staying "about an hour", and TCC permissions persisting under the self-signed identity.
+- **Task 15.** `run_make_appcast` passes `RFM_SPARKLE_PUBLIC_KEY` (Task 11's check would otherwise refuse every real rehearsal); fixed in `2a7314e`, red first.
+- **Task 16.** `docs/signing.md` says S-0 is unconfirmed (owner), not "confirmed". The C1 secret scan skips pure-hex lines (`| grep -vE '^[0-9]+:\+[0-9a-f]{60,}$'`) so the public `SOURCE.sha256` digest is not printed; both copies in this plan match `docs/releasing.md`. The roadmap says Plan 6 is "built (owner checks outstanding)".
+- **Final review.** The signing keychain is created and imported just before the build (after the hook and engine build), and the build passes `CODE_SIGN_IDENTITY="$SIGNING_SHA1"` (fingerprint, not name). The handoff notes that Plan 5 adds a fourth release secret, `RFM_FIXTURE_TOKEN_KEY`.
+- **Keychain ruling and owner steps.** Agents never create, import or delete keychains or identities, nor change the search list. Open for the owner: S-0 and the identity-signed S-A to S-D spike (if hardened runtime fails with the self-signed identity, Ruling 5's fallback applies); A3/A4 (identity and real update key, `make-update-keys.sh`) and the identity-signed Task 9 gate; B2 (icon artwork); B4 (DMG look in Finder, light/dark, macOS 26/27); B5 (real update rehearsal, Step 6, V3-V8, V10); C (public repo, Pages, `release` environment with its secrets, Actions permissions, and the Actions startup failure).
 
 ## Review Focus
 
@@ -26451,7 +26472,7 @@ In this order, before the first release.
 
 ```bash
 git log --all --name-only --pretty=format: | sort -u | grep -E '(^|/)(identity\.p12(\.base64|\.password)?|key\.pem|ed25519\.key)$'
-git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | cut -c1-100
+git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | grep -vE '^[0-9]+:\+[0-9a-f]{60,}$' | cut -c1-100
 gh repo edit gugag2003/RoomForMac --visibility public --accept-visibility-change-consequences
 ```
 
@@ -27384,7 +27405,7 @@ Nothing below can be done by an agent: each needs the owner's accounts, keychain
 1. **Scan the history for secrets, then make the repository public** (blocks everything in D). The first two commands must print nothing:
    ```bash
    git log --all --name-only --pretty=format: | sort -u | grep -E '(^|/)(identity\.p12(\.base64|\.password)?|key\.pem|ed25519\.key)$'
-   git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | cut -c1-100
+   git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | grep -vE '^[0-9]+:\+[0-9a-f]{60,}$' | cut -c1-100
    gh repo edit gugag2003/RoomForMac --visibility public --accept-visibility-change-consequences
    ```
    This also unblocks CI billing: CI has never run (every run so far ended in `startup_failure`). Do it after Plan 6 merges, because Task 16 moves `ci.yml` off the Node 20 actions that runners dropped on 2026-09-23; today's `ci.yml` would fail for that reason alone. Then check that CI turns green on the default branch.

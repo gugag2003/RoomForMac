@@ -48,7 +48,7 @@ Terrain is one of the four headline tools in spec §1. If it must ship in the MV
 6. **Do Plan 6's owner steps**, in this order. `docs/releasing.md` has the commands, and the plan's "Owner's manual steps" the full list, lettered A to F:
    - **A, before the first release:** confirm the rulings in item 3; create the signing identity and back it up (`scripts/make-signing-identity.sh`), which also unblocks Plan 3's checks below; commit its fingerprint to `Config/signing-identity.sha1`; create the update-signing key (`scripts/make-update-keys.sh`).
    - **B, checks by eye and by hand:** hardened runtime with your identity (M3), the app icon, the privacy page's `[OWNER: …]` placeholders, the DMG window on macOS 26 and 27, the update rehearsal (`scripts/rehearse-update.sh`) and the UI smoke tests.
-   - **C, GitHub:** make the repository public, set Pages to GitHub Actions, create the `release` environment with its three secrets, and set the Actions permissions.
+   - **C, GitHub:** make the repository public, set Pages to GitHub Actions, create the `release` environment with its three secrets (Plan 5 adds a fourth, `RFM_FIXTURE_TOKEN_KEY`), and set the Actions permissions.
    - **D, the first releases:** a dry run, then `v0.1.0` with a clean-Mac walkthrough, then a real update to `0.1.1`.
    - **E, optional:** a site domain (change only `RFM_SITE_URL`), and a courtesy note to the Mole author (spec §3.1).
 7. **Run Plan 3's manual checks** below, on a signed build (item 6 creates the identity). They need your Mac, a real App Store app, a login, a second account or Automation Mode, so no agent can run them.
