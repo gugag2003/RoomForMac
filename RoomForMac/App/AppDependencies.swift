@@ -56,6 +56,13 @@ struct AppDependencies {
     /// nothing running and ends nothing; `live()` sees the Mac's real processes.
     var runningApps: RunningApps = .none
 
+    // Plan 6. The default is inert (Plan 3 Ruling 25): no Sparkle object exists, so every unit test
+    // and every UI-test scenario is unchanged. Only `live()` connects the real updater.
+
+    /// Makes the model's updater over its run queue, which lets an update wait for a running
+    /// clean or uninstall (Plan 6 Ruling 8). `AppModel.init` calls it once.
+    var makeUpdater: @MainActor (DestructiveRunQueue) -> AppUpdater = { _ in .inert() }
+
     static func live(defaults: UserDefaults = .standard) -> AppDependencies {
         let openSettings: @MainActor @Sendable (URL) -> Void = { url in
             _ = NSWorkspace.shared.open(url)
@@ -90,7 +97,8 @@ struct AppDependencies {
                     for: item, home: NSHomeDirectory(), appName: CleanItemLabeler.appName(bundleIdentifier:)
                 )
             },
-            runningApps: .live
+            runningApps: .live,
+            makeUpdater: { AppUpdater.live(mode: .normal, runQueue: $0) }
         )
     }
 
@@ -151,6 +159,8 @@ struct AppDependencies {
     ///   from it, so no engine command, `status-go`, IOKit read or real process is involved.
     ///   Nothing is logged or notified, and the menu-bar extra stays off, so a UI test never
     ///   adds an item to the menu bar or hides the window at launch.
+    /// - The updater stays inert (`makeUpdater`'s default): no scenario creates Sparkle or reaches
+    ///   the network, and the app menu's "Check for Updates…" is disabled.
     static func forScenario(_ scenario: UITestScenario, defaults: UserDefaults) -> AppDependencies {
         let preferences = AppPreferences(defaults: defaults)
         preferences.onboardingCompleted = scenario == .onboarded

@@ -61,6 +61,11 @@ struct RoomForMacApp: App {
         .restorationBehavior(.disabled)
         // Links reach AppDelegate.application(_:open:), never a new window (Ruling 19).
         .handlesExternalEvents(matching: [])
+        // "Check for Updates…" after About. Commands are the app's, so the item is in the app menu
+        // with the window closed, and with a broken engine (Plan 6 Ruling 20).
+        .commands {
+            UpdateCommands(updater: delegate.model.updater)
+        }
 
         // The label exists while the item is shown, window closed or not, so its bridge can
         // open the window for the router (research §9, finding 8).

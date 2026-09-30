@@ -51,6 +51,10 @@ final class AppModel {
     /// The one lease for destructive runs, shared by every feature (Ruling 12).
     let runQueue: DestructiveRunQueue
 
+    /// Software updates (Plan 6 Ruling 7): `dependencies.makeUpdater` over `runQueue`, made in
+    /// `init`. It starts once onboarding is complete, from `start()` or `completeOnboarding`.
+    let updater: AppUpdater
+
     /// The engine services, set once, right after the engine becomes `.ready`.
     /// Nil while checking and when the engine is broken.
     private(set) var services: EngineServices?
@@ -103,14 +107,18 @@ final class AppModel {
         onboardingFlow = isOnboarded
             ? nil
             : OnboardingFlow(preferences: preferences, permissions: permissions, needsMoveStep: dependencies.needsMoveStep)
-        runQueue = DestructiveRunQueue()
+        let runQueue = DestructiveRunQueue()
+        self.runQueue = runQueue
+        updater = dependencies.makeUpdater(runQueue)
         notificationsWanted = preferences.notificationsWanted
         reporter = dependencies.runReporter
     }
 
     /// Runs the engine check once. Later calls, including one made while the
     /// check is still running, return at once. A ready engine gets its services
-    /// and the feature models; a broken one gets neither.
+    /// and the feature models; a broken one gets neither. Either way, once the
+    /// check ends, the updater starts if onboarding is complete: an update is what
+    /// repairs a broken engine (Plan 6 Ruling 7).
     func start() async {
         guard !hasStarted else {
             return
@@ -126,6 +134,7 @@ final class AppModel {
         case .failure(let problem):
             engine = .broken(problem)
         }
+        updater.startIfReady(isOnboarded: isOnboarded)
     }
 
     // MARK: Menu-bar extra, Quick Scan and links (Task 19)
@@ -305,5 +314,6 @@ final class AppModel {
         pendingFirstScan = startFirstScan
         notificationsWanted = preferences.notificationsWanted
         statusMonitor?.setAllowed(true)
+        updater.startIfReady(isOnboarded: true)
     }
 }

@@ -238,6 +238,128 @@ struct AppDelegateTests {
         #expect(AppDelegate(model: broken, router: WindowRouter()).applicationShouldTerminateAfterLastWindowClosed(app) == false)
     }
 
+    // MARK: Launch cleanup (Plan 6 Task 6)
+
+    /// A model over this suite's preferences whose engine check appends "engine check" to `log`
+    /// and answers ready.
+    private func loggedModel(log: Locked<[String]>) -> AppModel {
+        let preferences = temporary.preferences
+        preferences.onboardingCompleted = true
+        preferences.menuBarEnabled = true
+        let installation = installation
+        let dependencies = AppDependencies(
+            preferences: preferences,
+            engineCheck: {
+                log.append("engine check")
+                return .success(installation)
+            },
+            openURL: { _ in }
+        )
+        return AppModel(dependencies: dependencies)
+    }
+
+    /// The cleanup runs to its end before the engine check starts, at a normal launch and at a
+    /// login launch alike. The cleanup is held open, so an engine check that did not wait for it
+    /// would already have logged.
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func theCleanupFinishesBeforeTheEngineCheckStarts(loginItem: Bool) async {
+        let log = Locked<[String]>([])
+        let gate = FakeChecker.Gate()
+        let model = loggedModel(log: log)
+        let delegate = AppDelegate(model: model, router: WindowRouter(), cleanup: {
+            log.append("cleanup started")
+            await gate.pass()
+            log.append("cleanup finished")
+        })
+
+        delegate.finishLaunching(appleEvent: LaunchEvents.openApplication(property: loginItem ? Self.loginFlag : nil))
+
+        await gate.waitForArrivals()
+        #expect(log.value == ["cleanup started"], "the engine check started before the cleanup ended")
+        await gate.open()
+        await delegate.launchTask?.value
+        #expect(log.value == ["cleanup started", "cleanup finished", "engine check"])
+        #expect(model.engine == .ready(installation))
+        model.statusMonitor?.stop()
+    }
+
+    /// The window and the menu-bar logic of `finishLaunching` do not wait for the cleanup.
+    @Test(.timeLimit(.minutes(1)))
+    func theWindowDoesNotWaitForTheCleanup() async {
+        let log = Locked<[String]>([])
+        let gate = FakeChecker.Gate()
+        let router = WindowRouter()
+        let model = loggedModel(log: log)
+        let delegate = AppDelegate(model: model, router: router, cleanup: { await gate.pass() })
+
+        delegate.finishLaunching(appleEvent: LaunchEvents.openApplication())
+
+        await gate.waitForArrivals()
+        #expect(delegate.launchKind == .normal)
+        #expect(router.pending == WindowRouter.Request(section: nil, quickScan: false), "the window waited for the cleanup")
+        #expect(log.value.isEmpty)
+        await gate.open()
+        await delegate.launchTask?.value
+        #expect(log.value == ["engine check"])
+        model.statusMonitor?.stop()
+    }
+
+    /// A delegate made without a cleanup starts the engine check as before (every launch test above
+    /// this section relies on it too).
+    @Test func withoutACleanupTheEngineCheckStillRuns() async {
+        let log = Locked<[String]>([])
+        let model = loggedModel(log: log)
+        let delegate = AppDelegate(model: model, router: WindowRouter())
+
+        delegate.finishLaunching(appleEvent: LaunchEvents.openApplication())
+        await delegate.launchTask?.value
+
+        #expect(log.value == ["engine check"])
+        model.statusMonitor?.stop()
+    }
+
+    /// A temporary copy of an app bundle whose folder and nested file carry the quarantine attribute.
+    private func quarantinedBundle() throws -> URL {
+        let bundle = try AppBundleFixture.make(named: "Own-\(UUID().uuidString).app", in: directory.url, marker: "own")
+        try AppBundleFixture.setQuarantine(on: bundle)
+        try AppBundleFixture.setQuarantine(on: AppBundleFixture.nestedFile(of: bundle))
+        return bundle
+    }
+
+    @Test func theOwnBundleLosesItsQuarantineWhenInstalled() async throws {
+        let bundle = try quarantinedBundle()
+
+        let removed = await AppDelegate.stripOwnQuarantine(mode: .normal, location: .installed, info: [:], bundleURL: bundle)
+
+        #expect(removed)
+        #expect(!AppBundleFixture.hasQuarantine(bundle))
+        #expect(!AppBundleFixture.hasQuarantine(AppBundleFixture.nestedFile(of: bundle)))
+    }
+
+    @Test(arguments: OwnQuarantineCase.allCases)
+    func theOwnBundleKeepsItsQuarantineWhenTheCleanupShouldNotRun(_ state: OwnQuarantineCase) async throws {
+        let bundle = try quarantinedBundle()
+
+        let removed = await AppDelegate.stripOwnQuarantine(
+            mode: state.mode, location: state.location, info: state.info, bundleURL: bundle
+        )
+
+        #expect(removed == false, "\(state) stripped the bundle")
+        #expect(AppBundleFixture.hasQuarantine(bundle), "\(state) removed the folder's attribute")
+        #expect(AppBundleFixture.hasQuarantine(AppBundleFixture.nestedFile(of: bundle)), "\(state) removed the file's attribute")
+    }
+
+    @Test func aStripThatThrowsLeavesTheLaunchWorking() async throws {
+        struct Refused: Error {}
+        let bundle = try quarantinedBundle()
+
+        let removed = await AppDelegate.stripOwnQuarantine(
+            mode: .normal, location: .installed, info: [:], bundleURL: bundle, strip: { _ in throw Refused() }
+        )
+
+        #expect(removed == false)
+    }
+
     // MARK: Quit
 
     @Test func quittingWhileNothingRunsQuitsAtOnce() {
@@ -418,5 +540,41 @@ struct AppDelegateTests {
 
         #expect(model.takeDeepLink() == .purchased(checkoutID: "def"))
         #expect(router.pending != nil)
+    }
+}
+
+/// The launches whose own quarantine cleanup must not run (Plan 6 Ruling 9): the unit-test host,
+/// a UI-test scenario, a copy outside Applications or translocated, and a build that asks to skip it.
+enum OwnQuarantineCase: CaseIterable, Sendable, CustomStringConvertible {
+    case testHost, scenario, outsideApplications, translocated, skipKey
+
+    var mode: RuntimeMode {
+        switch self {
+        case .testHost: .unitTestHost
+        case .scenario: .uiTest(.onboarded)
+        case .outsideApplications, .translocated, .skipKey: .normal
+        }
+    }
+
+    var location: AppLocation {
+        switch self {
+        case .outsideApplications: .outsideApplications
+        case .translocated: .translocated(original: nil)
+        case .testHost, .scenario, .skipKey: .installed
+        }
+    }
+
+    var info: [String: Any] {
+        self == .skipKey ? [QuarantineCleanup.skipInfoKey: "YES"] : [:]
+    }
+
+    var description: String {
+        switch self {
+        case .testHost: "the test host"
+        case .scenario: "a UI-test scenario"
+        case .outsideApplications: "a copy outside Applications"
+        case .translocated: "a translocated copy"
+        case .skipKey: "a build that skips the cleanup"
+        }
     }
 }

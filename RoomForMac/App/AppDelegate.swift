@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Answers `.terminateLater`: `NSApp.reply(toApplicationShouldTerminate:)`. Tests record it.
     var replyToTermination: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
 
-    /// The engine check `finishLaunching` started, for tests to await.
+    /// The cleanup and the engine check `finishLaunching` started, for tests to await.
     private(set) var launchTask: Task<Void, Never>?
 
     /// The wait for the lease after `.terminateLater`, for tests to await.
@@ -74,11 +74,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let ask: @MainActor (TerminationPrompt) -> Bool
 
-    /// The app's own delegate, over the dependencies for how this process was started.
+    /// What runs at launch, to its end, before the engine check (Plan 6 Ruling 9).
+    private let cleanup: @MainActor () async -> Void
+
+    /// The app's own delegate, over the dependencies for how this process was started. Its launch
+    /// cleanup removes the app's own quarantine once it is installed, so a copy dragged out of a
+    /// disk image runs its nested updater and Go helpers.
     override convenience init() {
         self.init(
             model: AppModel(dependencies: .forMode(.current)),
             router: WindowRouter(),
+            cleanup: {
+                _ = await AppDelegate.stripOwnQuarantine(
+                    mode: .current,
+                    location: .current(),
+                    info: Bundle.main.infoDictionary ?? [:],
+                    bundleURL: Bundle.main.bundleURL
+                )
+            },
             installsNotificationDelegate: true
         )
     }
@@ -87,11 +100,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model: AppModel,
         router: WindowRouter,
         ask: @escaping @MainActor (TerminationPrompt) -> Bool = AppDelegate.runAlert,
+        cleanup: @escaping @MainActor () async -> Void = {},
         installsNotificationDelegate: Bool = false
     ) {
         self.model = model
         self.router = router
         self.ask = ask
+        self.cleanup = cleanup
         launchSuppressed = model.startsInMenuBar
         super.init()
         if installsNotificationDelegate {
@@ -99,14 +114,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Starts the engine check, which a suppressed window would otherwise never start, and
-    /// opens the window for a normal launch that suppressed it. A login launch stays in the
-    /// menu bar. A launch that did not suppress the window shows it by itself (`.automatic`),
-    /// so it asks for nothing, which also keeps a login launch from taking the focus.
+    /// Starts the launch task, which a suppressed window would otherwise never start: the
+    /// cleanup runs to its end, then the engine check. It opens the window for a normal launch
+    /// that suppressed it, without waiting for either. A login launch stays in the menu bar. A
+    /// launch that did not suppress the window shows it by itself (`.automatic`), so it asks for
+    /// nothing, which also keeps a login launch from taking the focus.
     func finishLaunching(appleEvent: NSAppleEventDescriptor?) {
         launchKind = LaunchKind.detect(appleEvent)
         let model = model
+        let cleanup = cleanup
         launchTask = Task {
+            await cleanup()
             await model.start()
         }
         if launchSuppressed && launchKind == .normal {
@@ -226,5 +244,28 @@ extension TerminationPrompt {
         case .stopCleaning: .smartClean
         case .waitForUninstall: .uninstaller
         }
+    }
+}
+
+extension AppDelegate {
+    /// The live launch cleanup (Plan 6 Ruling 9): removes `com.apple.quarantine` from the running
+    /// bundle, recursively and off the main actor, when `QuarantineCleanup.shouldRun` allows it: a
+    /// normal launch of a copy that is installed and not asked to skip it. The user has already
+    /// approved the app with Open Anyway, and nested code such as Sparkle's `Autoupdate` keeps the
+    /// attribute otherwise. True when an attribute was removed.
+    ///
+    /// Every input but `strip` is a parameter with no default: the live `init()` names each one,
+    /// and a test cannot reach the real bundle by leaving one out.
+    static func stripOwnQuarantine(
+        mode: RuntimeMode,
+        location: AppLocation,
+        info: [String: Any],
+        bundleURL: URL,
+        strip: @Sendable (URL) throws -> Void = { try AppMover.stripQuarantine(at: $0) }
+    ) async -> Bool {
+        guard QuarantineCleanup.shouldRun(mode: mode, location: location, info: info) else {
+            return false
+        }
+        return await QuarantineCleanup.run(bundleURL: bundleURL, strip: strip)
     }
 }

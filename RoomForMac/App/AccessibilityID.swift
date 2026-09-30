@@ -249,3 +249,20 @@ extension AccessibilityID {
     /// Settings → General: "Notify me when a scan or cleanup finishes".
     static let settingsNotifyWhenDone = "settings.general.notifyWhenDone"
 }
+
+// MARK: - Updates (Plan 6 Task 6)
+
+extension AccessibilityID {
+    /// "Check for Updates…" in the app menu. SwiftUI may not carry it onto the menu item, so the
+    /// UI test also looks for the title.
+    static let checkForUpdates = "app.checkForUpdates"
+
+    /// Settings → General → Updates. The header carries it: a modifier on a `Section` reaches each
+    /// row, and every row has its own identifier below.
+    static let settingsUpdates = "settings.general.updates"
+    static let settingsUpdatesAutoCheck = "settings.general.updates.autoCheck"
+    static let settingsUpdatesAutoDownload = "settings.general.updates.autoDownload"
+    static let settingsUpdatesCheckNow = "settings.general.updates.checkNow"
+    /// The one line an unavailable updater shows in place of the switches.
+    static let settingsUpdatesNote = "settings.general.updates.note"
+}

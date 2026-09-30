@@ -32,6 +32,9 @@ enum UIID {
     static let statusHealth = "status.health"
     static let statusWaiting = "status.waiting"
 
+    /// "Check for Updates…" in the app menu (Plan 6 Task 6).
+    static let checkForUpdates = "app.checkForUpdates"
+
     static func sidebarRow(_ section: String) -> String {
         "sidebar.\(section)"
     }
@@ -79,6 +82,13 @@ enum UIFixture {
     static let caskBundleID = "com.example.pixelforge"
     /// Every Status card: the scripted Mac has a battery, so all six show.
     static let statusCards = ["cpu", "gpu", "memory", "disk", "network", "battery"]
+}
+
+/// What the app menu holds, by the words a person reads. `UITestIdentifierTests` pins the app's
+/// side of both: the bundle's name and `UpdateCommands.title`.
+enum UIMenu {
+    static let appMenu = "RoomForMac"
+    static let checkForUpdates = "Check for Updates…"
 }
 
 /// How long the smoke tests wait, in seconds. Generous, because CI runners are slow.

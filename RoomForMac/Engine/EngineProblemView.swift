@@ -4,7 +4,11 @@ import SwiftUI
 /// The blocking "Reinstall RoomForMac" card shown when the launch check fails
 /// (spec §10). It fills the window; nothing else in the app is reachable.
 struct EngineProblemView: View {
-    static let downloadPage = URL(string: "https://github.com/gugag2003/RoomForMac/releases")!
+    /// Where **Open download page** goes: the site (`RFM_SITE_URL`), or GitHub's releases page
+    /// for a build without a site URL (`DistributionInfo`, Plan 6). Read when the button is used.
+    static var downloadPage: URL {
+        DistributionInfo.main.downloadPage
+    }
 
     private let presentation: ErrorPresentation
     @State private var showsDetails = false

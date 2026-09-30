@@ -115,6 +115,17 @@ struct ScenarioTests {
         #expect((model.onboardingFlow == nil) == onboarded)
     }
 
+    /// No scenario ever creates Sparkle (Plan 6 Ruling 7): every scripted model has the inert updater,
+    /// so its "Check for Updates…" item is disabled and General shows no Updates section.
+    @Test(arguments: UITestScenario.allCases)
+    func everyScenarioModelHasAnInertUpdater(scenario: UITestScenario) {
+        let updater = AppModel(dependencies: dependencies(scenario)).updater
+        #expect(updater.availability == .unavailable(.testing))
+        #expect(updater.isStarted == false)
+        #expect(UpdateCommands.isEnabled(updater) == false)
+        #expect(UpdatesPresentation.content(for: updater.availability) == .hidden)
+    }
+
     @Test func theOnboardingScenarioStartsAtWelcomeWithoutTheMoveStep() throws {
         let flow = try #require(AppModel(dependencies: dependencies(.onboarding)).onboardingFlow)
         #expect(flow.step == .welcome)
@@ -241,6 +252,14 @@ struct UITestIdentifierTests {
 
     @Test func theGrantedChipReadsAllowed() {
         #expect(String(localized: PermissionChip.label(for: .granted)) == "Allowed")
+    }
+
+    /// `UIID.checkForUpdates` and the menu title `LaunchSmokeTests` looks for (Plan 6 Task 6), and the
+    /// app menu's name, which is the bundle's `CFBundleName`.
+    @Test func updateIdentifiers() {
+        #expect(AccessibilityID.checkForUpdates == "app.checkForUpdates")
+        #expect(String(localized: UpdateCommands.title) == "Check for Updates…")
+        #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String == "RoomForMac")
     }
 
     /// `UIID` in the UI tests spells these out for the Smart Clean smoke test.

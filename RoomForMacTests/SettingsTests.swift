@@ -776,3 +776,52 @@ extension SettingsTests {
         }
     }
 }
+
+// MARK: - Updates section (Plan 6 Task 6)
+
+extension SettingsTests {
+    /// General's Updates section, which `GeneralSettingsView` builds from its model like the
+    /// menu-bar switch. `ImageRenderer` draws a Form's rows blank, so these check what the view reads.
+    @MainActor
+    @Suite("Updates section in General")
+    struct UpdatesInGeneral {
+        /// Held by the suite so the defaults outlive every use inside a test.
+        let defaults: TemporaryDefaults
+
+        init() throws {
+            defaults = try TemporaryDefaults()
+        }
+
+        @Test func theSectionExistsOnlyWithAModel() {
+            let model = SettingsTests.model(defaults: defaults)
+            let withoutModel = GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in })
+            #expect(withoutModel.updatesSection == nil)
+            let withModel = GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in }, model: model)
+            #expect(withModel.updatesSection != nil)
+        }
+
+        /// `SettingsTests.model` has the inert default updater, as every existing Settings test does,
+        /// so General looks exactly as it did before Plan 6.
+        @Test func aTestingModelHidesTheSection() {
+            let model = SettingsTests.model(defaults: defaults)
+            #expect(model.updater.availability == .unavailable(.testing))
+            let view = GeneralSettingsView(permissions: model.permissions, loginItem: nil, openURL: { _ in }, model: model)
+            #expect(view.updatesSection?.content == .hidden)
+        }
+
+        @Test func theSectionReadsTheModelsUpdater() throws {
+            let notInstalled = UpdatesFixture.model(defaults: defaults, updater: .inert(.notInstalled))
+            let note = try #require(UpdatesPresentation.note(for: .unavailable(.notInstalled)))
+            let noteView = GeneralSettingsView(
+                permissions: notInstalled.permissions, loginItem: nil, openURL: { _ in }, model: notInstalled
+            )
+            #expect(noteView.updatesSection?.content == .note(note))
+
+            let active = UpdatesFixture.model(defaults: defaults, updater: UpdatesFixture.updater())
+            let controlsView = GeneralSettingsView(
+                permissions: active.permissions, loginItem: nil, openURL: { _ in }, model: active
+            )
+            #expect(controlsView.updatesSection?.content == .controls)
+        }
+    }
+}

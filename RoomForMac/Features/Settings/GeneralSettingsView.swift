@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Settings → General: open at login, notifications, and the menu-bar extra's switch.
+/// Settings → General: open at login, notifications, the menu-bar extra's switch and Updates.
 /// Both states, and where the app is, are re-read when the tab appears and whenever RoomForMac
 /// becomes active again, since each can change outside the app.
 struct GeneralSettingsView: View {
@@ -64,6 +64,12 @@ struct GeneralSettingsView: View {
     /// "Show RoomForMac in the menu bar", present only with a model.
     var menuBarRow: MenuBarSettingRow? {
         model.map { MenuBarSettingRow(model: $0) }
+    }
+
+    /// The Updates section (Plan 6 Ruling 20), present only with a model, over the model's updater.
+    /// It draws nothing for an updater that tests use, so a model made for a test changes nothing.
+    var updatesSection: UpdatesSettingsSection? {
+        model.map { UpdatesSettingsSection(updater: $0.updater) }
     }
 
     /// A registered login item always shows, so it can be turned off. Otherwise a copy that is
@@ -203,6 +209,10 @@ struct GeneralSettingsView: View {
                 Section {
                     menuBarRow
                 }
+            }
+
+            if let updatesSection {
+                updatesSection
             }
         }
         .formStyle(.grouped)

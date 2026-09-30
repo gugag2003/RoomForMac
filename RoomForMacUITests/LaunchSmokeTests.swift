@@ -46,4 +46,25 @@ final class LaunchSmokeTests: XCTestCase {
             shown = section
         }
     }
+
+    /// The app menu holds "Check for Updates…" after About, and it is disabled: a scenario's
+    /// updater is the inert one (Plan 6 Ruling 7). SwiftUI may not carry an identifier onto a menu
+    /// item, so the item is found by identifier or by title.
+    @MainActor
+    func testTheAppMenuHoldsADisabledCheckForUpdates() throws {
+        let app = XCUIApplication.launched(scenario: "onboarded")
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: UIWait.launch))
+
+        let appMenu = app.menuBars.menuBarItems[UIMenu.appMenu]
+        XCTAssertTrue(appMenu.waitForExistence(timeout: UIWait.reaction), "No \(UIMenu.appMenu) menu in the menu bar")
+        appMenu.click()
+
+        let item = app.menuBars.menuItems.matching(
+            NSPredicate(format: "identifier == %@ OR title == %@", UIID.checkForUpdates, UIMenu.checkForUpdates)
+        ).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: UIWait.reaction), "The app menu has no \(UIMenu.checkForUpdates)")
+        XCTAssertFalse(item.isEnabled, "\(UIMenu.checkForUpdates) is enabled although the scenario's updater is inert")
+
+        app.typeKey(.escape, modifierFlags: [])
+    }
 }

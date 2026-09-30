@@ -354,6 +354,15 @@
     "Charging" : {
 
     },
+    "Check Now" : {
+
+    },
+    "Check for Updates…" : {
+
+    },
+    "Check for updates automatically" : {
+
+    },
     "Checking RoomForMac…" : {
 
     },
@@ -527,6 +536,9 @@
     "Developer tools" : {
 
     },
+    "Development builds don't check for updates." : {
+
+    },
     "Device backups & firmware" : {
 
     },
@@ -546,6 +558,9 @@
 
     },
     "Done" : {
+
+    },
+    "Download and install updates automatically" : {
 
     },
     "Drag RoomForMac into your Applications folder, then open it from there." : {
@@ -810,6 +825,9 @@
     "Large files" : {
 
     },
+    "Last checked %@" : {
+
+    },
     "Last used" : {
 
     },
@@ -865,6 +883,9 @@
 
     },
     "Move RoomForMac to Applications" : {
+
+    },
+    "Move RoomForMac to your Applications folder to get updates." : {
 
     },
     "Move and relaunch" : {
@@ -929,6 +950,9 @@
 
     },
     "Network" : {
+
+    },
+    "Never checked" : {
 
     },
     "No account, no card." : {
@@ -1597,7 +1621,13 @@
     "Up %@" : {
 
     },
+    "Updates" : {
+
+    },
     "Updates License (Sparkle)" : {
+
+    },
+    "Updates aren't set up in this build." : {
 
     },
     "Upgrade once for unlimited cleanup — every future version included." : {

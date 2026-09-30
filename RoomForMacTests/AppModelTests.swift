@@ -128,6 +128,129 @@ struct AppModelTests {
         #expect(model.pendingFirstScan == false)
         #expect(temporary.preferences.onboardingCompleted == true)
     }
+
+    // MARK: Updater (Plan 6 Task 6)
+
+    /// A model over this suite's preferences whose updater is active over `driver`. The
+    /// menu-bar extra is off, so a ready engine leaves nothing running.
+    private func updaterModel(
+        driver: FakeUpdaterDriver,
+        onboarded: Bool,
+        engineCheck: @escaping @Sendable () async -> Result<EngineInstallation, EngineProblem>
+    ) -> AppModel {
+        let preferences = temporary.preferences
+        preferences.onboardingCompleted = onboarded
+        preferences.menuBarEnabled = false
+        var dependencies = AppDependencies(preferences: preferences, engineCheck: engineCheck, openURL: { _ in })
+        dependencies.makeUpdater = { _ in AppUpdater(availability: .active, driver: driver) }
+        return AppModel(dependencies: dependencies)
+    }
+
+    @Test func aModelWithoutUpdaterWiringHasAnInertUpdater() async {
+        let installation = installation
+        temporary.preferences.onboardingCompleted = true
+        temporary.preferences.menuBarEnabled = false
+        let model = AppModel(dependencies: dependencies { .success(installation) })
+        #expect(model.updater.availability == .unavailable(.testing))
+        await model.start()
+        #expect(model.updater.isStarted == false)
+        #expect(model.updater.canCheckForUpdates == false)
+        model.statusMonitor?.stop()
+    }
+
+    @Test func theUpdaterIsMadeOverTheModelsOwnRunQueue() {
+        final class Seen {
+            var queue: DestructiveRunQueue?
+        }
+        let seen = Seen()
+        var wiring = dependencies { .failure(.installationInvalid("not checked in this test")) }
+        wiring.makeUpdater = { queue in
+            seen.queue = queue
+            return .inert()
+        }
+        let model = AppModel(dependencies: wiring)
+        #expect(seen.queue === model.runQueue)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anOnboardedModelStartsTheUpdaterAfterTheEngineCheck() async {
+        let installation = installation
+        let driver = FakeUpdaterDriver()
+        let gate = FakeChecker.Gate()
+        let model = updaterModel(driver: driver, onboarded: true) {
+            await gate.pass()
+            return .success(installation)
+        }
+        let starting = Task { await model.start() }
+        await gate.waitForArrivals()
+        #expect(driver.startCalls == 0, "the updater started before the engine check ended")
+
+        await gate.open()
+        await starting.value
+        #expect(model.engine == .ready(installation))
+        #expect(driver.startCalls == 1)
+        model.statusMonitor?.stop()
+    }
+
+    @Test func aBrokenEngineStillStartsTheUpdater() async {
+        // An update is what repairs a broken engine (Plan 6 Ruling 7).
+        let problem = EngineProblem.installationInvalid("missing bin/clean.sh")
+        let driver = FakeUpdaterDriver()
+        let model = updaterModel(driver: driver, onboarded: true) { .failure(problem) }
+        await model.start()
+        #expect(model.engine == .broken(problem))
+        #expect(driver.startCalls == 1)
+    }
+
+    @Test func aSecondStartDoesNotStartTheUpdaterAgain() async {
+        let installation = installation
+        let driver = FakeUpdaterDriver()
+        let model = updaterModel(driver: driver, onboarded: true) { .success(installation) }
+        await model.start()
+        await model.start()
+        #expect(driver.startCalls == 1)
+        model.statusMonitor?.stop()
+    }
+
+    @Test func aFreshModelStartsTheUpdaterWhenOnboardingCompletes() async {
+        let installation = installation
+        let driver = FakeUpdaterDriver()
+        let model = updaterModel(driver: driver, onboarded: false) { .success(installation) }
+        await model.start()
+        #expect(model.engine == .ready(installation))
+        #expect(driver.startCalls == 0, "the updater started during onboarding")
+
+        model.completeOnboarding(startFirstScan: false)
+        #expect(driver.startCalls == 1)
+
+        await model.start()
+        #expect(driver.startCalls == 1)
+        model.statusMonitor?.stop()
+    }
+
+    @Test func onboardingThatEndsBeforeTheEngineCheckStartsTheUpdaterOnce() async {
+        let installation = installation
+        let driver = FakeUpdaterDriver()
+        let model = updaterModel(driver: driver, onboarded: false) { .success(installation) }
+        model.completeOnboarding(startFirstScan: true)
+        #expect(driver.startCalls == 1)
+
+        await model.start()
+        #expect(driver.startCalls == 1)
+        model.statusMonitor?.stop()
+    }
+
+    @Test func aFailedStartLeavesTheModelWorking() async {
+        let installation = installation
+        let driver = FakeUpdaterDriver(startError: FakeStartFailure())
+        let model = updaterModel(driver: driver, onboarded: true) { .success(installation) }
+        await model.start()
+        #expect(model.engine == .ready(installation))
+        #expect(driver.startCalls == 1)
+        #expect(model.updater.isStarted == false)
+        #expect(model.updater.startFailure != nil)
+        model.statusMonitor?.stop()
+    }
 }
 
 @Suite("Sidebar sections")
