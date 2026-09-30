@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F1F0E5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C2119" media="(prefers-color-scheme: dark)">
+<title>Privacy · RoomForMac</title>
+<meta name="description" content="What RoomForMac and this website send, and to whom.">
+<link rel="icon" href="../favicon.png" type="image/png">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../"><img src="../assets/app-icon-128.png" alt="" width="32" height="32">RoomForMac</a>
+<nav class="site-nav" aria-label="Main">
+<a href="../">Download</a>
+<a href="../open-anyway/">Open Anyway guide</a>
+<a href="./" aria-current="page">Privacy</a>
+<a href="https://github.com/@RFM_REPOSITORY@">Source</a>
+</nav>
+</div>
+</header>
+<main id="main">
+<div class="wrap">
+<h1>Privacy</h1>
+<p class="lead">RoomForMac does its work on your Mac. This page says what leaves it, and what this website sees. It describes the current version of the app.</p>
+
+<section class="card notice" aria-labelledby="short">
+<h2 id="short">In short</h2>
+<ul>
+<li>RoomForMac has no accounts, no ads and no trackers.</li>
+<li>About once a day the app asks GitHub for a small file to find out whether a new version exists. GitHub sees your IP address and the app’s name and version.</li>
+<li>This website is hosted by GitHub Pages, which logs the IP addresses of visitors.</li>
+<li>Nothing else leaves your Mac. When a later version sends anything more, this page changes first and says what, to whom and why.</li>
+</ul>
+</section>
+
+<section aria-labelledby="updates">
+<h2 id="updates">Update checks</h2>
+<p>RoomForMac looks for a new version about once a day, and whenever you choose Check for Updates. Each check downloads one file from GitHub: <code>@RFM_FEED_URL@</code>. GitHub sees your IP address and the app’s name and version, as it does for any download. RoomForMac does not send a system profile, which would be a list of your hardware and software.</p>
+<p>If there is a new version, GitHub serves that download too. You can turn the daily check off in Settings → General → Updates.</p>
+</section>
+
+<section aria-labelledby="site">
+<h2 id="site">This website</h2>
+<p>This site is hosted by GitHub Pages. GitHub logs the IP addresses of the people who visit, for security purposes, and its own privacy statement explains how it handles them. The download button links to GitHub as well.</p>
+<p>The site sets no cookies, has no forms, loads no scripts, fonts or images from other sites and uses no analytics. The download page asks this site for one small file, <code>latest.json</code>, to show the current version and checksum.</p>
+<p>The page at <code>/thanks/</code> reads a reference from its own address and builds a link that opens RoomForMac. That happens in your browser: the reference is not sent anywhere, not stored and never shown.</p>
+</section>
+
+<section aria-labelledby="mac">
+<h2 id="mac">On your Mac</h2>
+<p>RoomForMac keeps its settings, and a log of what its cleaning engine did, on your Mac. The log is in <code>~/Library/Logs/RoomForMac</code>. RoomForMac does not upload either.</p>
+<p>The setup screen has a switch for anonymous usage data. In this version it only records your choice on your Mac: no usage data is sent.</p>
+</section>
+
+<section aria-labelledby="who">
+<h2 id="who">Who is responsible</h2>
+<p>[OWNER: name of the person or company that runs RoomForMac and this website]</p>
+<p>Questions about privacy: [OWNER: contact email address]</p>
+</section>
+
+<section aria-labelledby="changes">
+<h2 id="changes">Changes to this page</h2>
+<p>This page changes together with the app. Its history is public in the project’s <a href="https://github.com/@RFM_REPOSITORY@">repository</a>.</p>
+</section>
+</div>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>RoomForMac is free software under the <a href="https://github.com/@RFM_REPOSITORY@/blob/HEAD/LICENSE">GPL-3.0</a>. <a href="https://github.com/@RFM_REPOSITORY@">Source code</a> · <a href="../">Download</a> · <a href="../open-anyway/">Open Anyway guide</a></p>
+</div>
+</footer>
+</body>
+</html>

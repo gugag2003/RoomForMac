@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F1F0E5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C2119" media="(prefers-color-scheme: dark)">
+<title>Open RoomForMac the first time · RoomForMac</title>
+<meta name="description" content="Three steps in System Settings to open RoomForMac the first time. No Terminal needed.">
+<link rel="icon" href="../favicon.png" type="image/png">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../"><img src="../assets/app-icon-128.png" alt="" width="32" height="32">RoomForMac</a>
+<nav class="site-nav" aria-label="Main">
+<a href="../">Download</a>
+<a href="./" aria-current="page">Open Anyway guide</a>
+<a href="../privacy/">Privacy</a>
+<a href="https://github.com/@RFM_REPOSITORY@">Source</a>
+</nav>
+</div>
+</header>
+<main id="main">
+<div class="wrap">
+<h1>Open RoomForMac the first time</h1>
+<p class="lead">macOS blocks apps that Apple has not notarized. RoomForMac is one of them. Approve it once in System Settings, in three steps, and it opens with a double-click from then on.</p>
+
+<ol class="steps">
+<li class="step">
+<h2>Try to open it</h2>
+<p>Open RoomForMac from your Applications folder. If you are still in the disk image, drag RoomForMac to Applications first. macOS shows this message:</p>
+<blockquote>
+<p>“RoomForMac” Not Opened</p>
+<p>Apple could not verify “RoomForMac” is free of malware that may harm your Mac or compromise your privacy.</p>
+</blockquote>
+<p>Click <strong>Done</strong>. Do not click Move to Trash.</p>
+<figure class="mock" role="img" aria-label="Drawing of the macOS message “RoomForMac” Not Opened, with the Done button highlighted.">
+<p class="mock-title" aria-hidden="true">“RoomForMac” Not Opened</p>
+<p class="mock-text" aria-hidden="true">Apple could not verify “RoomForMac” is free of malware that may harm your Mac or compromise your privacy.</p>
+<p class="mock-buttons" aria-hidden="true"><span class="mock-button">Move to Trash</span><span class="mock-button target">Done</span></p>
+</figure>
+</li>
+
+<li class="step">
+<h2>Open Privacy &amp; Security</h2>
+<p>Choose Apple menu, then System Settings. Click <strong>Privacy &amp; Security</strong> in the sidebar and scroll down to <strong>Security</strong>. Next to this line, click <strong>Open Anyway</strong>:</p>
+<blockquote>
+<p>“RoomForMac” was blocked to protect your Mac.</p>
+</blockquote>
+<p>The button is there for about an hour after step 1. If it is gone, do step 1 again.</p>
+<p><a class="button secondary" href="x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Security">Open Privacy &amp; Security</a></p>
+<p class="muted small">Or by hand: Apple menu → System Settings → Privacy &amp; Security → Security.</p>
+<figure class="mock" role="img" aria-label="Drawing of System Settings, Privacy &amp; Security, Security: “RoomForMac” was blocked to protect your Mac, with the Open Anyway button highlighted.">
+<p class="mock-row" aria-hidden="true"><span>“RoomForMac” was blocked to protect your Mac.</span><span class="mock-button target">Open Anyway</span></p>
+</figure>
+</li>
+
+<li class="step">
+<h2>Confirm</h2>
+<p>macOS asks you once more:</p>
+<blockquote>
+<p>Open “RoomForMac”?</p>
+<p>Apple is not able to verify that it is free from malware that could harm your Mac or compromise your privacy. Don’t open this unless you are certain it is from a trustworthy source.</p>
+</blockquote>
+<p>Click <strong>Open Anyway</strong>. When macOS asks for your login password, or for Touch ID, give it and click <strong>OK</strong>. The password box is macOS’s own. It reads:</p>
+<blockquote>
+<p>Privacy &amp; Security</p>
+<p>You are attempting to open an app that may cause harm to your Mac or compromise your privacy</p>
+</blockquote>
+<p>RoomForMac opens. From now on, open it like any other app.</p>
+<figure class="mock" role="img" aria-label="Drawing of the macOS question Open “RoomForMac”? with the Open Anyway button highlighted.">
+<p class="mock-title" aria-hidden="true">Open “RoomForMac”?</p>
+<p class="mock-text" aria-hidden="true">Apple is not able to verify that it is free from malware that could harm your Mac or compromise your privacy. Don’t open this unless you are certain it is from a trustworthy source.</p>
+<p class="mock-buttons" aria-hidden="true"><span class="mock-button">Cancel</span><span class="mock-button target">Open Anyway</span></p>
+</figure>
+</li>
+</ol>
+<p class="muted small">The drawings only show where to click. Your Mac’s windows may look a little different. Apple’s own instructions: <a href="https://support.apple.com/guide/mac-help/mh40616/26/mac/26">Open a Mac app from an unknown developer</a> and <a href="https://support.apple.com/en-us/102445">Safely open apps on your Mac</a>.</p>
+
+<section class="card" aria-labelledby="safe">
+<h2 id="safe">Is this safe?</h2>
+<p>Open Anyway is Apple’s own way to approve an app that is not notarized. It makes an exception for this one app and nothing else.</p>
+<p>RoomForMac is open source, so anyone can read what it does: it is on <a href="https://github.com/@RFM_REPOSITORY@">GitHub</a>. Every release lists the SHA-256 checksum of its download. Approve only a copy you downloaded from this site or from the project’s <a href="https://github.com/@RFM_REPOSITORY@/releases/latest">release page</a>.</p>
+<p>RoomForMac is signed with its own certificate, not an Apple one. macOS uses that signature to recognise the app after an update, so the permissions you gave it stay in place.</p>
+</section>
+
+<section class="card notice" aria-labelledby="terminal">
+<h2 id="terminal">We never ask you to paste commands into Terminal</h2>
+<p>The three steps above use System Settings only. If a web page, a video or a message tells you to run a command to open RoomForMac, do not: it did not come from us.</p>
+</section>
+
+<section aria-labelledby="trouble">
+<h2 id="trouble">If something goes wrong</h2>
+<h3>There is no Open Anyway button</h3>
+<p>The button appears only after macOS has blocked the app, and it stays for about an hour. Do step 1 again, then go straight to step 2.</p>
+<h3>“RoomForMac” is damaged and can’t be opened.</h3>
+<p>The download is incomplete or was changed on the way. Delete it and <a href="../">download RoomForMac again</a>.</p>
+<h3>It opens from the disk image, but it can’t update</h3>
+<p>RoomForMac has to live in your Applications folder to update itself. Drag it from the disk image to Applications, eject the disk image, and open the copy in Applications.</p>
+<h3>Still stuck?</h3>
+<p>Tell us what macOS showed you, on <a href="https://github.com/@RFM_REPOSITORY@/issues">GitHub</a>.</p>
+</section>
+</div>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>RoomForMac is free software under the <a href="https://github.com/@RFM_REPOSITORY@/blob/HEAD/LICENSE">GPL-3.0</a>. <a href="https://github.com/@RFM_REPOSITORY@">Source code</a> · <a href="../">Download</a> · <a href="../privacy/">Privacy</a></p>
+</div>
+</footer>
+</body>
+</html>

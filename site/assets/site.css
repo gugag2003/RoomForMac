@@ -1,0 +1,412 @@
+/* RoomForMac site. Alpine Moss tokens from the design spec (§11.1), light and dark.
+   No web fonts, no images in CSS, no imports: the pages' Content-Security-Policy is
+   default-src 'self'. Mobile first: the base layout is one column that fits 375 px. */
+
+:root {
+    color-scheme: light dark;
+    --canvas: #F1F0E5;
+    --surface: #FCFBF2;
+    --text: #333B2D;
+    /* The spec's textSecondary is text at 65%, which is 3.8:1 on canvas in light mode.
+       The site uses 75% there (5.0:1) so that small text passes WCAG AA. */
+    --text-secondary: #62685B;
+    --action: #586440;
+    --on-action: #FCFBF2;
+    --moss: #ADB591;
+    --grass: #B3915D;
+    --clay: #A8563F;
+    --border: rgba(51, 59, 45, 0.16);
+    --shadow: 0 1px 2px rgba(51, 59, 45, 0.08), 0 8px 24px rgba(51, 59, 45, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --canvas: #1C2119;
+        --surface: #262D22;
+        --text: #F1F0E5;
+        --text-secondary: #A6A89E;
+        --action: #ADB591;
+        --on-action: #1C2119;
+        --moss: #7E8866;
+        --grass: #C9A877;
+        --clay: #C97A5F;
+        --border: rgba(241, 240, 229, 0.16);
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--text);
+    font: 1.0625rem/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    overflow-wrap: break-word;
+}
+
+.wrap {
+    width: 100%;
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 0 16px;
+}
+
+.skip {
+    position: absolute;
+    left: 16px;
+    top: -4rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--action);
+    color: var(--on-action);
+    border-radius: 8px;
+    z-index: 10;
+}
+
+.skip:focus {
+    top: 8px;
+}
+
+a {
+    color: var(--action);
+    text-underline-offset: 0.2em;
+}
+
+a:hover {
+    text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+    outline: 3px solid var(--action);
+    outline-offset: 3px;
+    border-radius: 6px;
+}
+
+h1,
+h2,
+h3 {
+    line-height: 1.2;
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+}
+
+h1 {
+    font-size: 2.25rem;
+}
+
+h2 {
+    font-size: 1.4rem;
+}
+
+h3 {
+    font-size: 1.1rem;
+}
+
+p,
+ul,
+ol {
+    margin: 0 0 1rem;
+}
+
+ul,
+ol {
+    padding-left: 1.4rem;
+}
+
+li {
+    margin-bottom: 0.4rem;
+}
+
+code {
+    font: 0.9em ui-monospace, "SF Mono", Menlo, monospace;
+    word-break: break-all;
+}
+
+.muted {
+    color: var(--text-secondary);
+}
+
+.small {
+    font-size: 0.9375rem;
+}
+
+/* Header and footer */
+
+.site-header {
+    padding: 16px 0;
+}
+
+.site-header .wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    font-weight: 650;
+    font-size: 1.15rem;
+    text-decoration: none;
+}
+
+.brand img {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+}
+
+.site-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    font-size: 0.9375rem;
+}
+
+.site-nav a {
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.site-nav a:hover,
+.site-nav a[aria-current="page"] {
+    color: var(--text);
+    text-decoration: underline;
+}
+
+.site-footer {
+    margin-top: 3rem;
+    padding: 1.5rem 0 2.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+}
+
+.site-footer a {
+    color: var(--text-secondary);
+}
+
+/* Hero, buttons, cards */
+
+.hero {
+    padding: 1.5rem 0 1rem;
+}
+
+.hero img.app-icon {
+    width: 96px;
+    height: 96px;
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    margin-bottom: 1rem;
+}
+
+.lead {
+    font-size: 1.2rem;
+    max-width: 34rem;
+}
+
+.button {
+    display: inline-block;
+    padding: 0.8rem 1.5rem;
+    background: var(--action);
+    color: var(--on-action);
+    border-radius: 999px;
+    font-weight: 650;
+    text-decoration: none;
+}
+
+.button:hover {
+    filter: brightness(1.08);
+}
+
+.button.secondary {
+    background: transparent;
+    color: var(--action);
+    box-shadow: inset 0 0 0 2px var(--action);
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 1.25rem;
+    margin: 1.25rem 0;
+    box-shadow: var(--shadow);
+}
+
+.card > :last-child {
+    margin-bottom: 0;
+}
+
+.card.notice {
+    border-left: 6px solid var(--moss);
+}
+
+details summary {
+    cursor: pointer;
+    color: var(--action);
+}
+
+.facts {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.facts h3 {
+    color: var(--action);
+}
+
+/* The Open Anyway guide */
+
+.steps {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0;
+    counter-reset: step;
+}
+
+.step {
+    position: relative;
+    margin: 0 0 1.5rem;
+    padding: 1.25rem 1.25rem 1.25rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    counter-increment: step;
+}
+
+.step h2::before {
+    content: counter(step);
+    display: inline-block;
+    width: 1.9rem;
+    height: 1.9rem;
+    margin-right: 0.6rem;
+    border-radius: 50%;
+    background: var(--action);
+    color: var(--on-action);
+    text-align: center;
+    line-height: 1.9rem;
+    font-size: 1rem;
+}
+
+.step blockquote {
+    margin: 0 0 1rem;
+    padding: 0 0 0 0.9rem;
+    border-left: 3px solid var(--moss);
+    color: var(--text-secondary);
+}
+
+/* A drawn stand-in for a macOS dialog. It is decorative: the words are in the step. */
+
+.mock {
+    margin: 1rem 0 0;
+    padding: 1rem;
+    max-width: 22rem;
+    background: var(--canvas);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+.mock .mock-title {
+    margin: 0 0 0.35rem;
+    font-weight: 650;
+}
+
+.mock .mock-text {
+    margin: 0 0 0.9rem;
+    color: var(--text-secondary);
+}
+
+.mock .mock-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    margin: 0;
+}
+
+.mock .mock-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin: 0;
+}
+
+.mock .mock-button {
+    display: inline-block;
+    padding: 0.3rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-weight: 600;
+}
+
+/* The button to press. The outline is always there; the pulse is added only when
+   the reader has not asked for reduced motion. */
+
+.mock .target {
+    outline: 3px solid var(--action);
+    outline-offset: 2px;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 var(--grass);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px transparent;
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 transparent;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .mock .target {
+        animation: pulse 1.8s ease-out infinite;
+    }
+}
+
+/* Wider screens */
+
+@media (min-width: 40rem) {
+    h1 {
+        font-size: 2.75rem;
+    }
+
+    .facts {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .card {
+        padding: 1.75rem;
+    }
+
+    .step {
+        padding: 1.5rem 1.75rem;
+    }
+}
+
+[hidden] {
+    display: none !important;
+}

@@ -507,3 +507,115 @@ RUBY
         return 1
     fi
 }
+
+# --- .github/workflows/pages.yml (Task 14) -------------------------------------
+# These tests use Task 13's setup_file (it skips the file without ruby, and
+# exports WORKFLOWS, the workflow folder) and only the pages_ helpers below, so
+# they do not depend on how the release.yml tests above are written. Ruby's YAML
+# reads the bare key `on` as the boolean true, so the triggers are read as
+# doc["on"] || doc[true].
+
+pages_yml() {
+    printf '%s\n' "$WORKFLOWS/pages.yml"
+}
+
+# Prints a Ruby expression over the parsed workflow (`doc`, `job` and `on`).
+pages_ruby() {
+    command -v ruby > /dev/null 2>&1 || skip "ruby is not available"
+    ruby -ryaml -e '
+        doc = YAML.load_file(ARGV[0])
+        job = doc["jobs"]["deploy"]
+        on = doc["on"] || doc[true]
+        puts eval(ARGV[1])
+    ' "$(pages_yml)" "$1"
+}
+
+@test "pages.yml runs on pushes to the default branches that touch the site, and by hand" {
+    run pages_ruby '[on.keys.sort.join(","), on["push"].keys.sort.join(","), on["push"]["branches"].join(","), on["push"]["paths"].join(",")].join("|")'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'push,workflow_dispatch|branches,paths|main,main-mrvlfl|site/**,scripts/stage-site.sh,Config/Distribution.xcconfig' ]
+}
+
+@test "pages.yml grants nothing at the top and only what the deploy needs" {
+    run pages_ruby 'doc["permissions"].inspect'
+    [ "$output" = "{}" ]
+    run pages_ruby 'job["permissions"].sort.map { |k, v| "#{k}=#{v}" }.join(",")'
+    [ "$output" = "contents=read,id-token=write,pages=write" ]
+    run pages_ruby 'doc["defaults"]["run"]["shell"]'
+    [ "$output" = "bash" ]
+    run pages_ruby 'doc["jobs"].keys.join(",")'
+    [ "$output" = "deploy" ]
+}
+
+@test "pages.yml deploys only from the default branch, one deployment at a time, to github-pages" {
+    run pages_ruby 'job["if"]'
+    [ "$output" = "github.ref_name == github.event.repository.default_branch" ]
+    run pages_ruby '[job["concurrency"]["group"], job["concurrency"]["cancel-in-progress"]].join(",")'
+    [ "$output" = "pages,false" ]
+    run pages_ruby '[job["environment"]["name"], job["environment"]["url"]].join(",")'
+    [ "$output" = 'github-pages,${{ steps.deployment.outputs.page_url }}' ]
+    run pages_ruby 'job["runs-on"] + "," + job["timeout-minutes"].to_s'
+    [ "$output" = "ubuntu-latest,15" ]
+}
+
+@test "pages.yml has the five steps, in order" {
+    run pages_ruby 'job["steps"].map { |s| s["name"] }.join("|")'
+    [ "$output" = "Check out|Fetch the published summary|Stage the site|Upload the Pages artifact|Deploy" ]
+    run pages_ruby 'job["steps"].last["id"]'
+    [ "$output" = "deployment" ]
+}
+
+@test "pages.yml pins every action by full commit SHA, with its version, on Node 24 majors" {
+    run grep -cE '^[[:space:]]*(- )?uses:' "$(pages_yml)"
+    [ "$output" = "3" ]
+    # Every uses: line that is not "owner/repo@<40 hex> # vX.Y.Z" would be counted here.
+    run bash -c 'grep -E "^[[:space:]]*(- )?uses:" "$1" | grep -vcE "uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40} # v[0-9]+[.][0-9]+[.][0-9]+$"' _ "$(pages_yml)"
+    [ "$output" = "0" ]
+    grep -qE 'uses: actions/checkout@[0-9a-f]{40} # v7\.' "$(pages_yml)"
+    grep -qE 'uses: actions/upload-pages-artifact@[0-9a-f]{40} # v5\.' "$(pages_yml)"
+    grep -qE 'uses: actions/deploy-pages@[0-9a-f]{40} # v5\.' "$(pages_yml)"
+    # The same commits as release.yml (Task 13), so the two workflows move together:
+    # every pin of pages.yml, with its comment, is also a pin of release.yml.
+    run bash -c 'grep -oE "uses: [^ ]+ # v[0-9.]+" "$1" | sort -u > "$3/pages.pins"
+        grep -oE "uses: [^ ]+ # v[0-9.]+" "$2" | sort -u > "$3/release.pins"
+        comm -23 "$3/pages.pins" "$3/release.pins"' _ "$(pages_yml)" "$WORKFLOWS/release.yml" "$BATS_TEST_TMPDIR"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "pages.yml stages the site through stage-site.sh and uploads what it staged" {
+    run pages_ruby 'job["steps"].find { |s| s["name"] == "Stage the site" }["run"]'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'scripts/stage-site.sh build/site "$summary" --strict-from-summary'* ]] || return 1
+    [[ "$output" == *"else"$'\n'"    scripts/stage-site.sh build/site"$'\n'"fi"* ]] || return 1
+    run pages_ruby 'job["steps"].find { |s| s["name"] == "Upload the Pages artifact" }["with"]["path"]'
+    [ "$output" = "build/site" ]
+    run pages_ruby 'job["steps"].find { |s| s["name"] == "Fetch the published summary" }["run"]'
+    [[ "$output" == *"gh release list --exclude-drafts"* ]] || return 1
+    [[ "$output" == *'--pattern latest.json'* ]] || return 1
+}
+
+@test "pages.yml uses no secret but the workflow's own token, and no pull_request_target" {
+    run grep -n 'secrets\.' "$(pages_yml)"
+    [ "$status" -eq 1 ]
+    run grep -n 'pull_request_target' "$(pages_yml)"
+    [ "$status" -eq 1 ]
+    run grep -c 'github\.token' "$(pages_yml)"
+    [ "$output" = "1" ]
+    run pages_ruby 'job["steps"].first["with"]["persist-credentials"].inspect'
+    [ "$output" = "false" ]
+}
+
+@test "pages.yml's run blocks are clean shell" {
+    command -v shellcheck > /dev/null 2>&1 || skip "shellcheck is not available"
+    command -v ruby > /dev/null 2>&1 || skip "ruby is not available"
+    local count
+    count="$(ruby -ryaml -e '
+        steps = YAML.load_file(ARGV[0])["jobs"]["deploy"]["steps"]
+        runs = steps.map { |s| s["run"] }.compact
+        runs.each_with_index { |r, i| File.write(File.join(ARGV[1], "block#{i}.sh"), "#!/bin/bash\n" + r) }
+        puts runs.length
+    ' "$(pages_yml)" "$BATS_TEST_TMPDIR")"
+    [ "$count" -eq 2 ]
+    shellcheck -s bash "$BATS_TEST_TMPDIR/block0.sh" "$BATS_TEST_TMPDIR/block1.sh"
+}
