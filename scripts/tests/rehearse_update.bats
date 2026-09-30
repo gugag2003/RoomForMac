@@ -165,6 +165,7 @@ if [[ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]]; then
     exit 2
 fi
 printf 'seed-in-env %s\n' "${#SPARKLE_ED_PRIVATE_KEY}" >> "$STATE/appcast.env"
+printf '%s\n' "${RFM_SPARKLE_PUBLIC_KEY:-unset}" >> "$STATE/appcast.pub"
 archive="" tag="" out="" previous="" prefix=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -475,6 +476,19 @@ make_prepared_stub() {
     [ "$(sort -u "$STATE/appcast.env")" = "seed-in-env 44" ]
     run grep -rF "$STUB_SEED" "$STATE"
     [ "$status" -eq 1 ]
+}
+
+@test "every make-appcast call gets the throwaway public key in RFM_SPARKLE_PUBLIC_KEY" {
+    prepare_fixture
+    [ "$(sort -u "$STATE/appcast.pub")" = "$STUB_PUBLIC" ]
+    run "$SCRIPT" check "$WORK"
+    [ "$(sort -u "$STATE/appcast.pub")" = "$STUB_PUBLIC" ]
+}
+
+@test "the rotation instructions pass the rotated public key to make-appcast" {
+    prepare_fixture
+    run grep -F 'RFM_SPARKLE_PUBLIC_KEY="$ROTATED_PUBLIC" SPARKLE_ED_PRIVATE_KEY="$ROTATED_SEED"' "$WORK/CHECKLIST.md"
+    [ "$status" -eq 0 ]
 }
 
 @test "prepare never installs, launches or quits an app and never touches Applications" {

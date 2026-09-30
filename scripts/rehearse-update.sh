@@ -188,8 +188,9 @@ run_make_appcast() {
     local log="$1"
     shift
     (
-        export SPARKLE_ED_PRIVATE_KEY SPARKLE_BIN
+        export SPARKLE_ED_PRIVATE_KEY SPARKLE_BIN RFM_SPARKLE_PUBLIC_KEY
         SPARKLE_ED_PRIVATE_KEY="$(cat "$WORK/keys/seed")"
+        RFM_SPARKLE_PUBLIC_KEY="$(cat "$WORK/keys/public")"
         "$MAKE_APPCAST" "$@"
     ) > "$log" 2>&1
 }
@@ -482,7 +483,7 @@ mkdir -p "@WORK@/feed-rotated"
 scripts/make-update-archive.sh "@DERIVED_DATA@/Build/Products/Release/RoomForMac.app" \
     "@WORK@/feed-rotated/RoomForMac-@VERSION3@.tar.xz"
 printf '# RoomForMac @VERSION3@ (rehearsal)\n\nThe key rotation build.\n' > "@WORK@/feed-rotated/RoomForMac-@VERSION3@.md"
-SPARKLE_BIN="@SPARKLE_BIN@" SPARKLE_ED_PRIVATE_KEY="$ROTATED_SEED" scripts/make-appcast.sh \
+SPARKLE_BIN="@SPARKLE_BIN@" RFM_SPARKLE_PUBLIC_KEY="$ROTATED_PUBLIC" SPARKLE_ED_PRIVATE_KEY="$ROTATED_SEED" scripts/make-appcast.sh \
     --archive "@WORK@/feed-rotated/RoomForMac-@VERSION3@.tar.xz" \
     --notes "@WORK@/feed-rotated/RoomForMac-@VERSION3@.md" --tag v@VERSION3@ \
     --out "@WORK@/feed-rotated/appcast.xml" \
