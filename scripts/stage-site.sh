@@ -157,6 +157,9 @@ if [[ -n "$SUMMARY" ]]; then
         fail "latest.json not found: $SUMMARY"
     else
         space='[[:space:]]*'
+        if ! python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$SUMMARY" > /dev/null 2>&1; then
+            fail "$SUMMARY is not a release summary: not valid JSON"
+        fi
         grep -Eq "\"schema\"$space:${space}1[,}[:space:]]" "$SUMMARY" || fail "$SUMMARY is not a release summary: schema 1 is missing"
         grep -Eq "\"version\"$space:$space\"[0-9]+\.[0-9]+\.[0-9]+\"" "$SUMMARY" || fail "$SUMMARY is not a release summary: no X.Y.Z version"
         grep -Eq "\"sha256\"$space:$space\"[0-9a-f]{64}\"" "$SUMMARY" || fail "$SUMMARY is not a release summary: no SHA-256"
@@ -164,7 +167,7 @@ if [[ -n "$SUMMARY" ]]; then
         cp "$SUMMARY" "$tmp/latest.json"
         if [[ "$STRICT_FROM_SUMMARY" -eq 1 ]]; then
             major="$(sed -n "s/.*\"version\"$space:$space\"\\([0-9][0-9]*\\)\\.[0-9][0-9]*\\.[0-9][0-9]*\".*/\\1/p" "$SUMMARY" | head -n 1)"
-            if [[ "$major" =~ ^[0-9]+$ && "$major" -ge 1 ]]; then
+            if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$((10#$major))" -ge 1 ]]; then
                 strict=1
             fi
         fi

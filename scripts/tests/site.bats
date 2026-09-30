@@ -226,7 +226,7 @@ JS
         run "$SCRIPT" "$OUT" "$TMP/latest.json" --strict-from-summary
         [ "$status" -eq 0 ]
     done
-    for version in 1.0.0 2.3.4 12.0.1; do
+    for version in 1.0.0 2.3.4 12.0.1 08.0.0; do
         write_summary "$version"
         rm -rf "$OUT"
         run "$SCRIPT" "$OUT" "$TMP/latest.json" --strict-from-summary
@@ -234,6 +234,16 @@ JS
         [[ "$output" == *"--strict: a placeholder is left in privacy/index.html"* ]] || return 1
         [ ! -e "$OUT" ]
     done
+}
+
+@test "a truncated latest.json is refused as invalid JSON" {
+    write_summary 0.1.0
+    head -c 150 "$TMP/latest.json" > "$TMP/cut.json"
+    printf '"schema":1 "version":"0.1.0" "sha256":"%s" "url":"https://x/RoomForMac.dmg"\n' "$SHA_256" >> "$TMP/cut.json"
+    run "$SCRIPT" "$OUT" "$TMP/cut.json"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not valid JSON"* ]] || return 1
+    [ ! -e "$OUT" ]
 }
 
 @test "a symlink in site/ fails" {
@@ -297,7 +307,7 @@ JS
 }
 
 @test "every staged page is locked down by its Content-Security-Policy and loads nothing from elsewhere" {
-    local page file tag target
+    local page file tag target checked=0
     stage_real
     for page in index.html open-anyway/index.html thanks/index.html privacy/index.html 404.html; do
         # The policy comes before anything the page could load.
@@ -321,8 +331,10 @@ JS
             case "$target" in
                 http*) [[ "$target" == "$SITE_URL/"* ]] || return 1 ;;
             esac
+            checked=$((checked + 1))
         done < <(grep -o -E '<(script|img)[^>]* src="[^"]*"|<link[^>]* href="[^"]*"' "$OUT/$page" | grep -o -E '(src|href)="[^"]*"')
     done
+    [ "$checked" -ge 5 ]
     while IFS= read -r file; do
         run grep -nE 'http://|<script src="http|<link href="http|@import|url\(http|url\(//' "$file"
         [ "$status" -eq 1 ]
@@ -351,6 +363,12 @@ JS
     [ "$status" -eq 1 ]
     run grep -rIl 'Terminal' "$OUT"
     [ "$output" = "$OUT/open-anyway/index.html" ]
+}
+
+@test "the privacy page says the checkout reference reaches GitHub Pages" {
+    grep -qF 'part of the address your browser requests from GitHub Pages' "$REPO/site/privacy/index.html"
+    run grep -c 'is not sent anywhere' "$REPO/site/privacy/index.html"
+    [ "$output" = "0" ]
 }
 
 @test "the download button is a plain link, and the checksum block starts hidden" {

@@ -593,6 +593,7 @@ pages_ruby() {
     run pages_ruby 'job["steps"].find { |s| s["name"] == "Fetch the published summary" }["run"]'
     [[ "$output" == *"gh release list --exclude-drafts"* ]] || return 1
     [[ "$output" == *'--pattern latest.json'* ]] || return 1
+    [[ "$output" == *"--exclude-pre-releases"* ]] || return 1
 }
 
 @test "pages.yml uses no secret but the workflow's own token, and no pull_request_target" {

@@ -49,7 +49,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p "$RUNNER_TEMP/summary"
-          tag="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          tag="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
           if [[ -z "$tag" ]]; then
               echo "::notice::No release is published yet, so the site is staged without latest.json."
               exit 0
