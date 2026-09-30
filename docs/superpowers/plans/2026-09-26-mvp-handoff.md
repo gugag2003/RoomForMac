@@ -8,11 +8,12 @@ What is left between today's `main` and an MVP, in the order to do it, with a pr
 
 - **Plan 1 (engine) is on `main`.** It includes five Mole patches, `scripts/build-engine.sh`, and the `MoleEngine` Swift package. Verified on 2026-09-26: `bats scripts/tests` 6/6, `swift test --package-path Packages/MoleEngine` with `RFM_ENGINE_DIR=$PWD/build/engine` 55/55 (50 unit + 5 integration), and the bats assertion audit is clean.
 - **Plan 2 (app shell) is on `main`.** It holds the XcodeGen project with the embedded engine, the design system, onboarding, permissions and Settings.
-- **Plan 3 is built** on the branch `plan3/features` (`docs/superpowers/plans/2026-09-27-plan-3-features.md`): Smart Clean, the Uninstaller, Status, the menu-bar extra and notifications. It amends patch 0004, adds patch 0006 and the `status-bin` stubs, and adds the removal seams Plan 5 plugs into. Its UI smoke tests are built but not run, because they need Automation Mode. The spec errata it found are listed in the roadmap. Plans 4–7 are not built.
-- **CI has never run.** Every Actions run ended in `startup_failure` with no jobs. The run page's annotation says: "The job was not started because recent account payments have failed or your spending limit needs to be increased." The repository is private, and private repositories are billed for macOS runner minutes. The workflow file itself is fine. Plan 2 added the `app` job on the `xcode-27` runner and a push trigger for `main-mrvlfl`; they have not run either, for the same reason. Plan 3 added `tests/clean_removed_sizes.bats` to the engine job's patch tests and changed nothing else.
+- **Plan 3 is on `main`** (`docs/superpowers/plans/2026-09-27-plan-3-features.md`): Smart Clean, the Uninstaller, Status, the menu-bar extra and notifications. It amends patch 0004, adds patch 0006 and the `status-bin` stubs, and adds the removal seams Plan 5 plugs into. Its UI smoke tests are built but not run, because they need Automation Mode. The spec errata it found are listed in the roadmap.
+- **Plan 6 is built** on the branch `plan6/distribution` (`docs/superpowers/plans/2026-09-29-plan-6-distribution.md`): the app icon, hardened runtime in Release, Sparkle 2 updates from a feed of GitHub release assets, a DMG with the Open Anyway guide, the release and Pages workflows, and the site. Nothing has been released: the workflows cannot run until the owner makes the repository public and creates the `release` environment (`docs/releasing.md`, "One-time setup"). The spec errata it found are listed in the roadmap. Plans 4, 5 and 7 are not built. **v1.0 is not ready to sell:** Plan 5 (payments) is blocked on the merchant-of-record decision, because Polar cannot pay out to Brazil, and nothing has been released.
+- **CI has never run.** Every Actions run ended in `startup_failure` with no jobs. The run page's annotation says: "The job was not started because recent account payments have failed or your spending limit needs to be increased." The repository is private, and private repositories are billed for macOS runner minutes. The workflow file itself is fine. Plan 2 added the `app` job on the `xcode-27` runner and a push trigger for `main-mrvlfl`; they have not run either, for the same reason. Plan 3 added `tests/clean_removed_sizes.bats` to the engine job's patch tests and changed nothing else. Plan 6 moves `ci.yml` off the Node 20 actions that GitHub's runners dropped on 2026-09-23 (the file as it stood would have failed for that reason alone), and adds the workflow lint, the release gate on the ad-hoc build and the Sparkle-tool test. It also adds `release.yml` and `pages.yml`. None of them can run until the repository is public (owner step C1).
 - **Git state:**
-  - `main`, `origin/main` and GitHub's default branch `main-mrvlfl` hold Plans 1 and 2, and `fix/engine-kb-overflow` is merged.
-  - Plan 3 is on the branch `plan3/features`, taken from that `main`.
+  - `main`, `origin/main` and GitHub's default branch `main-mrvlfl` hold Plans 1, 2 and 3, and `fix/engine-kb-overflow` is merged.
+  - Plan 6 is on the branch `plan6/distribution`, taken from that `main`.
 
 ## MVP scope — M2, chosen on 2026-09-26
 
@@ -26,18 +27,31 @@ Terrain is one of the four headline tools in spec §1. If it must ship in the MV
 
 ## Only you can do these
 
-1. **Unblock CI.** Fix the account's Actions payment or spending limit, or make the repository public. The spec already plans a public GPL-3.0 repository, and public repositories get standard macOS runners free.
+1. **Unblock CI: make the repository public** (Plan 6 owner step C1; `docs/releasing.md` has the history scan to run first). The spec already plans a public GPL-3.0 repository, and public repositories get standard macOS runners free. Fixing the account's Actions payment or spending limit would also start CI, but Pages and anonymous release downloads need a public repository anyway.
 2. **Choose the merchant of record** (blocks Plan 5). Polar cannot pay out to Brazil, so sell through Polar with a US or EU entity, through Paddle, or through another provider. Plan 5 keeps the provider behind one backend adapter.
-3. **Confirm the roadmap's four "Decisions made while planning", Plan 3's Rulings and the spec errata** the roadmap lists. Plan 3 took these decisions for you, among others:
+3. **Confirm the roadmap's four "Decisions made while planning", Plan 3's and Plan 6's Rulings and the spec errata** the roadmap lists. Plan 3 took these decisions for you, among others:
    - amending patch 0004 and adding patch 0006;
    - the `status-bin` stubs, which keep Status away from Finder and Bluetooth;
    - the menu-bar extra on by default, and Status paused while only the extra shows;
    - unknown-size items selected by default;
    - standard users seeing every `/Applications` app as needing a password until Plan 7;
    - notifications only for finished scans, cleanups and uninstalls.
+
+   Plan 6 took these, which cannot be changed cheaply once the first release is public (each of its Rulings states what it costs if wrong):
+   - the feed URL, `https://github.com/gugag2003/RoomForMac/releases/latest/download/appcast.xml`, for the life of every installed copy (Ruling 2), and updates as `tar.xz` archives (Ruling 4);
+   - hardened runtime on in Release, with library validation off for Sparkle (Ruling 5);
+   - the build-number scheme `X*1000000 + Y*1000 + Z` (Ruling 10) and the Icon Composer format for the app icon (Ruling 16);
+   - the bundle ID `com.roomformac.RoomForMac`, which becomes permanent with the first release;
+   - that 1.0 may ship before Plan 5, because the fixture hook is skipped until Plan 5 adds it (Ruling 12).
 4. **Backdrop photos (spec §11.3).** Pick five public-domain or CC0 images, or accept flat `canvas` placeholders for M1.
-5. **M2 only:** the license price, a Polar account with a license-key benefit (activation limit 3), a Supabase project, a PostHog project, a self-signed code-signing certificate for CI, Sparkle EdDSA keys, and the site domain.
-6. **Run Plan 3's manual checks** below, on a signed build. They need your Mac, a real App Store app, a login, a second account or Automation Mode, so no agent can run them.
+5. **M2 only:** the license price, a Polar account with a license-key benefit (activation limit 3), a Supabase project and a PostHog project.
+6. **Do Plan 6's owner steps**, in this order. `docs/releasing.md` has the commands, and the plan's "Owner's manual steps" the full list, lettered A to F:
+   - **A, before the first release:** confirm the rulings in item 3; create the signing identity and back it up (`scripts/make-signing-identity.sh`), which also unblocks Plan 3's checks below; commit its fingerprint to `Config/signing-identity.sha1`; create the update-signing key (`scripts/make-update-keys.sh`).
+   - **B, checks by eye and by hand:** hardened runtime with your identity (M3), the app icon, the privacy page's `[OWNER: …]` placeholders, the DMG window on macOS 26 and 27, the update rehearsal (`scripts/rehearse-update.sh`) and the UI smoke tests.
+   - **C, GitHub:** make the repository public, set Pages to GitHub Actions, create the `release` environment with its three secrets, and set the Actions permissions.
+   - **D, the first releases:** a dry run, then `v0.1.0` with a clean-Mac walkthrough, then a real update to `0.1.1`.
+   - **E, optional:** a site domain (change only `RFM_SITE_URL`), and a courtesy note to the Mole author (spec §3.1).
+7. **Run Plan 3's manual checks** below, on a signed build (item 6 creates the identity). They need your Mac, a real App Store app, a login, a second account or Automation Mode, so no agent can run them.
 
 ## Manual checks for Plan 3
 
@@ -187,11 +201,27 @@ M1 has no allowance gate. Keep one seam where Plan 5 inserts `AllowanceGate.chec
 ### Step 4 — M1 check
 On this Mac, build and run a signed copy, then walk the success criterion from spec §2 without the 1 GB part, together with "Manual checks for Plan 3" above. M2 continues with Plan 6, then Plan 5 once the merchant of record is chosen, each written with `superpowers:writing-plans` once the one before it lands.
 
-### Step 5 — Write and execute Plan 6: distribution (next)
+### Step 5 — Write and execute Plan 6: distribution (done)
+
+**Done:** `docs/superpowers/plans/2026-09-29-plan-6-distribution.md`, on the branch `plan6/distribution`. What is left needs the owner: item 6 of "Only you can do these". Its Rulings record where it departs from the brief below:
+- The feed is a GitHub release asset read through `releases/latest/download`, not Pages, and updates ship as `tar.xz` archives, with the DMG for people.
+- Hardened runtime is on in Release, with library validation off for Sparkle.
+- Plan 5 plugs into a release through one optional hook, `token-fixture`, which is skipped until Plan 5 supplies it.
+- The DMG's Open Anyway guide is a still background image, and the site's guide is animated CSS.
+
+The brief it was written from:
+
 Base it on spec §12, `docs/signing.md` and Plan 2's Rulings 1 and 4 (the bundle ID and the single signing identity). It builds on Plan 3's `AppDelegate` and `DestructiveRunQueue`, so start it once Plan 3 merges, on a branch taken from the merged `main`. It does not need Plan 5.
 
 ### Step 6 — Write and execute Plan 5: monetization and analytics
 Start it once the merchant of record is chosen ("Only you can do these", item 2). It plugs into Plan 3's seams: `RemovalGate` and `RemovalRecorder` for the allowance and its ledger, keyed by run and sequence; `RunReporter` for telemetry; and `AppModel.takeDeepLink()` for the purchase link. The spec errata in the roadmap list the names that changed.
+
+Plan 6 leaves it three things to add to `.github/workflows/release.yml`:
+- the hook `scripts/release-hooks/token-fixture`, whose contract is in `scripts/release-hooks/README.md`;
+- `--required` on the workflow's `release-hook.sh` step, so that from then on a release refuses to ship without its fixture (`scripts/tests/workflows.bats` pins the absence of `--required` today, so Plan 5 changes that check);
+- its own price check, which spec §16 asks for ("the release workflow fails if the price is unset") and Plan 6 does not have.
+
+Plan 5 also extends the site's privacy page, which today describes only update checks.
 
 ## Environment facts for the next session
 
@@ -224,6 +254,10 @@ Start it once the merchant of record is chosen ("Only you can do these", item 2)
 
 > Plan 2 has landed. Read the handoff's Step 3. Write Plan 3 with superpowers:writing-plans, then stop for my review.
 
-**Session 5: Plan 6.**
+**Session 5: Plan 6.** Done.
 
 > Plan 3 has landed. Read the handoff's Step 5, the roadmap and its spec errata. Write Plan 6 with superpowers:writing-plans, then stop for my review.
+
+**Session 6: Plan 5.**
+
+> The merchant of record is chosen and Plan 6 has landed. Read the handoff's Step 6, the roadmap and its spec errata. Write Plan 5 with superpowers:writing-plans, then stop for my review.

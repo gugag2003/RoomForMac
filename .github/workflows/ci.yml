@@ -6,31 +6,53 @@ on:
     branches: [main, main-mrvlfl]
   pull_request:
 
+# Nothing here writes to the repository or reads a secret.
+permissions: {}
+
+# `shell: bash` runs each step with `-eo pipefail`, so a failing command in a
+# pipe fails the step. (Without it a step runs `bash -e`, which ignores that.)
+defaults:
+  run:
+    shell: bash
+
 jobs:
   engine:
     name: Engine and MoleEngine
     runs-on: macos-26
     timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           # A shallow checkout leaves vendor/mole without its tags, and the
           # engine's VERSION then records mole_tag=untagged.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: vendor/mole/go.mod
           cache-dependency-path: vendor/mole/go.sum
 
       - name: Install tools
-        run: brew install bats-core shellcheck shfmt coreutils parallel
+        run: brew install bats-core shellcheck shfmt coreutils parallel actionlint
 
       - name: Lint build scripts
         run: |
-          shellcheck scripts/*.sh scripts/lib/*.sh
-          shfmt -d -i 4 -ci -sr scripts/*.sh scripts/lib/*.sh
+          shellcheck scripts/*.sh scripts/lib/*.sh scripts/tests/*.bash
+          shfmt -d -i 4 -ci -sr scripts/*.sh scripts/lib/*.sh scripts/tests/*.bash
+
+      # actionlint runs shellcheck on every `run:` block it finds.
+      - name: Lint workflows
+        run: actionlint
+
+      # Python, not bash, so the shell linters skip it. The bytecode goes to a
+      # temporary folder: nothing is written into scripts/.
+      - name: Check helper scripts
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        run: python3 -m py_compile scripts/dsstore-layout.py
 
       - name: Audit build-check assertions
         run: python3 vendor/mole/scripts/audit_bats_assertions.py scripts/tests/*.bats
@@ -38,8 +60,14 @@ jobs:
       - name: Build the patched engine
         run: scripts/build-engine.sh
 
-      # build_engine.bats, plus signing_identity.bats (stubbed tools, no
-      # keychain). app_bundle.bats skips here without APP; the app job runs it.
+      # Every bats file in scripts/tests: build_engine.bats, then the suites for
+      # the signing, release and site scripts, which stub the tools that sign,
+      # touch a keychain, mount an image or talk to GitHub. Some need tools of
+      # their own, all present on macOS runners: make_dmg.bats needs python3,
+      # ditto, xattr, sips, tiffutil, codesign and clang (it stubs hdiutil),
+      # check_release_app.bats needs clang and workflows.bats needs ruby.
+      # app_bundle.bats skips here without APP, and release_archives.bats runs
+      # its real-Sparkle test only with SPARKLE_BIN; the app job sets both.
       # RFM_ALLOW_PROMPTS=1 also runs `status-go --json`, which asks Finder for
       # free space; developer Macs skip it so tests never raise a prompt.
       - name: Engine build checks
@@ -71,14 +99,16 @@ jobs:
     # image has only Xcode 26.6 and SDK 26.5 (Plan 2, Ruling 14).
     runs-on: xcode-27
     timeout-minutes: 60
+    permissions:
+      contents: read
     # No `needs: engine`: jobs share no files, so this job builds its own engine.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: vendor/mole/go.mod
           cache-dependency-path: vendor/mole/go.sum
@@ -106,7 +136,7 @@ jobs:
           RFM_NO_ENGINE_BUILD: "1"
         run: >-
           xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMacUnit
-          -destination platform=macOS -derivedDataPath build/DerivedData test
+          -destination platform=macOS,arch=arm64 -derivedDataPath build/DerivedData test
 
       - name: Universal Release build
         env:
@@ -116,11 +146,35 @@ jobs:
           -configuration Release -destination "generic/platform=macOS"
           -derivedDataPath build/DerivedData build
 
-      # RFM_ALLOW_PROMPTS=1 also checks the bundled `status-go --json`.
+      # EXPECT_HARDENED=1: the Release build has the hardened runtime on (Plan 6
+      # Ruling 5). RFM_ALLOW_PROMPTS=1 also checks the bundled `status-go --json`.
       - name: Bundle checks
         env:
           RFM_ALLOW_PROMPTS: "1"
-        run: APP=build/DerivedData/Build/Products/Release/RoomForMac.app EXPECT_UNIVERSAL=1 bats scripts/tests/app_bundle.bats
+        run: APP=build/DerivedData/Build/Products/Release/RoomForMac.app EXPECT_UNIVERSAL=1 EXPECT_HARDENED=1 bats scripts/tests/app_bundle.bats
+
+      # The release gate on the ad-hoc build: nested signatures, the runtime
+      # flag, entitlements, Info.plist keys and both architectures. --adhoc
+      # skips the checks that need the real certificate and public key.
+      - name: Release gate (ad hoc)
+        env:
+          APP: build/DerivedData/Build/Products/Release/RoomForMac.app
+        run: scripts/check-release-app.sh "$APP" --adhoc
+
+      # The builds above fetched Sparkle, so its generate_appcast and
+      # sign_update are in the package artifacts. release_archives.bats then
+      # also runs its real-tool test: two appcasts, old items unchanged, a
+      # tampered archive refused.
+      - name: Appcast with Sparkle's tools
+        run: SPARKLE_BIN="$PWD/build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin" bats scripts/tests/release_archives.bats
+
+      # Each script is a program with top-level code, so one swiftc call each,
+      # without -parse-as-library, against the oldest macOS the scripts run on.
+      - name: Typecheck Swift scripts
+        run: |
+          for script in scripts/*.swift scripts/lib/*.swift; do
+            swiftc -typecheck -swift-version 6 -target arm64-apple-macos26.0 "$script"
+          done
 
       # GitHub's macOS images allow Automation Mode without authentication.
       # Allow it here too, should an image ever stop doing so.
@@ -137,12 +191,12 @@ jobs:
           RFM_NO_ENGINE_BUILD: "1"
         run: >-
           xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac
-          -destination platform=macOS -derivedDataPath build/DerivedData
+          -destination platform=macOS,arch=arm64 -derivedDataPath build/DerivedData
           -only-testing:RoomForMacUITests test
 
       - name: Keep the test results of a failed run
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-test-results
           path: build/DerivedData/Logs/Test

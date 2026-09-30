@@ -620,3 +620,243 @@ pages_ruby() {
     [ "$count" -eq 2 ]
     shellcheck -s bash "$BATS_TEST_TMPDIR/block0.sh" "$BATS_TEST_TMPDIR/block1.sh"
 }
+
+# ---------------------------------------------------------------------------
+# ci.yml (Plan 6 Task 16)
+#
+# Each check parses $WORKFLOWS/ci.yml (Task 13's setup_file exports WORKFLOWS)
+# with Ruby's YAML and prints one line per violation. CI_WORKFLOW_FILE, or the
+# second argument of ci_check, names another file; the last test uses that to
+# prove the checks can fail. YAML 1.1 reads the key `on` as the boolean true,
+# so the triggers are read under either. Only ci_ helpers are defined here.
+# ---------------------------------------------------------------------------
+
+ci_require_ruby() {
+    command -v ruby > /dev/null || skip "ruby is needed to parse the workflow"
+}
+
+ci_workflow_file() {
+    printf '%s\n' "${CI_WORKFLOW_FILE:-$WORKFLOWS/ci.yml}"
+}
+
+# ci_check <check> [workflow file]
+ci_check() {
+    local file="${2:-$(ci_workflow_file)}"
+    ruby - "$file" "$1" << 'RUBY'
+require "yaml"
+
+path, check = ARGV
+workflow = YAML.load_file(path)
+jobs = workflow.fetch("jobs")
+errors = []
+all_steps = jobs.flat_map { |job, body| body.fetch("steps").map { |s| [job, s] } }
+step = ->(job, name) { jobs.fetch(job).fetch("steps").find { |s| s["name"] == name } || {} }
+run_of = ->(job, name) { step.(job, name)["run"].to_s.split.join(" ") }
+names = ->(job) { jobs.fetch(job).fetch("steps").map { |s| s["name"] } }
+
+# The Node 24 majors of the Global Constraints, the same floors as the NODE24
+# table of the release.yml tests above. Node 20 is gone from the runners
+# (2026-09-23). An action missing here must be looked up (`runs.using` in its
+# action.yml) and added, so a Node 20 action cannot slip in.
+NODE24 = {
+  "actions/checkout" => 7, "actions/setup-go" => 7, "actions/upload-artifact" => 7,
+  "actions/download-artifact" => 8, "actions/upload-pages-artifact" => 5, "actions/deploy-pages" => 5
+}
+
+case check
+when "triggers"
+  on = workflow["on"] || workflow[true] || {}
+  errors << "push must build [main, main-mrvlfl], not #{on.dig('push', 'branches').inspect}" unless on.dig("push", "branches") == %w[main main-mrvlfl]
+  errors << "pull_request must trigger the workflow" unless on.key?("pull_request")
+  errors << "ci.yml must not use pull_request_target" if on.key?("pull_request_target")
+  errors << "unexpected triggers: #{on.keys.sort.inspect}" unless on.keys.sort == %w[pull_request push]
+when "node24"
+  all_steps.each do |job, s|
+    next unless s["uses"]
+    action, ref = s["uses"].split("@", 2)
+    min = NODE24[action]
+    if min.nil?
+      errors << "#{job}: #{s['uses']} is not in NODE24; read its action.yml (runs.using) and add it"
+    elsif ref =~ /\Av(\d+)/
+      errors << "#{job}: #{s['uses']} runs on Node 20; use v#{min} or later" if $1.to_i < min
+    elsif ref !~ /\A\h{40}\z/
+      errors << "#{job}: #{s['uses']} must pin a major version (vN) or a full commit SHA"
+    end
+  end
+when "permissions"
+  errors << "top-level permissions must be {}, not #{workflow['permissions'].inspect}" unless workflow["permissions"] == {}
+  jobs.each do |job, body|
+    errors << "#{job}: permissions must be exactly {contents: read}, not #{body['permissions'].inspect}" unless body["permissions"] == { "contents" => "read" }
+  end
+when "shell"
+  errors << "defaults.run.shell must be bash, not #{workflow.dig('defaults', 'run', 'shell').inspect}" unless workflow.dig("defaults", "run", "shell") == "bash"
+  jobs.each { |job, body| errors << "#{job}: a job-level default overrides the shell" if body.dig("defaults", "run", "shell") }
+  all_steps.each { |job, s| errors << "#{job}/#{s['name']}: the step sets its own shell" if s.key?("shell") }
+when "secrets"
+  File.readlines(path).each_with_index do |line, index|
+    next if line.lstrip.start_with?("#")
+    errors << "line #{index + 1}: ci.yml must read no secret: #{line.strip}" if line.include?("secrets.")
+  end
+when "engine"
+  errors << "engine: Install tools must install actionlint" unless run_of.("engine", "Install tools").split.include?("actionlint")
+  lint = run_of.("engine", "Lint build scripts")
+  errors << "engine: Lint build scripts must give scripts/tests/*.bash to shellcheck and to shfmt" unless lint.scan("scripts/tests/*.bash").size == 2
+  errors << "engine: Lint workflows must run actionlint" unless run_of.("engine", "Lint workflows") == "actionlint"
+  errors << "engine: Check helper scripts must run python3 -m py_compile scripts/dsstore-layout.py" unless run_of.("engine", "Check helper scripts").include?("python3 -m py_compile scripts/dsstore-layout.py")
+  errors << "engine: Engine build checks must run every bats file: bats scripts/tests" unless run_of.("engine", "Engine build checks") == "bats scripts/tests"
+  build = names.("engine").index("Build the patched engine")
+  ["Lint build scripts", "Lint workflows", "Check helper scripts"].each do |name|
+    at = names.("engine").index(name)
+    errors << "engine: #{name} must come before Build the patched engine" if at.nil? || build.nil? || at > build
+  end
+when "app"
+  bundle = step.("app", "Bundle checks")["run"].to_s
+  errors << "app: Bundle checks must set EXPECT_HARDENED=1" unless bundle.include?("EXPECT_HARDENED=1")
+  errors << "app: Bundle checks must run app_bundle.bats on the universal build" unless bundle.include?("EXPECT_UNIVERSAL=1") && bundle.include?("bats scripts/tests/app_bundle.bats")
+  gate = run_of.("app", "Release gate (ad hoc)")
+  errors << "app: Release gate (ad hoc) must run scripts/check-release-app.sh \"$APP\" --adhoc" unless gate == "scripts/check-release-app.sh \"$APP\" --adhoc"
+  appcast = run_of.("app", "Appcast with Sparkle's tools")
+  unless appcast.include?("SPARKLE_BIN=") && appcast.include?("build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin") && appcast.end_with?(" bats scripts/tests/release_archives.bats")
+    errors << "app: Appcast with Sparkle's tools must run release_archives.bats with SPARKLE_BIN set to Sparkle's bin folder"
+  end
+  typecheck = run_of.("app", "Typecheck Swift scripts")
+  unless typecheck.include?("swiftc -typecheck") && typecheck.include?("scripts/*.swift") && typecheck.include?("scripts/lib/*.swift")
+    errors << "app: Typecheck Swift scripts must run swiftc -typecheck on scripts/*.swift and scripts/lib/*.swift"
+  end
+  order = ["Universal Release build", "Bundle checks", "Release gate (ad hoc)", "Appcast with Sparkle's tools"].map { |name| names.("app").index(name) }
+  errors << "app: the release build, Bundle checks, the release gate and the appcast checks must run in that order" if order.include?(nil) || order != order.sort
+when "destination"
+  ["Unit tests", "UI smoke tests"].each do |name|
+    errors << "app: #{name} must use -destination platform=macOS,arch=arm64" unless run_of.("app", name).include?("-destination platform=macOS,arch=arm64")
+  end
+  errors << "app: Universal Release build must keep -destination \"generic/platform=macOS\"" unless run_of.("app", "Universal Release build").include?("-destination \"generic/platform=macOS\"")
+when "runner-labels"
+  # actionlint reports a runs-on label it does not know, so every label the
+  # workflows use is either a hosted one below or listed in .github/actionlint.yaml.
+  hosted = %w[ubuntu-latest macos-26]
+  config = File.join(File.dirname(path), "..", "actionlint.yaml")
+  listed = File.file?(config) ? Array(YAML.load_file(config).dig("self-hosted-runner", "labels")) : []
+  Dir[File.join(File.dirname(path), "*.yml")].sort.each do |file|
+    YAML.load_file(file).fetch("jobs").each do |job, body|
+      Array(body["runs-on"]).each do |label|
+        next if (hosted + listed).include?(label)
+        errors << "#{File.basename(file)}: job #{job} runs on #{label}, which actionlint does not know: list it under self-hosted-runner in .github/actionlint.yaml"
+      end
+    end
+  end
+when "prompts"
+  set = all_steps.select { |_, s| (s["env"] || {}).key?("RFM_ALLOW_PROMPTS") }.map { |job, s| "#{job}/#{s['name']}=#{s['env']['RFM_ALLOW_PROMPTS']}" }.sort
+  errors << "RFM_ALLOW_PROMPTS must be set on exactly [app/Bundle checks=1, engine/Engine build checks=1], not #{set.inspect}" unless set == ["app/Bundle checks=1", "engine/Engine build checks=1"]
+  errors << "RFM_ALLOW_PROMPTS must not be set for a whole job or workflow" if (workflow["env"] || {}).key?("RFM_ALLOW_PROMPTS") || jobs.values.any? { |body| (body["env"] || {}).key?("RFM_ALLOW_PROMPTS") }
+else
+  errors << "unknown check #{check}"
+end
+
+if errors.empty?
+  puts "ci.yml #{check}: ok"
+else
+  puts errors
+  exit 1
+end
+RUBY
+}
+
+# ci_passes <check>: the real ci.yml (or CI_WORKFLOW_FILE) passes the check.
+ci_passes() {
+    run ci_check "$1"
+    if [ "$status" -ne 0 ]; then
+        printf '%s\n' "$output" >&3
+        return 1
+    fi
+}
+
+# ci_fails <check> <sed expression> <text the report must contain>: the check
+# fails on a copy of ci.yml that the expression changes, and says why.
+ci_fails() {
+    local mutated="$BATS_TEST_TMPDIR/mutated-$1.yml"
+    sed -e "$2" "$(ci_workflow_file)" > "$mutated"
+    if cmp -s "$mutated" "$(ci_workflow_file)"; then
+        echo "the sed expression changed nothing: $2" >&3
+        return 1
+    fi
+    run ci_check "$1" "$mutated"
+    if [ "$status" -ne 1 ]; then
+        printf 'expected the %s check to fail, got %s: %s\n' "$1" "$status" "$output" >&3
+        return 1
+    fi
+    if ! grep -q -F -e "$3" <<< "$output"; then
+        printf 'the %s report does not contain "%s": %s\n' "$1" "$3" "$output" >&3
+        return 1
+    fi
+}
+
+@test "ci.yml: the triggers are push to main and main-mrvlfl and pull_request, never pull_request_target" {
+    ci_require_ruby
+    ci_passes triggers
+}
+
+@test "ci.yml: no action runs on Node 20" {
+    ci_require_ruby
+    ci_passes node24
+}
+
+@test "ci.yml: permissions are empty at the top and contents read on every job" {
+    ci_require_ruby
+    ci_passes permissions
+}
+
+@test "ci.yml: every step runs under bash -eo pipefail" {
+    ci_require_ruby
+    ci_passes shell
+}
+
+@test "ci.yml: reads no secret" {
+    ci_require_ruby
+    ci_passes secrets
+}
+
+@test "ci.yml: the engine job lints the workflows, the .bash helpers and the Python helper before it builds" {
+    ci_require_ruby
+    ci_passes engine
+}
+
+@test "ci.yml: the app job runs the hardened bundle checks, the release gate, the Sparkle tools and the Swift script typecheck" {
+    ci_require_ruby
+    ci_passes app
+}
+
+@test "ci.yml: the unit and UI tests name the arm64 destination" {
+    ci_require_ruby
+    ci_passes destination
+}
+
+@test "ci.yml: RFM_ALLOW_PROMPTS stays on exactly the two steps that need it" {
+    ci_require_ruby
+    ci_passes prompts
+}
+
+@test "ci.yml: actionlint is told about every custom runner label the workflows use" {
+    ci_require_ruby
+    ci_passes runner-labels
+}
+
+@test "ci.yml: the checks fail on a Node 20 pin, a wider permission, a secret, pull_request_target, a changed prompt guard and an unlisted runner label" {
+    ci_require_ruby
+    ci_fails node24 's#actions/checkout@v[0-9]*#actions/checkout@v4#' "actions/checkout@v4 runs on Node 20"
+    ci_fails permissions 's#contents: read#contents: write#' "permissions must be exactly {contents: read}"
+    ci_fails secrets 's#run: scripts/ensure-engine.sh$#run: scripts/ensure-engine.sh "${{ secrets.LEAK }}"#' "ci.yml must read no secret"
+    ci_fails triggers 's#^  pull_request:#  pull_request_target:#' "ci.yml must not use pull_request_target"
+    ci_fails prompts 's#RFM_ALLOW_PROMPTS: "1"#RFM_ALLOW_PROMPTS: "0"#' "RFM_ALLOW_PROMPTS must be set on exactly"
+
+    # A copy of .github without the xcode-27 label in actionlint.yaml.
+    local github="$BATS_TEST_TMPDIR/copy/.github" real
+    real="$(dirname "$(ci_workflow_file)")"
+    mkdir -p "$github"
+    cp -R "$real" "$github/workflows"
+    sed -e '/- xcode-27/d' "$real/../actionlint.yaml" > "$github/actionlint.yaml"
+    run ci_check runner-labels "$github/workflows/ci.yml"
+    if [ "$status" -ne 1 ] || ! grep -q -F "runs on xcode-27, which actionlint does not know" <<< "$output"; then
+        printf 'expected the runner-labels check to name xcode-27, got %s: %s\n' "$status" "$output" >&3
+        return 1
+    fi
+}
