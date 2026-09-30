@@ -236,8 +236,8 @@ RUBY
 @test "build runs its eighteen steps in the planned order" {
     release_check release.yml << 'RUBY'
 check(in_order?("build", [
-  "Check out", "Preflight", "Set up Go", "Install tools", "Show the toolchain", "Import the signing identity",
-  "Token fixture (release hook)", "Build the patched engine", "Generate the Xcode project", "Universal Release build",
+  "Check out", "Preflight", "Set up Go", "Install tools", "Show the toolchain",
+  "Token fixture (release hook)", "Build the patched engine", "Generate the Xcode project", "Import the signing identity", "Universal Release build",
   "Remove the signing keychain", "Check the app", "Make the disk image", "Make the update and source archives",
   "Generate the appcast", "Write the release summary", "Upload the release files", "Upload the token fixture",
 ]), "build's steps are #{steps("build").map { |s| s["name"] }.inspect}")
@@ -309,7 +309,7 @@ run = build["run"].to_s.gsub(/\s+/, " ")
 [
   "-project RoomForMac.xcodeproj", "-scheme RoomForMac", "-configuration Release", '-destination "generic/platform=macOS"',
   "-derivedDataPath build/DerivedData", 'MARKETING_VERSION="$VERSION"', 'CURRENT_PROJECT_VERSION="$BUILD_NUMBER"',
-  'CODE_SIGN_IDENTITY="RoomForMac Self-Signed"', 'OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN"',
+  'CODE_SIGN_IDENTITY="$SIGNING_SHA1"', 'OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN"',
 ].each { |part| check(run.include?(part), "the build must pass #{part}") }
 check(run.strip.end_with?(" build"), "the build action must be `build`")
 check(build["env"] == { "RFM_NO_ENGINE_BUILD" => "1" }, "the build runs with RFM_NO_ENGINE_BUILD=1 and nothing else")

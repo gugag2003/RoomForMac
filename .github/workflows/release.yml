@@ -100,14 +100,6 @@ jobs:
           python3 --version
           gh --version
 
-      # KEYCHAIN and SIGNING_SHA1 go to $GITHUB_ENV. The keychain is removed
-      # again right after the build, whatever happens.
-      - name: Import the signing identity
-        env:
-          RFM_SIGNING_P12_BASE64: ${{ secrets.RFM_SIGNING_P12_BASE64 }}
-          RFM_SIGNING_P12_PASSWORD: ${{ secrets.RFM_SIGNING_P12_PASSWORD }}
-        run: scripts/import-signing-identity.sh create "$RUNNER_TEMP/rfm-signing.keychain-db" >> "$GITHUB_ENV"
-
       # Plan 5's per-release hook (scripts/release-hooks/token-fixture). Until it
       # exists the dispatcher skips it with a notice, both variables are empty,
       # and nothing is written. No flag makes it mandatory yet (Ruling 12).
@@ -135,6 +127,15 @@ jobs:
       - name: Generate the Xcode project
         run: xcodegen generate
 
+      # KEYCHAIN and SIGNING_SHA1 go to $GITHUB_ENV. The keychain is created only
+      # now, after the hook and the engine build have run, and removed again
+      # right after the build, whatever happens.
+      - name: Import the signing identity
+        env:
+          RFM_SIGNING_P12_BASE64: ${{ secrets.RFM_SIGNING_P12_BASE64 }}
+          RFM_SIGNING_P12_PASSWORD: ${{ secrets.RFM_SIGNING_P12_PASSWORD }}
+        run: scripts/import-signing-identity.sh create "$RUNNER_TEMP/rfm-signing.keychain-db" >> "$GITHUB_ENV"
+
       # RFM_NO_ENGINE_BUILD=1: the "Prepare engine" phase fails instead of
       # rebuilding, so the app embeds the engine built above. Command-line
       # settings override Config/Signing.xcconfig.
@@ -146,7 +147,7 @@ jobs:
           -configuration Release -destination "generic/platform=macOS"
           -derivedDataPath build/DerivedData
           MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
-          CODE_SIGN_IDENTITY="RoomForMac Self-Signed"
+          CODE_SIGN_IDENTITY="$SIGNING_SHA1"
           OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN"
           build
 
