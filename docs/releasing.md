@@ -142,7 +142,7 @@ In this order, before the first release.
 
 ```bash
 git log --all --name-only --pretty=format: | sort -u | grep -E '(^|/)(identity\.p12(\.base64|\.password)?|key\.pem|ed25519\.key)$'
-git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | cut -c1-100
+git log --all -p | grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|^\+[A-Za-z0-9+/]{60,}={0,2}$' | grep -vE '^[0-9]+:\+[0-9a-f]{60,}$' | cut -c1-100
 gh repo edit gugag2003/RoomForMac --visibility public --accept-visibility-change-consequences
 ```
 
