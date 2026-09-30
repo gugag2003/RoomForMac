@@ -14,6 +14,11 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
+  # XcodeGen 2.46 writes an .icon bundle's file type as wrapper.icon, which Xcode's
+  # build specifications do not define (theirs is folder.iconcomposer.icon), so
+  # the generated project is corrected after every generation. A XcodeGen that
+  # already writes the right type makes this a no-op.
+  postGenCommand: perl -pi -e 's/lastKnownFileType = wrapper\.icon;/lastKnownFileType = folder.iconcomposer.icon;/' RoomForMac.xcodeproj/project.pbxproj
 
 configFiles:
   Debug: Config/App.xcconfig
@@ -119,6 +124,9 @@ targets:
         PRODUCT_NAME: RoomForMac
         ARCHS: $(ARCHS_STANDARD)
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # RoomForMac/Resources/AppIcon.icon: actool names the icon after the bundle,
+        # and the built Info.plist's CFBundleIconName follows this setting.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Build scripts only: where build/engine lives. The app never reads it.
         RFM_ENGINE_DIR: $(SRCROOT)/build/engine
     preBuildScripts:

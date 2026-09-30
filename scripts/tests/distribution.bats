@@ -599,3 +599,197 @@ swift_files_importing_sparkle() {
         [[ "$output" != *"/$name."* ]] || return 1
     done
 }
+
+# --- App icon (Task 7) -------------------------------------------------------
+# The artwork lives in RoomForMac/Resources/AppIcon.icon. packaging/icon/ and
+# site/ hold what scripts/export-app-icon.swift rendered from a build of it.
+# The tests use ROOT from Task 1's setup(). Helpers are named icon_* so they
+# cannot collide with the ones above.
+
+# The stamp of an .icon bundle, exactly as export-app-icon.swift computes it:
+# the SHA-256 of a manifest with one "<sha256 of the file>  <relative path>"
+# line per regular file, sorted bytewise by path, without .DS_Store.
+icon_source_stamp() {
+    local dir="$1" manifest="" path
+    [ -d "$dir" ] || return 1
+    while IFS= read -r path; do
+        manifest+="$(shasum -a 256 < "$dir/$path" | cut -d' ' -f1)  $path"$'\n'
+    done < <(cd "$dir" && find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort)
+    printf '%s' "$manifest" | shasum -a 256 | cut -d' ' -f1
+}
+
+icon_pixels() {
+    sips -g "$1" "$2" | awk -v key="$1:" '$1 == key { print $2 }'
+}
+
+@test "the icon export was made from the current AppIcon.icon" {
+    [ -f "$ROOT/packaging/icon/SOURCE.sha256" ]
+    [ "$(wc -l < "$ROOT/packaging/icon/SOURCE.sha256" | tr -d ' ')" = 1 ]
+    run cat "$ROOT/packaging/icon/SOURCE.sha256"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$output" = "$(icon_source_stamp "$ROOT/RoomForMac/Resources/AppIcon.icon")" ]
+}
+
+@test "the icon stamp covers every file and ignores .DS_Store" {
+    local source copy stamp
+    source="$ROOT/RoomForMac/Resources/AppIcon.icon"
+    copy="$BATS_TEST_TMPDIR/AppIcon.icon"
+    cp -R "$source" "$copy"
+    stamp="$(icon_source_stamp "$copy")"
+    [ "$stamp" = "$(icon_source_stamp "$source")" ]
+    : > "$copy/.DS_Store"
+    : > "$copy/Assets/.DS_Store"
+    [ "$(icon_source_stamp "$copy")" = "$stamp" ]
+    printf ' ' >> "$copy/Assets/sun.svg"
+    [ "$(icon_source_stamp "$copy")" != "$stamp" ]
+    cp "$source/Assets/sun.svg" "$copy/Assets/sun.svg"
+    [ "$(icon_source_stamp "$copy")" = "$stamp" ]
+    mv "$copy/Assets/sun.svg" "$copy/Assets/sun-renamed.svg"
+    [ "$(icon_source_stamp "$copy")" != "$stamp" ]
+    mv "$copy/Assets/sun-renamed.svg" "$copy/Assets/sun.svg"
+    : > "$copy/Assets/extra.svg"
+    [ "$(icon_source_stamp "$copy")" != "$stamp" ]
+}
+
+@test "icon.json names only existing layers, at most four groups, for macOS" {
+    run python3 - "$ROOT/RoomForMac/Resources/AppIcon.icon" << 'PY'
+import json, os, sys
+
+bundle = sys.argv[1]
+assert os.path.basename(bundle) == "AppIcon.icon", "the bundle must be named AppIcon.icon: actool names the icon after it"
+document = json.load(open(os.path.join(bundle, "icon.json")))
+assert document["supported-platforms"] == {"squares": ["macOS"]}, document["supported-platforms"]
+groups = document["groups"]
+assert 1 <= len(groups) <= 4, "Icon Composer allows at most four groups, found %d" % len(groups)
+used = set()
+for group in groups:
+    assert group.get("name"), "every group needs a name"
+    assert group["layers"], "an empty group"
+    for layer in group["layers"]:
+        assert layer.get("name"), "every layer needs a name"
+        image = layer["image-name"]
+        assert image.endswith(".svg"), "%s is not an SVG layer" % image
+        assert os.path.isfile(os.path.join(bundle, "Assets", image)), "%s is missing from Assets" % image
+        used.add(image)
+present = set(os.listdir(os.path.join(bundle, "Assets")))
+assert present == used, "unreferenced or missing layers: %s" % sorted(present ^ used)
+print("groups=%d layers=%d" % (len(groups), len(used)))
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == "groups="* ]] || return 1
+}
+
+@test "the artwork keeps to the Alpine Moss palette, has no text and no banned motif names" {
+    run python3 - "$ROOT/RoomForMac/Resources/AppIcon.icon" << 'PY'
+import json, os, re, sys
+
+bundle = sys.argv[1]
+# Spec section 11.1, light and dark.
+palette = {
+    "F1F0E5", "1C2119", "FCFBF2", "262D22", "333B2D", "586440", "ADB591",
+    "7E8866", "B3915D", "C9A877", "A8563F", "C97A5F",
+}
+banned_elements = ("<text", "<tspan", "<image", "<filter", "<foreignobject", "<script", "href=", "style=")
+banned_names = ("computer", "display", "monitor", "broom", "sparkle", "mole")
+problems = []
+
+for name in sorted(os.listdir(os.path.join(bundle, "Assets"))):
+    source = open(os.path.join(bundle, "Assets", name), encoding="utf-8").read()
+    for token in banned_elements:
+        if token in source.lower():
+            problems.append("%s contains %s" % (name, token))
+    paints = re.findall(r'\b(?:fill|stroke)="([^"]*)"', source)
+    if not paints:
+        problems.append("%s sets no fill" % name)
+    for paint in paints:
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", paint):
+            problems.append("%s paints with %r: use #rrggbb" % (name, paint))
+        elif paint[1:].upper() not in palette:
+            problems.append("%s uses %s, which is not a palette token" % (name, paint))
+
+text = open(os.path.join(bundle, "icon.json"), encoding="utf-8").read()
+for match in re.finditer(r'"srgb:([0-9.]+),([0-9.]+),([0-9.]+),[0-9.]+"', text):
+    color = "".join("%02X" % round(float(part) * 255) for part in match.groups())
+    if color not in palette:
+        problems.append("icon.json uses #%s, which is not a palette token" % color)
+for space in re.findall(r'"([a-z-]+):[0-9.]+(?:,[0-9.]+)+"', text):
+    if space != "srgb":
+        problems.append("icon.json uses the colour space %s: write srgb: so this check can read it" % space)
+
+document = json.loads(text)
+names = [group["name"] for group in document["groups"]]
+names += [layer["name"] for group in document["groups"] for layer in group["layers"]]
+names += [layer["image-name"] for group in document["groups"] for layer in group["layers"]]
+for name in names:
+    for word in banned_names:
+        if word in name.lower():
+            problems.append("layer or group name %r contains %r" % (name, word))
+
+if problems:
+    print("\n".join(problems))
+    sys.exit(1)
+print("palette-ok")
+PY
+    [ "$status" -eq 0 ]
+    [ "$output" = "palette-ok" ]
+}
+
+@test "project.yml names the icon AppIcon and rewrites the file type XcodeGen gives an .icon bundle" {
+    local project="$BATS_TEST_TMPDIR/fixture" command
+    run ruby -ryaml -e 'spec = YAML.load_file(ARGV[0]); puts spec.fetch("targets").fetch("RoomForMac").fetch("settings").fetch("base").fetch("ASSETCATALOG_COMPILER_APPICON_NAME")' "$ROOT/project.yml"
+    [ "$status" -eq 0 ]
+    [ "$output" = AppIcon ]
+    command="$(ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch("options").fetch("postGenCommand")' "$ROOT/project.yml")"
+    [ -n "$command" ]
+    mkdir -p "$project/RoomForMac.xcodeproj"
+    cat > "$project/RoomForMac.xcodeproj/project.pbxproj" << 'PBX'
+		F1815803D430AF2B14B47ACA /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		9E30C8C11AFEEED8031DB702 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		0CD0412B7B1F91368560E84F /* AppIconCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconCache.swift; sourceTree = "<group>"; };
+PBX
+    (cd "$project" && sh -c "$command")
+    grep -q 'AppIcon.icon \*/ = .*lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon;' "$project/RoomForMac.xcodeproj/project.pbxproj"
+    [ "$(grep -c 'wrapper.icon' "$project/RoomForMac.xcodeproj/project.pbxproj" || true)" = 0 ]
+    grep -q 'lastKnownFileType = folder.assetcatalog;' "$project/RoomForMac.xcodeproj/project.pbxproj"
+    grep -q 'lastKnownFileType = sourcecode.swift;' "$project/RoomForMac.xcodeproj/project.pbxproj"
+    [ -d "$ROOT/RoomForMac/Resources/AppIcon.icon" ]
+}
+
+@test "CREDITS.md credits the app icon as original GPL-3.0 artwork" {
+    grep -qx '## App icon' "$ROOT/CREDITS.md"
+    grep -qx 'Original artwork for RoomForMac, GPL-3.0.' "$ROOT/CREDITS.md"
+}
+
+@test "the exported site PNGs have their stated pixel sizes" {
+    command -v sips > /dev/null 2>&1 || skip "sips is macOS-only"
+    local spec file size
+    for spec in site/favicon.png:64 site/assets/app-icon-128.png:128 site/assets/app-icon-256.png:256 site/assets/app-icon-512.png:512; do
+        file="$ROOT/${spec%%:*}"
+        size="${spec##*:}"
+        [ -f "$file" ]
+        [ "$(icon_pixels pixelWidth "$file")" = "$size" ]
+        [ "$(icon_pixels pixelHeight "$file")" = "$size" ]
+        [ "$(icon_pixels hasAlpha "$file")" = yes ]
+    done
+}
+
+@test "VolumeIcon.icns unpacks to the ten iconset sizes, up to 1024 px" {
+    command -v iconutil > /dev/null 2>&1 || skip "iconutil is macOS-only"
+    command -v sips > /dev/null 2>&1 || skip "sips is macOS-only"
+    local iconset="$BATS_TEST_TMPDIR/VolumeIcon.iconset" spec
+    run iconutil -c iconset "$ROOT/packaging/icon/VolumeIcon.icns" -o "$iconset"
+    [ "$status" -eq 0 ]
+    for spec in icon_16x16:16 icon_16x16@2x:32 icon_32x32:32 icon_32x32@2x:64 icon_128x128:128 \
+        icon_128x128@2x:256 icon_256x256:256 icon_256x256@2x:512 icon_512x512:512 icon_512x512@2x:1024; do
+        [ -f "$iconset/${spec%%:*}.png" ]
+        [ "$(icon_pixels pixelWidth "$iconset/${spec%%:*}.png")" = "${spec##*:}" ]
+    done
+}
+
+@test "export-app-icon.swift typechecks in Swift 6 mode" {
+    command -v xcrun > /dev/null 2>&1 || skip "the Swift toolchain here is macOS-only"
+    run xcrun swiftc -typecheck -swift-version 6 -target arm64-apple-macos26.0 "$ROOT/scripts/export-app-icon.swift"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}

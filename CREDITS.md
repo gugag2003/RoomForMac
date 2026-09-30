@@ -27,3 +27,7 @@ None bundled yet. Every photo will be public domain, CC0 or CC BY, credited here
 ## Fonts
 
 SF Pro and SF Pro Rounded, system fonts, not redistributed.
+
+## App icon
+
+Original artwork for RoomForMac, GPL-3.0.

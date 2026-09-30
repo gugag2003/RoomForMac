@@ -342,3 +342,35 @@ require_hardened() {
         fi
     done
 }
+
+# --- App icon (Task 7) -------------------------------------------------------
+
+@test "the built Info.plist names the app icon" {
+    run plutil -extract CFBundleIconName raw -o - "$APP/Contents/Info.plist"
+    [ "$status" -eq 0 ]
+    [ "$output" = AppIcon ]
+}
+
+@test "Assets.car holds the layered app icon with a 1024 px rendition" {
+    run python3 - "$APP/Contents/Resources/Assets.car" << 'PY'
+import json
+import subprocess
+import sys
+
+listing = subprocess.run(["assetutil", "--info", sys.argv[1]], check=True, capture_output=True, text=True).stdout
+icons = [entry for entry in json.loads(listing) if entry.get("Name") == "AppIcon"]
+kinds = {entry.get("AssetType") for entry in icons}
+assert "IconImageStack" in kinds, "no layered icon named AppIcon, only %s" % sorted(kinds)
+assert "MultiSized Image" in kinds, "no multi-size image named AppIcon, only %s" % sorted(kinds)
+sizes = {entry.get("PixelWidth") for entry in icons if entry.get("AssetType") == "Icon Image"}
+assert 1024 in sizes, "no 1024 px rendition, only %s" % sorted(size for size in sizes if size)
+print("icon-ok")
+PY
+    [ "$status" -eq 0 ]
+    [ "$output" = "icon-ok" ]
+}
+
+@test "the icon source is compiled into Assets.car, not copied into the app" {
+    [ ! -e "$APP/Contents/Resources/AppIcon.icon" ]
+    [ -f "$APP/Contents/Resources/Assets.car" ]
+}
