@@ -77,7 +77,7 @@ prepare  builds RoomForMac 0.0.1 and 0.0.2 (Release, the real pipeline) against
          a feed at http://127.0.0.1:<port>/appcast.xml with a throwaway EdDSA key,
          builds 0.0.1 again without the quarantine cleanup, makes the disk images
          and a valid and a broken feed, and writes CHECKLIST.md. Needs an empty or
-         new <workdir> under build/ or $TMPDIR, and never deletes anything.
+         new <workdir> under build/ or $TMPDIR, and never deletes a rehearsal.
 check    V1 (signatures, no XPC services, designated requirement), V2 (the feed's
          item and signature), V4 (the broken feed is rejected) and V9 (a second
          release leaves the first item unchanged). Prints ok/error lines; exits 1
@@ -436,7 +436,7 @@ open ~/Applications/RoomForMac.app
 The `xattr` line is the fast path: a local build has no quarantine, so it changes nothing. This checklist is for you, not for users; V6 covers a real download.
 
 1. Finish onboarding (the updater never starts before it ends). Grant Full Disk Access and Automation.
-2. Settings > General > Updates shows **Check Now** enabled. If it says "Updates aren't set up in this build.", the app refused the `http://127.0.0.1` feed: see Task 15's Interface issue. Stop here and report it.
+2. Settings > General > Updates shows **Check Now** enabled. If it says "Updates aren't set up in this build.", the app refused the `http://127.0.0.1` feed (DistributionInfo accepts http only for 127.0.0.1, localhost and ::1). Stop here and report it.
 3. Choose RoomForMac > Check for Updates…. Sparkle may also raise its alert by itself a few seconds after launch (automatic checks are on); that is the same path. Install the update.
 4. Expect: no password, App Management or Gatekeeper prompt; a relaunch into @VERSION2@; Full Disk Access, Finder and System Events still granted in Settings > Permissions, and no new Automation prompt; no quarantine on the new bundle. Then:
 ```bash
