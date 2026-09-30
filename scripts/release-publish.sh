@@ -100,7 +100,7 @@ check_files() {
             problem "appcast.xml does not point at v$version/$update_archive"
     fi
     if [[ -s "$dir/latest.json" ]]; then
-        grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$version\"" "$dir/latest.json" ||
+        grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"${version//./\\.}\"" "$dir/latest.json" ||
             problem "latest.json does not name version $version"
     fi
 

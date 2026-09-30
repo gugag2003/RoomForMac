@@ -178,6 +178,12 @@ expect_problem() {
     expect_problem "appcast.xml does not point at v1.2.3/RoomForMac-1.2.3.tar.xz"
 }
 
+@test "check-files matches the version literally, dots included" {
+    make_release_dir "$BATS_TEST_TMPDIR/out"
+    printf '{"schema":1,"version":"1x2x3","build":1002003}\n' > "$BATS_TEST_TMPDIR/out/latest.json"
+    expect_problem "latest.json does not name version 1.2.3"
+}
+
 @test "check-files catches a summary for another version" {
     make_release_dir "$BATS_TEST_TMPDIR/out"
     printf '{"schema":1,"version":"1.2.2","build":1002002}\n' > "$BATS_TEST_TMPDIR/out/latest.json"

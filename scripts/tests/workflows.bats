@@ -366,9 +366,15 @@ check(step("publish", "Replace a leftover draft")["run"].to_s.strip == 'scripts/
 check(step("publish", "Verify the release files")["run"].to_s.strip == 'scripts/release-publish.sh check-files release-files "$VERSION"', "the downloaded files are verified before anything is created")
 check(step("publish", "Check the live feed")["run"].to_s.strip == 'scripts/release-publish.sh check-feed "$BUILD_NUMBER"', "the live feed check must use $BUILD_NUMBER")
 check(job("publish")["env"] == {
-  "GH_TOKEN" => "${{ github.token }}", "GH_REPO" => "${{ github.repository }}", "TAG" => "${{ needs.build.outputs.tag }}",
+  "GH_REPO" => "${{ github.repository }}", "TAG" => "${{ needs.build.outputs.tag }}",
   "VERSION" => "${{ needs.build.outputs.version }}", "BUILD_NUMBER" => "${{ needs.build.outputs.build_number }}",
 }, "publish's environment is #{job("publish")["env"].inspect}")
+with_token = job("publish")["steps"].select { |s| (s["env"] || {})["GH_TOKEN"] }.map { |s| s["name"] }
+check(with_token == ["Verify the release files", "Replace a leftover draft", "Create the draft release", "Publish as latest", "Check the live feed"], "GH_TOKEN only on the steps that call gh or release-publish.sh, not #{with_token.inspect}")
+check(step("publish", "Create the draft release")["env"] == { "GH_TOKEN" => "${{ github.token }}" }, "GH_TOKEN comes from github.token")
+frun = step("fixture", "Commit and open the pull request")["run"].to_s
+check(frun.include?("\\.github(/|$)") && frun.include?("(^|/)\\.git(/|$)"), "the fixture path filter must reject .github/ and .git/ paths")
+check(frun.include?("tar -tvf token-fixture/token-fixture.tar | grep -v '^[-d]'"), "the fixture tar must hold only regular files and directories")
 finish
 RUBY
 }

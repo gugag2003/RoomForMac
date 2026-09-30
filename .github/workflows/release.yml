@@ -238,7 +238,6 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.build.outputs.tag }}
       VERSION: ${{ needs.build.outputs.version }}
@@ -261,14 +260,20 @@ jobs:
           path: release-files
 
       - name: Verify the release files
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/release-publish.sh check-files release-files "$VERSION"
 
       # A draft left by an earlier failed run is deleted. A published release
       # for the tag fails the job, and nothing is touched.
       - name: Replace a leftover draft
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/release-publish.sh replace-draft "$TAG"
 
       - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$TAG" --verify-tag --draft
           --title "RoomForMac $VERSION" --notes-file "release-notes/$VERSION.md"
@@ -280,10 +285,14 @@ jobs:
           release-files/SHA256SUMS
 
       - name: Publish as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh release edit "$TAG" --draft=false --latest
 
       # Up to five minutes: the feed URL answers through releases/latest/download.
       - name: Check the live feed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/release-publish.sh check-feed "$BUILD_NUMBER"
 
   # Every Pages deployment replaces the whole site, so this job stages all of
@@ -369,8 +378,12 @@ jobs:
         run: |
           branch="release/token-fixture-$VERSION"
           tar -tf token-fixture/token-fixture.tar > "$RUNNER_TEMP/fixture-paths.txt"
-          if grep -Eq '(^/|(^|/)\.\.(/|$)|^\.github/)' "$RUNNER_TEMP/fixture-paths.txt"; then
-              echo "::error::the fixture lists a path outside the working tree or under .github"
+          if grep -Eq '(^/|(^|/)\.\.(/|$)|^\.github(/|$)|(^|/)\.git(/|$))' "$RUNNER_TEMP/fixture-paths.txt"; then
+              echo "::error::the fixture lists a path outside the working tree or under .github or .git"
+              exit 1
+          fi
+          if tar -tvf token-fixture/token-fixture.tar | grep -v '^[-d]'; then
+              echo "::error::the fixture holds an entry that is neither a file nor a directory"
               exit 1
           fi
           tar -xf token-fixture/token-fixture.tar
