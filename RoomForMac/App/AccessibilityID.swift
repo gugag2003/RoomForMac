@@ -9,6 +9,9 @@ enum AccessibilityID {
         "sidebar.\(section.rawValue)"
     }
 
+    /// The Settings row at the bottom of the sidebar.
+    static let sidebarSettings = "sidebar.settings"
+
     // Engine problem card (Task 3)
     static let engineProblemCard = "engineProblem.card"
     static let engineProblemDetails = "engineProblem.details"

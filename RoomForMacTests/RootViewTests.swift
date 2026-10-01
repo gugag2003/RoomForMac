@@ -36,6 +36,7 @@ struct RootViewTests {
         #expect(AccessibilityID.sidebar == "sidebar")
         #expect(SidebarSection.allCases.map(AccessibilityID.sidebarRow)
             == ["sidebar.smartClean", "sidebar.uninstaller", "sidebar.status"])
+        #expect(AccessibilityID.sidebarSettings == "sidebar.settings")
         #expect(AccessibilityID.checkingEngine == "engine.checking")
         #expect(AccessibilityID.engineProblemCard == "engineProblem.card")
         #expect(AccessibilityID.engineProblemDetails == "engineProblem.details")

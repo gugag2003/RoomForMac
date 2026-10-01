@@ -276,6 +276,24 @@ struct SidebarSectionTests {
         #expect(SidebarSection.uninstaller.backdrop == .uninstaller)
         #expect(SidebarSection.status.backdrop == .status)
     }
+
+    /// ⌘1, ⌘2 and ⌘3 select the rows from the top, so the order of the cases is the order of the keys.
+    @Test func shortcuts() {
+        #expect(SidebarSection.allCases.map(\.shortcut) == ["1", "2", "3"])
+    }
+}
+
+@Suite("Sidebar rows")
+struct SidebarRowFillTests {
+    @Test func theSelectedRowWearsTheGlassWhetherHoveredOrNot() {
+        #expect(SidebarRowFill.resolve(isSelected: true, isHovered: false) == .selection)
+        #expect(SidebarRowFill.resolve(isSelected: true, isHovered: true) == .selection)
+    }
+
+    @Test func anotherRowShowsAWashOnlyWhileHovered() {
+        #expect(SidebarRowFill.resolve(isSelected: false, isHovered: true) == .hover)
+        #expect(SidebarRowFill.resolve(isSelected: false, isHovered: false) == .none)
+    }
 }
 
 /// These tests share the scenario suite `RoomForMac.UITest`, so they run one at a time

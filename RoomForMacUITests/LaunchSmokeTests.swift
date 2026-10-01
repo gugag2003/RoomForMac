@@ -47,6 +47,20 @@ final class LaunchSmokeTests: XCTestCase {
         }
     }
 
+    /// The Settings row at the bottom of the sidebar opens the Settings window, on whichever tab
+    /// it last showed.
+    @MainActor
+    func testTheSettingsRowOpensSettings() throws {
+        let app = XCUIApplication.launched(scenario: "onboarded")
+        XCTAssertTrue(app.element(UIID.sidebarSettings).waitForExistence(timeout: UIWait.launch))
+
+        app.element(UIID.sidebarSettings).click()
+        XCTAssertTrue(
+            app.anyElement(UIID.settingsTabs).waitForExistence(timeout: UIWait.reaction),
+            "Clicking Settings in the sidebar did not open Settings"
+        )
+    }
+
     /// The app menu holds "Check for Updates…" after About, and it is disabled: a scenario's
     /// updater is the inert one (Plan 6 Ruling 7). SwiftUI may not carry an identifier onto a menu
     /// item, so the item is found by identifier or by title.

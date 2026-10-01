@@ -39,6 +39,12 @@ enum UIID {
         "sidebar.\(section)"
     }
 
+    /// The Settings row at the bottom of the sidebar.
+    static let sidebarSettings = "sidebar.settings"
+
+    /// The content of each Settings tab.
+    static let settingsTabs = ["settings.tab.general", "settings.tab.permissions", "settings.tab.about"]
+
     static func onboardingStep(_ step: String) -> String {
         "onboarding.step.\(step)"
     }

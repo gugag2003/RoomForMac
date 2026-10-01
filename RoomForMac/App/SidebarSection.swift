@@ -26,6 +26,15 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
+    /// The digit that selects the section with ⌘, counting rows from the top.
+    var shortcut: Character {
+        switch self {
+        case .smartClean: "1"
+        case .uninstaller: "2"
+        case .status: "3"
+        }
+    }
+
     /// The landscape behind the section (spec §11.3).
     var backdrop: BackdropScene {
         switch self {
