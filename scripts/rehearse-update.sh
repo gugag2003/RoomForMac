@@ -548,10 +548,10 @@ The server log of V3 is the control: a request from the Release build shows ther
 cd "@ROOT@"
 xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac -configuration Debug \
     -destination 'platform=macOS,arch=arm64' \
-    -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan6" \
+    -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan6.noindex" \
     CODE_SIGN_IDENTITY="@IDENTITY@" @KEYCHAIN_ARG@\
     RFM_FEED_URL="@FEED_URL@" RFM_SPARKLE_PUBLIC_KEY="$(cat "@WORK@/keys/public")" build
-DEBUG_APP="$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan6/Build/Products/Debug/RoomForMac.app"
+DEBUG_APP="$HOME/Library/Developer/Xcode/DerivedData/RoomForMac-plan6.noindex/Build/Products/Debug/RoomForMac.app"
 open -n "$DEBUG_APP"
 ```
 1. With `scripts/rehearse-update.sh serve "@WORK@"` running, wait a minute. Expect an empty server log, and Settings > General showing only the note "Development builds don't check for updates." (no switches, no Check Now). Quit the app with ⌘Q.

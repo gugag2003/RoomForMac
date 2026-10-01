@@ -31,6 +31,16 @@ Or build from Terminal:
 xcodebuild -project RoomForMac.xcodeproj -scheme RoomForMac -destination platform=macOS,arch=arm64 build
 ```
 
+To try the latest code, install it as the development copy:
+
+```bash
+scripts/dev-app.sh --open
+```
+
+- **There is one development copy**, `~/Applications/RoomForMac Dev.app`, and it is the only RoomForMac that Spotlight and Launchpad list. The script builds Debug into `~/Library/Developer/Xcode/DerivedData/RoomForMac-dev.noindex`, which Spotlight skips, and replaces the copy once the build succeeds, quitting it first if it runs.
+- **Older builds are removed.** Every other RoomForMac bundle under `~/Library/Developer/Xcode/DerivedData` (Xcode's own ⌘R builds, the UI-test runner) is a build product that Spotlight lists, so the script deletes it unless it is running; Xcode makes it again on its next build. `--keep-others` keeps them. A folder whose name ends in `.noindex` is never touched, so build into one when you script a build of your own.
+- Arguments after `--` go to the app: `scripts/dev-app.sh --open -- -RFMUITestScenario onboarded`.
+
 - **The first build also builds the engine**, which takes about a minute. Later builds reuse `build/engine` and rebuild it only when `vendor/mole`, `patches/mole/`, `scripts/build-engine.sh` or `scripts/lib/engine-inputs.sh` change.
 - **Never run two engine builds at once.** `scripts/build-engine.sh` and `bats scripts/tests` always re-clone `build/engine-src`, and an app build does too when it has to rebuild the engine. Let one finish before you start another.
 - **The Xcode project is generated, not committed.** Run `xcodegen generate` again after pulling a change to `project.yml`.
